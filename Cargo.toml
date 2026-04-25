@@ -1,0 +1,18 @@
+[package]
+name = "framr"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+chrono = "0.4"
+clap = { version = "4.6", features = ["derive"] }
+image = {version = "0.25", default-features = false, features = ["png"] }
+libwayshot = { git = "https://github.com/waycrate/wayshot", default-features = false, features = ["png"] }
+libc = "0.2"
+reqwest = { version = "0.13", features = ["form", "json"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = {version = "1", features = ["macros", "rt-multi-thread"] }
+slurp-rs = "0.2"
+wl-clipboard-rs = "0.9"
+confy = "2"
