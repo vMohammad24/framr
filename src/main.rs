@@ -1,11 +1,10 @@
 use std::io::Cursor;
 use std::path::PathBuf;
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use clap::{Parser, Subcommand};
 use image::ImageFormat;
-use libwayshot::region::{Position, Region};
-use libwayshot::{LogicalRegion, WayshotConnection};
+use libframr::{FramrConnection, LogicalRegion};
 use slurp_rs::SelectOptions;
 use wl_clipboard_rs::copy::{MimeType, Options as ClipboardOptions, Seat, Source};
 
@@ -29,7 +28,7 @@ struct Cli {
 	#[arg(short, long)]
 	area: bool,
 
-	/// Copy screenshot to clipboard without saving
+	/// Copy to clipboard
 	#[arg(short, long)]
 	copy: bool,
 
@@ -40,6 +39,10 @@ struct Cli {
 	/// Filename (e.g. "screenshot_%Y-%m-%d.png")
 	#[arg(long)]
 	filename: Option<String>,
+
+	/// Include cursor in capture
+	#[arg(long)]
+	cursor: bool,
 }
 
 #[derive(Subcommand)]
@@ -84,38 +87,62 @@ enum ConfigAction {
 	},
 }
 
+fn resolve_output(cli: &Cli, default_pattern: &str, default_ext: &str) -> PathBuf {
+	let pattern = cli.filename.as_deref().unwrap_or(default_pattern);
+	let filename = chrono::Local::now().format(pattern).to_string();
+
+	let mut path = PathBuf::from(filename);
+	if path.extension().is_none() {
+		path.set_extension(default_ext);
+	}
+	return path;
+}
+
+fn copy_to_clipboard_image(png_bytes: Vec<u8>) -> Result<()> {
+	match unsafe { libc::fork() } {
+		-1 => anyhow::bail!("fork failed"),
+		0 => {
+			let mut clipboard_opts = ClipboardOptions::new();
+			clipboard_opts.foreground(true).seat(Seat::All);
+			let _ = clipboard_opts.copy(
+				Source::Bytes(png_bytes.into()),
+				MimeType::Specific("image/png".into()),
+			);
+			std::process::exit(0);
+		}
+		_ => {}
+	}
+	Ok(())
+}
+
 fn capture(cli: &Cli) -> Result<Vec<u8>> {
-	let conn = WayshotConnection::new()?;
+	let conn = FramrConnection::new()?;
 	let image = if cli.area {
 		let selection = slurp_rs::select_region(SelectOptions::default())?;
 		let rect = &selection.rect;
-		conn.screenshot(
-			LogicalRegion {
-				inner: Region {
-					position: Position {
-						x: rect.x,
-						y: rect.y,
-					},
-					size: libwayshot::Size {
-						width: rect.width as u32,
-						height: rect.height as u32,
-					},
-				},
-			},
-			true,
-		)?
-	} else if let Some(screen_num) = cli.screen {
+		let region = LogicalRegion::new(rect.x, rect.y, rect.width as u32, rect.height as u32);
+
 		let outputs = conn.get_all_outputs();
-		let output = outputs.get(screen_num).ok_or_else(|| {
-			anyhow::anyhow!(
-				"screen {}: only {} screens available",
-				screen_num,
-				outputs.len()
-			)
-		})?;
-		conn.screenshot_single_output(output, true)?
+		let output = outputs
+			.iter()
+			.find(|o| {
+				let ox = o.logical_position.x;
+				let oy = o.logical_position.y;
+				let ow = o.logical_size.width as i32;
+				let oh = o.logical_size.height as i32;
+				rect.x >= ox
+					&& rect.y >= oy && rect.x + rect.width as i32 <= ox + ow
+					&& rect.y + rect.height as i32 <= oy + oh
+			})
+			.or_else(|| outputs.first())
+			.ok_or_else(|| anyhow::anyhow!("no output found for region"))?;
+
+		conn.screenshot_region(output, &region, cli.cursor)?
+	} else if let Some(screen_num) = cli.screen {
+		let output = conn.get_output(screen_num)?;
+		conn.screenshot_output(output, cli.cursor)?
 	} else {
-		conn.screenshot_all(true)?
+		conn.screenshot_all(cli.cursor)?
 	};
 
 	let mut buf = Cursor::new(Vec::new());
@@ -127,34 +154,32 @@ fn capture(cli: &Cli) -> Result<Vec<u8>> {
 async fn main() -> Result<()> {
 	let cli = Cli::parse();
 
-	if let Some(Commands::Config { action }) = cli.command {
-		return match action {
-			Some(ConfigAction::Import { source }) => config::import_uploader(&source).await,
-			Some(ConfigAction::List) => config::list_uploaders().await,
-			Some(ConfigAction::Show { uploader }) => config::show_uploader(&uploader).await,
-			Some(ConfigAction::Create) => config::create_uploader().await,
-			Some(ConfigAction::Edit { uploader }) => {
-				config::edit_uploader(uploader.as_deref()).await
-			}
-			Some(ConfigAction::Delete { uploader }) => {
-				config::delete_uploader(uploader.as_deref()).await
-			}
-			Some(ConfigAction::Default { uploader }) => {
-				config::set_default_uploader(uploader.as_deref()).await
-			}
-			None => config::run_config_wizard().await,
-		};
+	match cli.command {
+		Some(Commands::Config { action }) => {
+			return match action {
+				Some(ConfigAction::Import { source }) => config::import_uploader(&source).await,
+				Some(ConfigAction::List) => config::list_uploaders().await,
+				Some(ConfigAction::Show { uploader }) => config::show_uploader(&uploader).await,
+				Some(ConfigAction::Create) => config::create_uploader().await,
+				Some(ConfigAction::Edit { uploader }) => {
+					config::edit_uploader(uploader.as_deref()).await
+				}
+				Some(ConfigAction::Delete { uploader }) => {
+					config::delete_uploader(uploader.as_deref()).await
+				}
+				Some(ConfigAction::Default { uploader }) => {
+					config::set_default_uploader(uploader.as_deref()).await
+				}
+				None => config::run_config_wizard().await,
+			};
+		}
+		None => {}
 	}
 
 	if cli.screens {
-		let conn = WayshotConnection::new()?;
+		let conn = FramrConnection::new()?;
 		for (i, output) in conn.get_all_outputs().iter().enumerate() {
-			let pos = output.logical_position();
-			let size = output.logical_size();
-			println!(
-				"{}: {} ({}x{}+{}+{})",
-				i, output.name, size.width, size.height, pos.x, pos.y
-			);
+			println!("{}: {}", i, output);
 		}
 		return Ok(());
 	}
@@ -162,31 +187,20 @@ async fn main() -> Result<()> {
 	let png_bytes = capture(&cli)?;
 
 	if cli.copy {
-		match unsafe { libc::fork() } {
-			-1 => bail!("fork failed"),
-			0 => {
-				let mut clipboard_opts = ClipboardOptions::new();
-				clipboard_opts.foreground(true).seat(Seat::All);
-				let _ = clipboard_opts.copy(
-					Source::Bytes(png_bytes.into()),
-					MimeType::Specific("image/png".into()),
-				);
-				std::process::exit(0);
-			}
-			_ => return Ok(()),
-		}
+		copy_to_clipboard_image(png_bytes)?;
+		return Ok(());
 	}
 
-	let filename = chrono::Local::now()
-		.format(
-			&cli.filename
-				.unwrap_or_else(|| "screenshot_%Y-%m-%d_%H-%M-%S.png".to_string()),
-		)
-		.to_string();
-
 	let path = match &cli.output {
-		Some(dir) => dir.join(&filename),
-		None => PathBuf::from(&filename),
+		Some(dir) => {
+			std::fs::create_dir_all(dir)?;
+			let filename = resolve_output(&cli, "screenshot_%Y-%m-%d_%H-%M-%S.png", "png");
+			dir.join(&filename)
+		}
+		None => {
+			let filename = resolve_output(&cli, "screenshot_%Y-%m-%d_%H-%M-%S.png", "png");
+			filename
+		}
 	};
 
 	std::fs::write(&path, &png_bytes)?;
