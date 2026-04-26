@@ -1,5 +1,4 @@
 use std::path::Path;
-
 use anyhow::{Result, bail};
 use console::style;
 use dialoguer::{Input, Select, theme::ColorfulTheme};
@@ -525,8 +524,8 @@ fn detect_and_parse(contents: &str) -> Result<UploadConfig> {
 	bail!("Could not detect file format. Supported formats: ShareX (.sxcu), iShare (.iscu)");
 }
 
-async fn parse_from_file(path: &str, interactive: bool) -> Result<UploadConfig> {
-	let contents = tokio::fs::read_to_string(path).await?;
+fn parse_from_file(path: &str, interactive: bool) -> Result<UploadConfig> {
+	let contents = std::fs::read_to_string(path)?;
 	let ext = Path::new(path)
 		.extension()
 		.and_then(|e| e.to_str())
@@ -554,14 +553,14 @@ async fn parse_from_file(path: &str, interactive: bool) -> Result<UploadConfig> 
 	}
 }
 
-async fn parse_from_url(url: &str) -> Result<UploadConfig> {
+fn parse_from_url(url: &str) -> Result<UploadConfig> {
 	println!("  {} {}", style("Downloading...").dim(), style(url).blue());
-	let response = reqwest::get(url).await?;
+	let response = ureq::get(url).call().map_err(|e| anyhow::anyhow!("{e}"))?;
 	let status = response.status();
 	if !status.is_success() {
-		bail!("HTTP error: {}", status);
+		bail!("HTTP error: {status}");
 	}
-	let contents = response.text().await?;
+	let contents = response.into_body().read_to_string().map_err(|e| anyhow::anyhow!("{e}"))?;
 
 	let url_lower = url.to_lowercase();
 	if url_lower.ends_with(".sxcu") {
@@ -573,11 +572,11 @@ async fn parse_from_url(url: &str) -> Result<UploadConfig> {
 	}
 }
 
-pub(crate) async fn import_from_source(source: &str, interactive: bool) -> Result<UploadConfig> {
+pub(crate) fn import_from_source(source: &str, interactive: bool) -> Result<UploadConfig> {
 	if source.starts_with("http://") || source.starts_with("https://") {
-		parse_from_url(source).await
+		parse_from_url(source)
 	} else {
-		parse_from_file(source, interactive).await
+		parse_from_file(source, interactive)
 	}
 }
 

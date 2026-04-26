@@ -150,27 +150,26 @@ fn capture(cli: &Cli) -> Result<Vec<u8>> {
 	Ok(buf.into_inner())
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
 	let cli = Cli::parse();
 
 	match cli.command {
 		Some(Commands::Config { action }) => {
 			return match action {
-				Some(ConfigAction::Import { source }) => config::import_uploader(&source).await,
-				Some(ConfigAction::List) => config::list_uploaders().await,
-				Some(ConfigAction::Show { uploader }) => config::show_uploader(&uploader).await,
-				Some(ConfigAction::Create) => config::create_uploader().await,
+				Some(ConfigAction::Import { source }) => config::import_uploader(&source),
+				Some(ConfigAction::List) => config::list_uploaders(),
+				Some(ConfigAction::Show { uploader }) => config::show_uploader(&uploader),
+				Some(ConfigAction::Create) => config::create_uploader(),
 				Some(ConfigAction::Edit { uploader }) => {
-					config::edit_uploader(uploader.as_deref()).await
+					config::edit_uploader(uploader.as_deref())
 				}
 				Some(ConfigAction::Delete { uploader }) => {
-					config::delete_uploader(uploader.as_deref()).await
+					config::delete_uploader(uploader.as_deref())
 				}
 				Some(ConfigAction::Default { uploader }) => {
-					config::set_default_uploader(uploader.as_deref()).await
+					config::set_default_uploader(uploader.as_deref())
 				}
-				None => config::run_config_wizard().await,
+				None => config::run_config_wizard(),
 			};
 		}
 		None => {}

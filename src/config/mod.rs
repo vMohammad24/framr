@@ -6,17 +6,18 @@ pub use handler::load_config;
 use anyhow::Result;
 use console::{Term, style};
 use dialoguer::{Confirm, Input, Select, theme::ColorfulTheme};
-use tokio::time::{Duration, sleep};
+use std::thread;
+use std::time::Duration;
 
 use handler::*;
 
-pub async fn import_uploader(source: &str) -> Result<()> {
+pub fn import_uploader(source: &str) -> Result<()> {
 	let mut cfg = load_config()?;
 
 	println!("{}", display_header("Import Uploader"));
 	println!("  {} {}", style("Source:").bold(), style(source).blue());
 
-	let mut uploader = import_from_source(source, false).await?;
+	let mut uploader = import_from_source(source, false)?;
 
 	let original_name = uploader.name.clone();
 	uploader.name = ensure_unique_uploader_name(&cfg, uploader.name);
@@ -44,7 +45,7 @@ pub async fn import_uploader(source: &str) -> Result<()> {
 	Ok(())
 }
 
-pub async fn list_uploaders() -> Result<()> {
+pub fn list_uploaders() -> Result<()> {
 	let cfg = load_config()?;
 
 	println!("\n{}", style("Framr Config - Uploaders").cyan().bold());
@@ -81,7 +82,7 @@ pub async fn list_uploaders() -> Result<()> {
 	Ok(())
 }
 
-pub async fn show_uploader(name_or_index: &str) -> Result<()> {
+pub fn show_uploader(name_or_index: &str) -> Result<()> {
 	let cfg = load_config()?;
 
 	let idx = find_uploader_index(&cfg, name_or_index)
@@ -95,7 +96,7 @@ pub async fn show_uploader(name_or_index: &str) -> Result<()> {
 	Ok(())
 }
 
-pub async fn create_uploader() -> Result<()> {
+pub fn create_uploader() -> Result<()> {
 	let mut cfg = load_config()?;
 	create_uploader_interactive(&mut cfg)?;
 	save_config(&cfg)?;
@@ -103,7 +104,7 @@ pub async fn create_uploader() -> Result<()> {
 	Ok(())
 }
 
-pub async fn edit_uploader(name_or_index: Option<&str>) -> Result<()> {
+pub fn edit_uploader(name_or_index: Option<&str>) -> Result<()> {
 	let mut cfg = load_config()?;
 
 	if cfg.uploaders.is_empty() {
@@ -118,7 +119,7 @@ pub async fn edit_uploader(name_or_index: Option<&str>) -> Result<()> {
 	Ok(())
 }
 
-pub async fn delete_uploader(name_or_index: Option<&str>) -> Result<()> {
+pub fn delete_uploader(name_or_index: Option<&str>) -> Result<()> {
 	let mut cfg = load_config()?;
 
 	if cfg.uploaders.is_empty() {
@@ -150,7 +151,7 @@ pub async fn delete_uploader(name_or_index: Option<&str>) -> Result<()> {
 	Ok(())
 }
 
-pub async fn set_default_uploader(name_or_index: Option<&str>) -> Result<()> {
+pub fn set_default_uploader(name_or_index: Option<&str>) -> Result<()> {
 	let mut cfg = load_config()?;
 
 	if cfg.uploaders.is_empty() {
@@ -188,7 +189,7 @@ pub async fn set_default_uploader(name_or_index: Option<&str>) -> Result<()> {
 	Ok(())
 }
 
-pub async fn run_config_wizard() -> Result<()> {
+pub fn run_config_wizard() -> Result<()> {
 	let mut cfg = load_config()?;
 	let theme = ColorfulTheme::default();
 	let term = Term::stdout();
@@ -228,7 +229,7 @@ pub async fn run_config_wizard() -> Result<()> {
 					.with_prompt("Path to file or URL")
 					.interact_text()?;
 
-				let mut uploader = import_from_source(&source, true).await?;
+				let mut uploader = import_from_source(&source, true)?;
 				let original_name = uploader.name.clone();
 				uploader.name = ensure_unique_uploader_name(&cfg, uploader.name);
 
@@ -244,14 +245,14 @@ pub async fn run_config_wizard() -> Result<()> {
 				cfg.uploaders.push(uploader);
 				save_config(&cfg)?;
 				display_success("Uploader imported and saved successfully.");
-				sleep(Duration::from_secs(1)).await;
+				thread::sleep(Duration::from_secs(1));
 			}
 			1 => {
 				let _ = term.clear_screen();
 				create_uploader_interactive(&mut cfg)?;
 				save_config(&cfg)?;
 				display_success("Uploader created and saved successfully.");
-				sleep(Duration::from_secs(1)).await;
+				thread::sleep(Duration::from_secs(1));
 			}
 			2 => {
 				if cfg.uploaders.is_empty() {
@@ -262,7 +263,7 @@ pub async fn run_config_wizard() -> Result<()> {
 				modify_uploader_at(&mut cfg, sel)?;
 				save_config(&cfg)?;
 				display_success("Uploader modified and saved successfully.");
-				sleep(Duration::from_secs(1)).await;
+				thread::sleep(Duration::from_secs(1));
 			}
 			3 => {
 				if cfg.uploaders.is_empty() {
@@ -284,7 +285,7 @@ pub async fn run_config_wizard() -> Result<()> {
 					}
 					save_config(&cfg)?;
 					display_error(&format!("Deleted \"{}\"", removed.name));
-					sleep(Duration::from_secs(1)).await;
+					thread::sleep(Duration::from_secs(1));
 				}
 			}
 			4 => {
@@ -296,7 +297,7 @@ pub async fn run_config_wizard() -> Result<()> {
 				cfg.default_uploader = Some(name.clone());
 				save_config(&cfg)?;
 				display_success(&format!("Default uploader set to \"{}\".", name));
-				sleep(Duration::from_secs(1)).await;
+				thread::sleep(Duration::from_secs(1));
 			}
 			_ => {
 				let _ = term.clear_screen();
