@@ -12,3 +12,11 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 memmap2 = "0.9"
 rustix = { version = "1", features = ["fs", "shm"] }
 anyhow = "1.0"
+
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
