@@ -38,11 +38,7 @@
 
           cargoLock = {
             lockFile = ./Cargo.lock;
-            outputHashes = {
-              "libwayshot-0.7.3" = "sha256-DrOg7Bh/RJaLFeSR8HB7h/N5+QgaTDBxFb1Jrrj9qa8=";
-            };
           };
-
           nativeBuildInputs = commonNativeBuildInputs;
           buildInputs = commonBuildInputs;
         };
