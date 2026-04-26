@@ -197,10 +197,7 @@ async fn main() -> Result<()> {
 			let filename = resolve_output(&cli, "screenshot_%Y-%m-%d_%H-%M-%S.png", "png");
 			dir.join(&filename)
 		}
-		None => {
-			
-			resolve_output(&cli, "screenshot_%Y-%m-%d_%H-%M-%S.png", "png")
-		}
+		None => resolve_output(&cli, "screenshot_%Y-%m-%d_%H-%M-%S.png", "png"),
 	};
 
 	std::fs::write(&path, &png_bytes)?;
