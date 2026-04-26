@@ -1,8 +1,8 @@
-use std::path::Path;
 use anyhow::{Result, bail};
 use console::style;
 use dialoguer::{Input, Select, theme::ColorfulTheme};
 use serde::Deserialize;
+use std::path::Path;
 
 use super::types::{AppConfig, BodyType, UploadConfig};
 
@@ -560,7 +560,10 @@ fn parse_from_url(url: &str) -> Result<UploadConfig> {
 	if !status.is_success() {
 		bail!("HTTP error: {status}");
 	}
-	let contents = response.into_body().read_to_string().map_err(|e| anyhow::anyhow!("{e}"))?;
+	let contents = response
+		.into_body()
+		.read_to_string()
+		.map_err(|e| anyhow::anyhow!("{e}"))?;
 
 	let url_lower = url.to_lowercase();
 	if url_lower.ends_with(".sxcu") {

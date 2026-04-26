@@ -9,6 +9,7 @@ use slurp_rs::SelectOptions;
 use wl_clipboard_rs::copy::{MimeType, Options as ClipboardOptions, Seat, Source};
 
 mod config;
+mod upload;
 
 #[derive(Parser)]
 #[command(name = "framr")]
@@ -43,6 +44,10 @@ struct Cli {
 	/// Include cursor in capture
 	#[arg(long)]
 	cursor: bool,
+
+	/// Upload screenshot (uses default uploader, or specify with -u <name>)
+	#[arg(short = 'u', long, num_args = 0..=1, default_missing_value = "")]
+	upload: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -107,6 +112,23 @@ fn copy_to_clipboard_image(png_bytes: Vec<u8>) -> Result<()> {
 			let _ = clipboard_opts.copy(
 				Source::Bytes(png_bytes.into()),
 				MimeType::Specific("image/png".into()),
+			);
+			std::process::exit(0);
+		}
+		_ => {}
+	}
+	Ok(())
+}
+
+fn copy_to_clipboard_text(text: &str) -> Result<()> {
+	match unsafe { libc::fork() } {
+		-1 => anyhow::bail!("fork failed"),
+		0 => {
+			let mut clipboard_opts = ClipboardOptions::new();
+			clipboard_opts.foreground(true).seat(Seat::All);
+			let _ = clipboard_opts.copy(
+				Source::Bytes(text.as_bytes().to_vec().into()),
+				MimeType::Specific("text/plain;charset=utf-8".into()),
 			);
 			std::process::exit(0);
 		}
@@ -184,6 +206,23 @@ fn main() -> Result<()> {
 	}
 
 	let png_bytes = capture(&cli)?;
+
+	if let Some(ref uploader_name) = cli.upload {
+		let name = if uploader_name.is_empty() {
+			None
+		} else {
+			Some(uploader_name.as_str())
+		};
+		let filename = resolve_output(&cli, "screenshot_%Y-%m-%d_%H-%M-%S.png", "png")
+			.to_string_lossy()
+			.to_string();
+		let url = upload::upload(&png_bytes, name, &filename)?;
+		println!("{}", url);
+		if cli.copy {
+			copy_to_clipboard_text(&url)?;
+		}
+		return Ok(());
+	}
 
 	if cli.copy {
 		copy_to_clipboard_image(png_bytes)?;

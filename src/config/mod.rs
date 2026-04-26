@@ -2,6 +2,8 @@ mod handler;
 mod types;
 
 pub use handler::load_config;
+pub(crate) use handler::find_uploader_index;
+pub(crate) use types::{AppConfig, BodyType, UploadConfig};
 
 use anyhow::Result;
 use console::{Term, style};
