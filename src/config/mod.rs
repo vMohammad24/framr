@@ -1,14 +1,14 @@
-mod config;
+mod handler;
 mod types;
 
-pub use config::load_config;
+pub use handler::load_config;
 
 use anyhow::Result;
 use console::{Term, style};
 use dialoguer::{Confirm, Input, Select, theme::ColorfulTheme};
 use tokio::time::{Duration, sleep};
 
-use config::*;
+use handler::*;
 
 pub async fn import_uploader(source: &str) -> Result<()> {
 	let mut cfg = load_config()?;

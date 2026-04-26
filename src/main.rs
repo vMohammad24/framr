@@ -95,7 +95,7 @@ fn resolve_output(cli: &Cli, default_pattern: &str, default_ext: &str) -> PathBu
 	if path.extension().is_none() {
 		path.set_extension(default_ext);
 	}
-	return path;
+	path
 }
 
 fn copy_to_clipboard_image(png_bytes: Vec<u8>) -> Result<()> {
@@ -198,8 +198,8 @@ async fn main() -> Result<()> {
 			dir.join(&filename)
 		}
 		None => {
-			let filename = resolve_output(&cli, "screenshot_%Y-%m-%d_%H-%M-%S.png", "png");
-			filename
+			
+			resolve_output(&cli, "screenshot_%Y-%m-%d_%H-%M-%S.png", "png")
 		}
 	};
 
