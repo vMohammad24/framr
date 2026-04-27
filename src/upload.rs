@@ -1,8 +1,8 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use serde_json::Value;
 use ureq::unversioned::multipart::{Form, Part};
 
-use crate::config::{load_config, find_uploader_index, AppConfig, BodyType, UploadConfig};
+use crate::config::{AppConfig, BodyType, UploadConfig, find_uploader_index, load_config};
 
 pub fn upload(png_bytes: &[u8], uploader_name: Option<&str>, filename: &str) -> Result<String> {
 	let cfg = load_config()?;
@@ -75,13 +75,12 @@ fn send_request(png_bytes: &[u8], filename: &str, uploader: &UploadConfig) -> Re
 	for (key, value) in &uploader.headers {
 		request = request.header(key.as_str(), unquote(value));
 	}
-	request = request
-		.config()
-		.http_status_as_error(false)
-		.build();
+	request = request.config().http_status_as_error(false).build();
 
 	let response = match uploader.body_type {
-		BodyType::Binary => request.send(png_bytes).map_err(|e| anyhow::anyhow!("{e}"))?,
+		BodyType::Binary => request
+			.send(png_bytes)
+			.map_err(|e| anyhow::anyhow!("{e}"))?,
 		BodyType::FormData => {
 			let form = build_multipart_form(png_bytes, filename, uploader)?;
 			request.send(form).map_err(|e| anyhow::anyhow!("{e}"))?
@@ -92,7 +91,9 @@ fn send_request(png_bytes: &[u8], filename: &str, uploader: &UploadConfig) -> Re
 				.iter()
 				.map(|(k, v)| (k.as_str(), v.as_str()))
 				.collect();
-			request.send_form(args).map_err(|e| anyhow::anyhow!("{e}"))?
+			request
+				.send_form(args)
+				.map_err(|e| anyhow::anyhow!("{e}"))?
 		}
 		BodyType::Json => {
 			let body = build_json_body(&uploader.arguments)?;
@@ -201,5 +202,7 @@ fn navigate_json_path(json: &Value, path: &str) -> Result<String> {
 }
 
 fn unquote(s: &str) -> &str {
-	s.strip_prefix('"').and_then(|s| s.strip_suffix('"')).unwrap_or(s)
+	s.strip_prefix('"')
+		.and_then(|s| s.strip_suffix('"'))
+		.unwrap_or(s)
 }
