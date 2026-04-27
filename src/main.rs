@@ -90,6 +90,16 @@ enum ConfigAction {
 		/// Name or number of the uploader (omitting prompts for selection)
 		uploader: Option<String>,
 	},
+	/// Set the default action
+	Action {
+		/// Name of the action (omitting prompts for selection)
+		action: Option<String>,
+	},
+	/// Set the default capture method
+	Capture {
+		/// Name of the method (omitting prompts for selection)
+		method: Option<String>,
+	},
 }
 
 fn resolve_output(cli: &Cli, default_pattern: &str, default_ext: &str) -> PathBuf {
@@ -137,19 +147,37 @@ fn copy_to_clipboard_text(text: &str) -> Result<()> {
 	Ok(())
 }
 
-fn capture(cli: &Cli) -> Result<Vec<u8>> {
+fn capture(cli: &Cli, cfg: Option<&config::AppConfig>) -> Result<Vec<u8>> {
 	let conn = FramrConnection::new()?;
-	let image = if cli.area {
-		let selection = slurp_rs::select_region(SelectOptions::default())?;
-		let rect = &selection.rect;
-		let region = LogicalRegion::new(rect.x, rect.y, rect.width as u32, rect.height as u32);
 
-		conn.screenshot_region(&region, cli.cursor)?
-	} else if let Some(screen_num) = cli.screen {
-		let output = conn.get_output(screen_num)?;
-		conn.screenshot_output(output, cli.cursor)?
+	let (method, screen) = if cli.area {
+		(Some(config::DefaultCaptureMethod::Area), None)
+	} else if let Some(s) = cli.screen {
+		(Some(config::DefaultCaptureMethod::Screen), Some(s))
+	} else if let Some(cfg) = cfg {
+		(
+			cfg.default_capture
+				.or(Some(config::DefaultCaptureMethod::Full)),
+			cfg.default_screen,
+		)
 	} else {
-		conn.screenshot_all(cli.cursor)?
+		(Some(config::DefaultCaptureMethod::Full), None)
+	};
+
+	let image = match method {
+		Some(config::DefaultCaptureMethod::Area) => {
+			let selection = slurp_rs::select_region(SelectOptions::default())?;
+			let rect = &selection.rect;
+			let region = LogicalRegion::new(rect.x, rect.y, rect.width as u32, rect.height as u32);
+
+			conn.screenshot_region(&region, cli.cursor)?
+		}
+		Some(config::DefaultCaptureMethod::Screen) => {
+			let screen_num = screen.unwrap_or(0);
+			let output = conn.get_output(screen_num)?;
+			conn.screenshot_output(output, cli.cursor)?
+		}
+		_ => conn.screenshot_all(cli.cursor)?,
 	};
 
 	let mut buf = Cursor::new(Vec::new());
@@ -159,6 +187,7 @@ fn capture(cli: &Cli) -> Result<Vec<u8>> {
 
 fn main() -> Result<()> {
 	let cli = Cli::parse();
+	let cfg = config::load_config().ok();
 
 	match cli.command {
 		Some(Commands::Config { action }) => {
@@ -167,14 +196,18 @@ fn main() -> Result<()> {
 				Some(ConfigAction::List) => config::list_uploaders(),
 				Some(ConfigAction::Show { uploader }) => config::show_uploader(&uploader),
 				Some(ConfigAction::Create) => config::create_uploader(),
-				Some(ConfigAction::Edit { uploader }) => {
-					config::edit_uploader(uploader.as_deref())
-				}
+				Some(ConfigAction::Edit { uploader }) => config::edit_uploader(uploader.as_deref()),
 				Some(ConfigAction::Delete { uploader }) => {
 					config::delete_uploader(uploader.as_deref())
 				}
 				Some(ConfigAction::Default { uploader }) => {
 					config::set_default_uploader(uploader.as_deref())
+				}
+				Some(ConfigAction::Action { action }) => {
+					config::set_default_action(action.as_deref())
+				}
+				Some(ConfigAction::Capture { method }) => {
+					config::set_default_capture(method.as_deref())
 				}
 				None => config::run_config_wizard(),
 			};
@@ -190,7 +223,7 @@ fn main() -> Result<()> {
 		return Ok(());
 	}
 
-	let png_bytes = capture(&cli)?;
+	let png_bytes = capture(&cli, cfg.as_ref())?;
 
 	if let Some(ref uploader_name) = cli.upload {
 		let name = if uploader_name.is_empty() {
@@ -212,6 +245,36 @@ fn main() -> Result<()> {
 	if cli.copy {
 		copy_to_clipboard_image(png_bytes)?;
 		return Ok(());
+	}
+
+	if let Some(ref cfg) = cfg {
+		if let Some(action) = cfg.default_action {
+			use config::DefaultAction;
+			match action {
+				DefaultAction::Save => {}
+				DefaultAction::Copy => {
+					copy_to_clipboard_image(png_bytes)?;
+					return Ok(());
+				}
+				DefaultAction::Upload => {
+					let filename = resolve_output(&cli, "screenshot_%Y-%m-%d_%H-%M-%S.png", "png")
+						.to_string_lossy()
+						.to_string();
+					let url = upload::upload(&png_bytes, None, &filename)?;
+					println!("{}", url);
+					return Ok(());
+				}
+				DefaultAction::UploadAndCopy => {
+					let filename = resolve_output(&cli, "screenshot_%Y-%m-%d_%H-%M-%S.png", "png")
+						.to_string_lossy()
+						.to_string();
+					let url = upload::upload(&png_bytes, None, &filename)?;
+					println!("{}", url);
+					copy_to_clipboard_text(&url)?;
+					return Ok(());
+				}
+			}
+		}
 	}
 
 	let path = match &cli.output {

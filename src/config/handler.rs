@@ -4,7 +4,7 @@ use dialoguer::{Input, Select, theme::ColorfulTheme};
 use serde::Deserialize;
 use std::path::Path;
 
-use super::types::{AppConfig, BodyType, UploadConfig};
+use super::types::{AppConfig, BodyType, ConfigEnum, UploadConfig};
 
 #[allow(non_snake_case)]
 #[derive(Debug, Deserialize)]

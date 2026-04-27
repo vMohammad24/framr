@@ -12,7 +12,7 @@ framr is an open-source wayland (wlroots) screenshotting tool with a focus on si
 
 ## TODO
 - [x] Support multiple monitor screen capture (captureing multiple monitors with the same command.)
-- [ ] Add default action to config 
+- [x] Add default action to config 
 - [ ] Add notifaction support
 - [ ] Implement deeplinks for uploaders (e.g, `framr://[base64 of the sharex config or download link])
 - [ ] Implement recording functionality

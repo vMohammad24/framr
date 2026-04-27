@@ -1,13 +1,15 @@
 mod handler;
 mod types;
 
-pub use handler::load_config;
 pub(crate) use handler::find_uploader_index;
+pub use handler::load_config;
 pub(crate) use types::{AppConfig, BodyType, UploadConfig};
+pub use types::{ConfigEnum, DefaultAction, DefaultCaptureMethod};
 
 use anyhow::Result;
 use console::{Term, style};
 use dialoguer::{Confirm, Input, Select, theme::ColorfulTheme};
+use libframr::FramrConnection;
 use std::thread;
 use std::time::Duration;
 
@@ -71,8 +73,33 @@ pub fn list_uploaders() -> Result<()> {
 	if let Some(ref default) = cfg.default_uploader {
 		println!(
 			"\n  {} {}",
-			style("Default:").bold(),
+			style("Default Uploader:").bold(),
 			style(default).yellow().bold()
+		);
+	}
+
+	if let Some(action) = cfg.default_action {
+		println!(
+			"  {} {}",
+			style("Default Action:").bold(),
+			style(action.label()).yellow().bold()
+		);
+	}
+
+	if let Some(method) = cfg.default_capture {
+		let label = if method == DefaultCaptureMethod::Screen && cfg.default_screen.is_some() {
+			format!(
+				"{} (screen {})",
+				method.label(),
+				cfg.default_screen.unwrap()
+			)
+		} else {
+			method.label().to_string()
+		};
+		println!(
+			"  {} {}",
+			style("Default Method:").bold(),
+			style(label).yellow().bold()
 		);
 	}
 
@@ -191,6 +218,151 @@ pub fn set_default_uploader(name_or_index: Option<&str>) -> Result<()> {
 	Ok(())
 }
 
+fn set_default_enum<T: ConfigEnum>(
+	current: Option<T>,
+	name_or_index: Option<&str>,
+	prompt: &str,
+	item_name: &str,
+) -> Result<T> {
+	let idx = match name_or_index {
+		Some(n) => {
+			let n_lower = n.to_lowercase();
+			T::variants()
+				.iter()
+				.position(|v| v.to_lowercase().contains(&n_lower))
+				.ok_or_else(|| {
+					anyhow::anyhow!(
+						"Unknown {} \"{}\". Valid options: {}",
+						item_name,
+						n,
+						T::variants()
+							.iter()
+							.map(|v| v.to_lowercase())
+							.collect::<Vec<_>>()
+							.join(", ")
+					)
+				})?
+		}
+		None => {
+			let default_idx = current.map(|a| a.to_index()).unwrap_or(0);
+			Select::with_theme(&ColorfulTheme::default())
+				.with_prompt(prompt)
+				.items(T::variants())
+				.default(default_idx)
+				.interact()?
+		}
+	};
+
+	let val = T::from_index(idx).unwrap();
+
+	match current {
+		Some(curr) if curr == val => {
+			println!(
+				"  {}",
+				style(&format!(
+					"\"{}\" is already the default {}.",
+					val.label(),
+					item_name
+				))
+				.dim()
+			);
+		}
+		Some(curr) => {
+			println!(
+				"  {} {} → {}",
+				style(&format!("Default {}:", item_name)).bold(),
+				style(curr.label()).red(),
+				style(val.label()).green().bold()
+			);
+		}
+		None => {
+			println!(
+				"  {} {}",
+				style(&format!("Default {}:", item_name)).bold(),
+				style("(none)").red()
+			);
+		}
+	}
+
+	Ok(val)
+}
+
+pub fn set_default_action(name_or_index: Option<&str>) -> Result<()> {
+	let mut cfg = load_config()?;
+
+	let action = set_default_enum(
+		cfg.default_action,
+		name_or_index,
+		"Select default action",
+		"action",
+	)?;
+
+	if cfg.default_action == Some(action) {
+		return Ok(());
+	}
+
+	cfg.default_action = Some(action);
+	save_config(&cfg)?;
+	display_success(&format!("Default action set to \"{}\".", action.label()));
+	Ok(())
+}
+
+pub fn set_default_capture(name_or_index: Option<&str>) -> Result<()> {
+	let mut cfg = load_config()?;
+
+	let method = set_default_enum(
+		cfg.default_capture,
+		name_or_index,
+		"Select default capture method",
+		"method",
+	)?;
+
+	if method == DefaultCaptureMethod::Screen {
+		let conn = FramrConnection::new()?;
+		let outputs = conn.get_all_outputs();
+
+		if outputs.is_empty() {
+			anyhow::bail!("No monitors detected.");
+		}
+
+		let items: Vec<String> = outputs
+			.iter()
+			.enumerate()
+			.map(|(i, o)| format!("{}: {}", i, o))
+			.collect();
+
+		let default_idx = cfg.default_screen.unwrap_or(0);
+		let selection = Select::with_theme(&ColorfulTheme::default())
+			.with_prompt("Select default monitor")
+			.items(&items)
+			.default(if default_idx < items.len() {
+				default_idx
+			} else {
+				0
+			})
+			.interact()?;
+
+		cfg.default_screen = Some(selection);
+		println!(
+			"  {} {}",
+			style("Default monitor:").bold(),
+			style(&items[selection]).yellow().bold()
+		);
+	}
+
+	if cfg.default_capture == Some(method) && method != DefaultCaptureMethod::Screen {
+		return Ok(());
+	}
+
+	cfg.default_capture = Some(method);
+	save_config(&cfg)?;
+	display_success(&format!(
+		"Default capture method set to \"{}\".",
+		method.label()
+	));
+	Ok(())
+}
+
 pub fn run_config_wizard() -> Result<()> {
 	let mut cfg = load_config()?;
 	let theme = ColorfulTheme::default();
@@ -212,6 +384,40 @@ pub fn run_config_wizard() -> Result<()> {
 			println!();
 		}
 
+		println!(
+			"  {} {}",
+			style("Default Uploader:").bold(),
+			cfg.default_uploader
+				.as_deref()
+				.map(|n| style(n).yellow().bold().to_string())
+				.unwrap_or_else(|| style("(none)").dim().to_string())
+		);
+		println!(
+			"  {} {}\n",
+			style("Default Action:").bold(),
+			cfg.default_action
+				.map(|a| style(a.label()).yellow().bold().to_string())
+				.unwrap_or_else(|| style("(none)").dim().to_string())
+		);
+
+		let capture_label = cfg
+			.default_capture
+			.map(|m| {
+				if m == DefaultCaptureMethod::Screen && cfg.default_screen.is_some() {
+					format!("{} (screen {})", m.label(), cfg.default_screen.unwrap())
+				} else {
+					m.label().to_string()
+				}
+			})
+			.unwrap_or_else(|| style("(none)").dim().to_string());
+		println!(
+			"  {} {}\n",
+			style("Default Method:").bold(),
+			cfg.default_capture
+				.map(|_| style(&capture_label).yellow().bold().to_string())
+				.unwrap_or_else(|| style("(none)").dim().to_string())
+		);
+
 		let selection = Select::with_theme(&theme)
 			.with_prompt("Whatcha doin?")
 			.items([
@@ -219,7 +425,7 @@ pub fn run_config_wizard() -> Result<()> {
 				"Create new uploader",
 				"Edit existing uploader",
 				"Delete uploader",
-				"Set default uploader",
+				"Defaults...",
 				"Save & Exit",
 			])
 			.default(5)
@@ -291,15 +497,89 @@ pub fn run_config_wizard() -> Result<()> {
 				}
 			}
 			4 => {
-				if cfg.uploaders.is_empty() {
-					continue;
+				let defaults_selection = Select::with_theme(&theme)
+					.with_prompt("Defaults")
+					.items([
+						"Set default uploader",
+						"Set default action",
+						"Set default capture method",
+						"Back",
+					])
+					.interact()?;
+
+				match defaults_selection {
+					0 => {
+						if cfg.uploaders.is_empty() {
+							continue;
+						}
+						let sel = select_uploader_index(&cfg, "Select default uploader")?;
+						let name = cfg.uploaders[sel].name.clone();
+						cfg.default_uploader = Some(name.clone());
+						save_config(&cfg)?;
+						display_success(&format!("Default uploader set to \"{}\".", name));
+						thread::sleep(Duration::from_secs(1));
+					}
+					1 => {
+						let default_idx = cfg.default_action.map(|a| a.to_index()).unwrap_or(0);
+						let sel = Select::with_theme(&theme)
+							.with_prompt("Select default action")
+							.items(DefaultAction::variants())
+							.default(default_idx)
+							.interact()?;
+						let action = DefaultAction::from_index(sel).unwrap();
+						cfg.default_action = Some(action);
+						save_config(&cfg)?;
+						display_success(&format!("Default action set to \"{}\".", action.label()));
+						thread::sleep(Duration::from_secs(1));
+					}
+					2 => {
+						let default_idx = cfg.default_capture.map(|m| m.to_index()).unwrap_or(0);
+						let sel = Select::with_theme(&theme)
+							.with_prompt("Select default capture method")
+							.items(DefaultCaptureMethod::variants())
+							.default(default_idx)
+							.interact()?;
+						let method = DefaultCaptureMethod::from_index(sel).unwrap();
+						if method == DefaultCaptureMethod::Screen {
+							let conn = FramrConnection::new()?;
+							let outputs = conn.get_all_outputs();
+							if outputs.is_empty() {
+								display_error("No monitors detected.");
+							} else {
+								let items: Vec<String> = outputs
+									.iter()
+									.enumerate()
+									.map(|(i, o)| format!("{}: {}", i, o))
+									.collect();
+
+								let current_screen = cfg.default_screen.unwrap_or(0);
+								let selection = Select::with_theme(&theme)
+									.with_prompt("Select default monitor")
+									.items(&items)
+									.default(if current_screen < items.len() {
+										current_screen
+									} else {
+										0
+									})
+									.interact()?;
+
+								cfg.default_screen = Some(selection);
+								display_success(&format!(
+									"Default monitor set to \"{}\".",
+									items[selection]
+								));
+							}
+						}
+						cfg.default_capture = Some(method);
+						save_config(&cfg)?;
+						display_success(&format!(
+							"Default capture method set to \"{}\".",
+							method.label()
+						));
+						thread::sleep(Duration::from_secs(1));
+					}
+					_ => continue,
 				}
-				let sel = select_uploader_index(&cfg, "Select default uploader")?;
-				let name = cfg.uploaders[sel].name.clone();
-				cfg.default_uploader = Some(name.clone());
-				save_config(&cfg)?;
-				display_success(&format!("Default uploader set to \"{}\".", name));
-				thread::sleep(Duration::from_secs(1));
 			}
 			_ => {
 				let _ = term.clear_screen();
