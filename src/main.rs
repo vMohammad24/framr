@@ -144,22 +144,7 @@ fn capture(cli: &Cli) -> Result<Vec<u8>> {
 		let rect = &selection.rect;
 		let region = LogicalRegion::new(rect.x, rect.y, rect.width as u32, rect.height as u32);
 
-		let outputs = conn.get_all_outputs();
-		let output = outputs
-			.iter()
-			.find(|o| {
-				let ox = o.logical_position.x;
-				let oy = o.logical_position.y;
-				let ow = o.logical_size.width as i32;
-				let oh = o.logical_size.height as i32;
-				rect.x >= ox
-					&& rect.y >= oy && rect.x + rect.width as i32 <= ox + ow
-					&& rect.y + rect.height as i32 <= oy + oh
-			})
-			.or_else(|| outputs.first())
-			.ok_or_else(|| anyhow::anyhow!("no output found for region"))?;
-
-		conn.screenshot_region(output, &region, cli.cursor)?
+		conn.screenshot_region(&region, cli.cursor)?
 	} else if let Some(screen_num) = cli.screen {
 		let output = conn.get_output(screen_num)?;
 		conn.screenshot_output(output, cli.cursor)?
