@@ -247,8 +247,8 @@ fn main() -> Result<()> {
 		return Ok(());
 	}
 
-	if let Some(ref cfg) = cfg {
-		if let Some(action) = cfg.default_action {
+	if let Some(ref cfg) = cfg
+		&& let Some(action) = cfg.default_action {
 			use config::DefaultAction;
 			match action {
 				DefaultAction::Save => {}
@@ -275,7 +275,6 @@ fn main() -> Result<()> {
 				}
 			}
 		}
-	}
 
 	let path = match &cli.output {
 		Some(dir) => {

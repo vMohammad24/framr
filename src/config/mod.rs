@@ -87,12 +87,10 @@ pub fn list_uploaders() -> Result<()> {
 	}
 
 	if let Some(method) = cfg.default_capture {
-		let label = if method == DefaultCaptureMethod::Screen && cfg.default_screen.is_some() {
-			format!(
-				"{} (screen {})",
-				method.label(),
-				cfg.default_screen.unwrap()
-			)
+		let label = if method == DefaultCaptureMethod::Screen
+			&& let Some(screen) = cfg.default_screen
+		{
+			format!("{} (screen {})", method.label(), screen)
 		} else {
 			method.label().to_string()
 		};
@@ -403,8 +401,10 @@ pub fn run_config_wizard() -> Result<()> {
 		let capture_label = cfg
 			.default_capture
 			.map(|m| {
-				if m == DefaultCaptureMethod::Screen && cfg.default_screen.is_some() {
-					format!("{} (screen {})", m.label(), cfg.default_screen.unwrap())
+				if m == DefaultCaptureMethod::Screen
+					&& let Some(screen) = cfg.default_screen
+				{
+					format!("{} (screen {})", m.label(), screen)
 				} else {
 					m.label().to_string()
 				}
