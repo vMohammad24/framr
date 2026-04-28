@@ -97,22 +97,11 @@ fn do_capture(
 	}
 
 	let mmap = unsafe { memmap2::Mmap::map(&file)? };
-	println!(
-		"Captured frame with format {:?}, size {} bytes, sample: {:02X?}",
-		frame_format.format,
-		mmap.len(),
-		&mmap[0..std::cmp::min(16, mmap.len())]
-	);
-
 	let mut raw = mmap.to_vec();
 
 	convert_to_rgba(&mut raw, frame_format.format)
 		.ok_or_else(|| anyhow::anyhow!("unsupported pixel format"))?;
 
-	println!(
-		"Converted frame to RGBA8, sample: {:02X?}",
-		&raw[0..std::cmp::min(16, raw.len())]
-	);
 	let width = frame_format.width as u32;
 	let height = frame_format.height as u32;
 
