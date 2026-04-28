@@ -1,0 +1,32 @@
+name: Build
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install System Dependencies
+        run: pacman -Syu --noconfirm pkg-config wayland wayland-protocols libxkbcommon cairo libxcursor mesa dbus
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: "archlinux"
+
+      - name: Build Framr
+        run: cargo build --release --locked
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: framr-arch-binary
+          path: target/release/framr
