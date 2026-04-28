@@ -157,4 +157,5 @@ pub struct AppConfig {
 	pub default_action: Option<DefaultAction>,
 	pub default_capture: Option<DefaultCaptureMethod>,
 	pub default_screen: Option<usize>,
+	pub allowed_directories: Vec<String>,
 }

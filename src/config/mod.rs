@@ -3,6 +3,7 @@ mod types;
 
 pub(crate) use handler::find_uploader_index;
 pub use handler::load_config;
+pub use handler::load_uploader_config;
 pub(crate) use types::{AppConfig, BodyType, UploadConfig};
 pub use types::{ConfigEnum, DefaultAction, DefaultCaptureMethod};
 

@@ -19,6 +19,8 @@ anyhow = "1.0"
 console = "0.15"
 dialoguer = "0.12"
 infer = "0.19"
+shellexpand = "3.1.2"
+dirs = "6.0.0"
 
 
 [package.metadata.dist]

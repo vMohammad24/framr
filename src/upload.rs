@@ -2,10 +2,10 @@ use anyhow::{Result, bail};
 use serde_json::Value;
 use ureq::unversioned::multipart::{Form, Part};
 
-use crate::config::{AppConfig, BodyType, UploadConfig, find_uploader_index, load_config};
+use crate::config::{AppConfig, BodyType, UploadConfig, find_uploader_index, load_uploader_config};
 
 pub fn upload(png_bytes: &[u8], uploader_name: Option<&str>, filename: &str) -> Result<String> {
-	let cfg = load_config()?;
+	let cfg = load_uploader_config()?;
 
 	if cfg.uploaders.is_empty() {
 		bail!(
