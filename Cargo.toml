@@ -18,6 +18,7 @@ confy = "2"
 anyhow = "1.0"
 console = "0.15"
 dialoguer = "0.12"
+infer = "0.19"
 
 
 [package.metadata.dist]

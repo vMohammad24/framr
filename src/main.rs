@@ -1,4 +1,4 @@
-use std::io::Cursor;
+use std::io::{self, Cursor, IsTerminal, Read};
 use std::path::PathBuf;
 
 use anyhow::Result;
@@ -56,6 +56,19 @@ enum Commands {
 	Config {
 		#[command(subcommand)]
 		action: Option<ConfigAction>,
+	},
+	/// Upload a file or byte data from stdin
+	Upload {
+		/// Path to the file to upload (omit to read from stdin)
+		file: Option<PathBuf>,
+
+		/// Uploader to use (uses default if not specified)
+		#[arg(short = 'u', long)]
+		uploader: Option<String>,
+
+		/// Filename to use for the upload
+		#[arg(short = 'n', long)]
+		filename: Option<String>,
 	},
 }
 
@@ -185,6 +198,51 @@ fn capture(cli: &Cli, cfg: Option<&config::AppConfig>) -> Result<Vec<u8>> {
 	Ok(buf.into_inner())
 }
 
+fn handle_upload(
+	cli: &Cli,
+	file: Option<&PathBuf>,
+	uploader: Option<&str>,
+	name: Option<&str>,
+) -> Result<()> {
+	let (bytes, filename) = if let Some(path) = file {
+		let bytes = std::fs::read(path)?;
+		let filename = name
+			.map(|n| n.to_string())
+			.or_else(|| {
+				path.file_name()
+					.and_then(|n| n.to_str())
+					.map(|n| n.to_string())
+			})
+			.unwrap_or_else(|| "file".to_string());
+		(bytes, filename)
+	} else {
+		if io::stdin().is_terminal() {
+			anyhow::bail!("No file specified. Provide a file path or pipe data to stdin.");
+		}
+		let mut bytes = Vec::new();
+		io::stdin().read_to_end(&mut bytes)?;
+
+		let filename = if let Some(n) = name {
+			n.to_string()
+		} else {
+			let ext = infer::get(&bytes).map(|m| m.extension()).unwrap_or("bin");
+			let pattern = format!("upload_%Y-%m-%d_%H-%M-%S.{}", ext);
+
+			resolve_output(cli, &pattern, ext)
+				.to_string_lossy()
+				.into_owned()
+		};
+		(bytes, filename)
+	};
+
+	let url = upload::upload(&bytes, uploader, &filename)?;
+	println!("{}", url);
+	if cli.copy {
+		copy_to_clipboard_text(&url)?;
+	}
+	Ok(())
+}
+
 fn main() -> Result<()> {
 	let cli = Cli::parse();
 	let cfg = config::load_config().ok();
@@ -211,6 +269,13 @@ fn main() -> Result<()> {
 				}
 				None => config::run_config_wizard(),
 			};
+		}
+		Some(Commands::Upload {
+			ref file,
+			ref uploader,
+			ref name,
+		}) => {
+			handle_upload(&cli, file.as_ref(), uploader.as_deref(), name.as_deref())?;
 		}
 		None => {}
 	}
