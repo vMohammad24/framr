@@ -166,11 +166,10 @@ pub fn load_uploader_config() -> Result<AppConfig> {
 	let mut allowed_bases = get_system_secret_dirs();
 
 	for dir in &cfg.allowed_directories {
-		if let Ok(expanded) = shellexpand::full(dir) {
-			if let Ok(canon) = Path::new(expanded.as_ref()).canonicalize() {
+		if let Ok(expanded) = shellexpand::full(dir)
+			&& let Ok(canon) = Path::new(expanded.as_ref()).canonicalize() {
 				allowed_bases.push(canon);
 			}
-		}
 	}
 
 	for u in &mut cfg.uploaders {
