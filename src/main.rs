@@ -224,6 +224,9 @@ fn main() -> Result<()> {
 	}
 
 	let png_bytes = capture(&cli, cfg.as_ref())?;
+	let filename = resolve_output(&cli, "screenshot_%Y-%m-%d_%H-%M-%S.png", "png")
+		.to_string_lossy()
+		.to_string();
 
 	if let Some(ref uploader_name) = cli.upload {
 		let name = if uploader_name.is_empty() {
@@ -231,9 +234,6 @@ fn main() -> Result<()> {
 		} else {
 			Some(uploader_name.as_str())
 		};
-		let filename = resolve_output(&cli, "screenshot_%Y-%m-%d_%H-%M-%S.png", "png")
-			.to_string_lossy()
-			.to_string();
 		let url = upload::upload(&png_bytes, name, &filename)?;
 		println!("{}", url);
 		if cli.copy {
@@ -248,44 +248,39 @@ fn main() -> Result<()> {
 	}
 
 	if let Some(ref cfg) = cfg
-		&& let Some(action) = cfg.default_action {
-			use config::DefaultAction;
-			match action {
-				DefaultAction::Save => {}
-				DefaultAction::Copy => {
-					copy_to_clipboard_image(png_bytes)?;
-					return Ok(());
-				}
-				DefaultAction::Upload => {
-					let filename = resolve_output(&cli, "screenshot_%Y-%m-%d_%H-%M-%S.png", "png")
-						.to_string_lossy()
-						.to_string();
-					let url = upload::upload(&png_bytes, None, &filename)?;
-					println!("{}", url);
-					return Ok(());
-				}
-				DefaultAction::UploadAndCopy => {
-					let filename = resolve_output(&cli, "screenshot_%Y-%m-%d_%H-%M-%S.png", "png")
-						.to_string_lossy()
-						.to_string();
-					let url = upload::upload(&png_bytes, None, &filename)?;
-					println!("{}", url);
-					copy_to_clipboard_text(&url)?;
-					return Ok(());
-				}
+		&& let Some(action) = cfg.default_action
+		&& cli.output.is_none()
+	{
+		use config::DefaultAction;
+		match action {
+			DefaultAction::Save => {}
+			DefaultAction::Copy => {
+				copy_to_clipboard_image(png_bytes)?;
+				return Ok(());
+			}
+			DefaultAction::Upload => {
+				let url = upload::upload(&png_bytes, None, &filename)?;
+				println!("{}", url);
+				return Ok(());
+			}
+			DefaultAction::UploadAndCopy => {
+				let url = upload::upload(&png_bytes, None, &filename)?;
+				println!("{}", url);
+				copy_to_clipboard_text(&url)?;
+				return Ok(());
 			}
 		}
+	}
 
 	let path = match &cli.output {
 		Some(dir) => {
 			std::fs::create_dir_all(dir)?;
-			let filename = resolve_output(&cli, "screenshot_%Y-%m-%d_%H-%M-%S.png", "png");
 			dir.join(&filename)
 		}
-		None => resolve_output(&cli, "screenshot_%Y-%m-%d_%H-%M-%S.png", "png"),
+		None => filename.into(),
 	};
 
 	std::fs::write(&path, &png_bytes)?;
-
+	println!("{}", path.display());
 	Ok(())
 }
