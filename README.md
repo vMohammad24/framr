@@ -84,7 +84,7 @@ If you are building from source or running the binary system, you will need the 
 - [x] Add default action to config 
 - [x] Add a home-manager module (NixOS)
 - [x] Implement deeplinks for uploaders (e.g, `framr://[base64 of the sharex config or download link]`)
-- [ ] Add notifaction support
+- [x] Add notifaction support
 - [ ] Replace slurp-rs with custom.
 - [ ] Implement recording functionality
 - [ ] Support all linux desktop environments (currently only tested on hyprland)

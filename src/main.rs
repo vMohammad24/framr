@@ -3,8 +3,9 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use image::ImageFormat;
+use image::{GenericImageView, ImageFormat};
 use libframr::{FramrConnection, LogicalRegion};
+use notify_rust::Notification;
 use slurp_rs::SelectOptions;
 use wl_clipboard_rs::copy::{MimeType, Options as ClipboardOptions, Seat, Source};
 
@@ -52,6 +53,10 @@ struct Cli {
 	/// Deeplink URI (framr://...)
 	#[arg(value_parser = parse_framr_uri)]
 	uri: Option<String>,
+
+	/// Silent mode (no notifications)
+	#[arg(long, global = true)]
+	silent: bool,
 }
 
 fn parse_framr_uri(arg: &str) -> Result<String, String> {
@@ -251,9 +256,48 @@ fn handle_upload(
 
 	let url = upload::upload(&bytes, uploader, &filename)?;
 	println!("{}", url);
+
+	let is_image = infer::get(&bytes)
+		.map(|m| m.matcher_type() == infer::MatcherType::Image)
+		.unwrap_or(false);
+	if is_image {
+		notify("Upload Successful", &url, &bytes, cli.silent)?;
+	} else {
+		if !cli.silent {
+			Notification::new()
+				.summary("Upload Successful")
+				.body(&url)
+				.appname("framr")
+				.show()?;
+		}
+	}
+
 	if cli.copy {
 		copy_to_clipboard_text(&url)?;
 	}
+	Ok(())
+}
+
+fn notify(title: &str, body: &str, bytes: &[u8], silent: bool) -> Result<()> {
+	if silent {
+		return Ok(());
+	}
+
+	let img = image::load_from_memory(bytes)?;
+	let (width, height) = img.dimensions();
+	let pixels = img.to_rgba8().into_raw();
+
+	Notification::new()
+		.summary(title)
+		.body(body)
+		.appname("framr")
+		.image_data(notify_rust::Image::from_rgba(
+			width as i32,
+			height as i32,
+			pixels,
+		)?)
+		.show()?;
+
 	Ok(())
 }
 
@@ -326,6 +370,7 @@ fn main() -> Result<()> {
 		};
 		let url = upload::upload(&png_bytes, name, &filename)?;
 		println!("{}", url);
+		notify("Upload Successful", &url, &png_bytes, cli.silent)?;
 		if cli.copy {
 			copy_to_clipboard_text(&url)?;
 		}
@@ -333,7 +378,13 @@ fn main() -> Result<()> {
 	}
 
 	if cli.copy {
-		copy_to_clipboard_image(png_bytes)?;
+		copy_to_clipboard_image(png_bytes.clone())?;
+		notify(
+			"Copied to Clipboard",
+			"Screenshot copied to clipboard",
+			&png_bytes,
+			cli.silent,
+		)?;
 		return Ok(());
 	}
 
@@ -345,17 +396,25 @@ fn main() -> Result<()> {
 		match action {
 			DefaultAction::Save => {}
 			DefaultAction::Copy => {
-				copy_to_clipboard_image(png_bytes)?;
+				copy_to_clipboard_image(png_bytes.clone())?;
+				notify(
+					"Copied to Clipboard",
+					"Screenshot copied to clipboard",
+					&png_bytes,
+					cli.silent,
+				)?;
 				return Ok(());
 			}
 			DefaultAction::Upload => {
 				let url = upload::upload(&png_bytes, None, &filename)?;
 				println!("{}", url);
+				notify("Upload Successful", &url, &png_bytes, cli.silent)?;
 				return Ok(());
 			}
 			DefaultAction::UploadAndCopy => {
 				let url = upload::upload(&png_bytes, None, &filename)?;
 				println!("{}", url);
+				notify("Upload Successful", &url, &png_bytes, cli.silent)?;
 				copy_to_clipboard_text(&url)?;
 				return Ok(());
 			}
@@ -367,10 +426,16 @@ fn main() -> Result<()> {
 			std::fs::create_dir_all(dir)?;
 			dir.join(&filename)
 		}
-		None => filename.into(),
+		None => PathBuf::from(&filename),
 	};
 
 	std::fs::write(&path, &png_bytes)?;
 	println!("{}", path.display());
+	notify(
+		"Screenshot Saved",
+		&path.to_string_lossy(),
+		&png_bytes,
+		cli.silent,
+	)?;
 	Ok(())
 }
