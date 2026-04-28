@@ -273,9 +273,14 @@ fn main() -> Result<()> {
 		Some(Commands::Upload {
 			ref file,
 			ref uploader,
-			ref name,
+			ref filename,
 		}) => {
-			handle_upload(&cli, file.as_ref(), uploader.as_deref(), name.as_deref())?;
+			handle_upload(
+				&cli,
+				file.as_ref(),
+				uploader.as_deref(),
+				filename.as_deref(),
+			)?;
 		}
 		None => {}
 	}
