@@ -33,7 +33,6 @@
             libxkbcommon
             cairo
             libxcursor
-            libgbm
           ];
 
           nativeBuildInputs = with pkgs; [
