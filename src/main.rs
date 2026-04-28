@@ -275,12 +275,12 @@ fn main() -> Result<()> {
 			ref uploader,
 			ref filename,
 		}) => {
-			handle_upload(
+			return handle_upload(
 				&cli,
 				file.as_ref(),
 				uploader.as_deref(),
 				filename.as_deref(),
-			)?;
+			);
 		}
 		None => {}
 	}
