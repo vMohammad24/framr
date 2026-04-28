@@ -17,8 +17,8 @@
     nixpkgs,
     flake-utils,
     crane,
-  }:
-    flake-utils.lib.eachDefaultSystem (
+  }: let
+    outputs = flake-utils.lib.eachDefaultSystem (
       system: let
         pkgs = import nixpkgs {inherit system;};
         craneLib = crane.mkLib pkgs;
@@ -61,4 +61,16 @@
         };
       }
     );
+  in
+    outputs
+    // {
+      homeManagerModules.default = {
+        pkgs,
+        lib,
+        ...
+      }: {
+        imports = [./nix/hm-module.nix];
+        programs.framr.package = lib.mkDefault self.packages.${pkgs.system}.default;
+      };
+    };
 }

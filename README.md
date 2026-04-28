@@ -10,10 +10,79 @@ framr is an open-source wayland (wlroots) screenshotting tool with a focus on si
 - Support for multiple uploaders (Any ShareX/iShare compatible uploader)
 - Area selection and full-screen capture.
 
+## Installation
+
+### Binary
+Pre-built binaries for Linux (x86_64) are available on the [Releases](https://github.com/vMohammad24/framr/releases) page.
+
+### Arch Linux (AUR)
+coming soon
+
+### Cargo
+You can install `framr` from source using `cargo`:
+```bash
+cargo install --path .
+```
+
+### Nix
+If you are using Nix, you can install `framr` by adding it to your configuration or using `nix profile`:
+```bash
+nix profile add github:vMohammad24/framr
+```
+
+#### Home Manager
+`framr` includes a Home Manager module that allows you to manage your configuration directly in Nix.
+
+```nix
+# flake.nix
+{
+  inputs.framr.url = "github:vMohammad24/framr";
+
+  outputs = { framr, ... }: {
+    homeConfigurations."user" = home-manager.lib.homeManagerConfiguration {
+      modules = [
+        framr.homeManagerModules.default
+        {
+          programs.framr = {
+            enable = true;
+            settings = {
+              default_action = "UploadAndCopy";
+              default_capture = "Area";
+              default_uploader = "nest.rip";
+              uploaders = [
+                {
+                  name = "nest.rip";
+                  request_method = "POST";
+                  request_url = "https://nest.rip/api/files/upload";
+                  body_type = "FormData";
+                  file_form_name = "files";
+                  output_url = "{json:fileURL}";
+                  error_message = "{json:message}"
+                  [ [ "authorization" "your_api_key" ] ];
+                }
+              ];
+            };
+          };
+        }
+      ];
+    };
+  };
+}
+```
+
+### Prerequisites
+If you are building from source or running the binary system, you will need the following dependencies:
+- `wayland`
+- `libxkbcommon`
+- `cairo`
+- `dbus`
+- `libxcursor`
+
+
 ## TODO
 - [x] Support multiple monitor screen capture (captureing multiple monitors with the same command.)
 - [x] Add default action to config 
-- [ ] Add a home-manager module (NixOS)
+- [x] Add a home-manager module (NixOS)
 - [ ] Add notifaction support
 - [ ] Implement deeplinks for uploaders (e.g, `framr://[base64 of the sharex config or download link])
 - [ ] Replace slurp-rs with custom.
