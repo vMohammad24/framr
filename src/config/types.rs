@@ -136,7 +136,7 @@ impl ConfigEnum for BodyType {
 	}
 }
 
-#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone, PartialEq, Eq)]
 pub struct UploadConfig {
 	pub name: String,
 	pub request_method: String,
@@ -150,7 +150,7 @@ pub struct UploadConfig {
 	pub error_message: Option<String>,
 }
 
-#[derive(Default, Debug, Serialize, Deserialize)]
+#[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct AppConfig {
 	#[serde(default)]
 	pub uploaders: Vec<UploadConfig>,

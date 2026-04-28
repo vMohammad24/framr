@@ -103,11 +103,57 @@ impl From<IscuFile> for UploadConfig {
 		}
 	}
 }
-
 pub fn load_config() -> Result<AppConfig> {
 	let app_name = env!("CARGO_PKG_NAME");
-	let cfg: AppConfig = confy::load(app_name, None)?;
+	let mut cfg: AppConfig = confy::load(app_name, None)?;
+
+	if let Some(over) = load_overrides() {
+		merge_configs(&mut cfg, over);
+	}
+
 	Ok(cfg)
+}
+
+fn load_overrides() -> Option<AppConfig> {
+	let override_path = std::env::var("FRAMR_OVERRIDES").ok()?;
+	let path = PathBuf::from(override_path);
+	if !path.exists() {
+		return None;
+	}
+
+	let content = fs::read_to_string(&path).ok()?;
+	serde_json::from_str(&content)
+		.ok()
+		.or_else(|| confy::load_path(&path).ok())
+}
+
+fn merge_configs(base: &mut AppConfig, over: AppConfig) {
+	if let Some(uploader) = over.default_uploader {
+		base.default_uploader = Some(uploader);
+	}
+	if let Some(action) = over.default_action {
+		base.default_action = Some(action);
+	}
+	if let Some(capture) = over.default_capture {
+		base.default_capture = Some(capture);
+	}
+	if let Some(screen) = over.default_screen {
+		base.default_screen = Some(screen);
+	}
+
+	for dir in over.allowed_directories {
+		if !base.allowed_directories.contains(&dir) {
+			base.allowed_directories.push(dir);
+		}
+	}
+
+	for over_u in over.uploaders {
+		if let Some(existing) = base.uploaders.iter_mut().find(|u| u.name == over_u.name) {
+			*existing = over_u;
+		} else {
+			base.uploaders.push(over_u);
+		}
+	}
 }
 
 fn get_system_secret_dirs() -> Vec<PathBuf> {
@@ -162,8 +208,7 @@ fn resolve_string(s: &str, allowed_bases: &[PathBuf]) -> Result<String> {
 }
 
 pub fn load_uploader_config() -> Result<AppConfig> {
-	let app_name = env!("CARGO_PKG_NAME");
-	let mut cfg: AppConfig = confy::load(app_name, None)?;
+	let mut cfg = load_config()?;
 	let mut allowed_bases = get_system_secret_dirs();
 
 	for dir in &cfg.allowed_directories {
@@ -197,7 +242,32 @@ pub fn load_uploader_config() -> Result<AppConfig> {
 
 pub(crate) fn save_config(cfg: &AppConfig) -> Result<()> {
 	let app_name = env!("CARGO_PKG_NAME");
-	confy::store(app_name, None, cfg)?;
+	let mut to_save = cfg.clone();
+
+	if let Some(over) = load_overrides() {
+		if to_save.default_uploader == over.default_uploader {
+			to_save.default_uploader = None;
+		}
+		if to_save.default_action == over.default_action {
+			to_save.default_action = None;
+		}
+		if to_save.default_capture == over.default_capture {
+			to_save.default_capture = None;
+		}
+		if to_save.default_screen == over.default_screen {
+			to_save.default_screen = None;
+		}
+
+		to_save
+			.allowed_directories
+			.retain(|d| !over.allowed_directories.contains(d));
+
+		to_save
+			.uploaders
+			.retain(|u| !over.uploaders.iter().any(|over_u| over_u.name == u.name));
+	}
+
+	confy::store(app_name, None, to_save)?;
 	Ok(())
 }
 
@@ -529,6 +599,15 @@ pub(crate) fn create_uploader_interactive(cfg: &mut AppConfig) -> Result<()> {
 pub(crate) fn modify_uploader_at(cfg: &mut AppConfig, idx: usize) -> Result<()> {
 	let theme = ColorfulTheme::default();
 	let uploader = &mut cfg.uploaders[idx];
+
+	if let Some(over) = load_overrides()
+		&& over.uploaders.iter().any(|u| u.name == uploader.name) {
+			println!(
+				"  {} This uploader is managed by {} and is read-only. Any changes made here will be lost when the app restarts.",
+				style("Note:").yellow().bold(),
+				style("Nix/FRAMR_OVERRIDES").blue().bold()
+			);
+		}
 
 	print!("{}", header(&format!("Modifying {}", &uploader.name)));
 

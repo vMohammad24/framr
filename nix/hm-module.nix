@@ -40,11 +40,17 @@ in {
   };
 
   config = lib.mkIf cfg.enable {
-    home.packages = [cfg.package];
-
-    xdg.configFile."framr/default-config.toml" = lib.mkIf (cfg.settings != {}) {
-      source = tomlFormat.generate "framr-config" cfg.settings;
-    };
+    home.packages = [
+      (pkgs.symlinkJoin {
+        name = "framr-wrapped";
+        paths = [cfg.package];
+        nativeBuildInputs = [pkgs.makeWrapper];
+        postBuild = ''
+          wrapProgram $out/bin/framr \
+            --set FRAMR_OVERRIDES "${tomlFormat.generate "nix-overrides.toml" cfg.settings}"
+        '';
+      })
+    ];
 
     xdg.mimeApps.defaultApplications = {
       "x-scheme-handler/framr" = ["framr-handler.desktop"];

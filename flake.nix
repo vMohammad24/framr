@@ -24,7 +24,16 @@
         craneLib = crane.mkLib pkgs;
 
         commonArgs = {
-          src = craneLib.cleanCargoSource (craneLib.path ./.);
+          src = let
+            cargoFilter = craneLib.filterCargoSources;
+            assetsFilter = path: type:
+              (builtins.match ".*/assets/.*" path != null) || (cargoFilter path type);
+          in
+            pkgs.lib.cleanSourceWith {
+              src = ./.;
+              filter = assetsFilter;
+              name = "framr-source";
+            };
           strictDeps = true;
 
           buildInputs = with pkgs; [
@@ -47,6 +56,7 @@
           // {
             inherit cargoArtifacts;
             postInstall = ''
+              ls -lha assets
               install -Dm644 assets/framr-handler.desktop -t $out/share/applications
             '';
           });
