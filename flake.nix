@@ -70,7 +70,7 @@
         ...
       }: {
         imports = [./nix/hm-module.nix];
-        programs.framr.package = lib.mkDefault self.packages.${pkgs.system}.default;
+        programs.framr.package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.default;
       };
     };
 }
