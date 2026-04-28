@@ -152,10 +152,16 @@ pub struct UploadConfig {
 
 #[derive(Default, Debug, Serialize, Deserialize)]
 pub struct AppConfig {
+	#[serde(default)]
 	pub uploaders: Vec<UploadConfig>,
+	#[serde(default)]
 	pub default_uploader: Option<String>,
+	#[serde(default)]
 	pub default_action: Option<DefaultAction>,
+	#[serde(default)]
 	pub default_capture: Option<DefaultCaptureMethod>,
+	#[serde(default)]
 	pub default_screen: Option<usize>,
+	#[serde(default)]
 	pub allowed_directories: Vec<String>,
 }

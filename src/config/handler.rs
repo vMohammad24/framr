@@ -1,4 +1,5 @@
 use anyhow::{Context, Result, bail};
+use base64::Engine as _;
 use console::style;
 use dialoguer::{Input, Select, theme::ColorfulTheme};
 use serde::Deserialize;
@@ -167,9 +168,10 @@ pub fn load_uploader_config() -> Result<AppConfig> {
 
 	for dir in &cfg.allowed_directories {
 		if let Ok(expanded) = shellexpand::full(dir)
-			&& let Ok(canon) = Path::new(expanded.as_ref()).canonicalize() {
-				allowed_bases.push(canon);
-			}
+			&& let Ok(canon) = Path::new(expanded.as_ref()).canonicalize()
+		{
+			allowed_bases.push(canon);
+		}
 	}
 
 	for u in &mut cfg.uploaders {
@@ -659,9 +661,33 @@ fn parse_from_url(url: &str) -> Result<UploadConfig> {
 	}
 }
 
+fn parse_from_deeplink(deeplink: &str) -> Result<UploadConfig> {
+	let data = deeplink
+		.strip_prefix("framr://")
+		.ok_or_else(|| anyhow::anyhow!("Invalid deeplink"))?;
+
+	if data.starts_with("http://") || data.starts_with("https://") {
+		return parse_from_url(data);
+	}
+
+	let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
+		.decode(data)
+		.or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(data))
+		.or_else(|_| base64::engine::general_purpose::STANDARD.decode(data))
+		.or_else(|_| base64::engine::general_purpose::STANDARD_NO_PAD.decode(data))
+		.map_err(|e| anyhow::anyhow!("Failed to decode deeplink: {}", e))?;
+
+	let contents = String::from_utf8(decoded)
+		.map_err(|e| anyhow::anyhow!("Invalid UTF-8 in deeplink: {}", e))?;
+
+	detect_and_parse(&contents)
+}
+
 pub(crate) fn import_from_source(source: &str, interactive: bool) -> Result<UploadConfig> {
 	if source.starts_with("http://") || source.starts_with("https://") {
 		parse_from_url(source)
+	} else if source.starts_with("framr://") {
+		parse_from_deeplink(source)
 	} else {
 		parse_from_file(source, interactive)
 	}

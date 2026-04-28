@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Framr Deeplink Handler
+Exec=framr %u
+Type=Application
+Terminal=false
+MimeType=x-scheme-handler/framr;
+NoDisplay=true
+Comment=Handle framr:// deeplinks for importing uploaders

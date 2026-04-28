@@ -45,5 +45,9 @@ in {
     xdg.configFile."framr/default-config.toml" = lib.mkIf (cfg.settings != {}) {
       source = tomlFormat.generate "framr-config" cfg.settings;
     };
+
+    xdg.mimeApps.defaultApplications = {
+      "x-scheme-handler/framr" = ["framr-handler.desktop"];
+    };
   };
 }

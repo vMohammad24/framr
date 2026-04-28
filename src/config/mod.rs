@@ -11,6 +11,7 @@ use anyhow::Result;
 use console::{Term, style};
 use dialoguer::{Confirm, Input, Select, theme::ColorfulTheme};
 use libframr::FramrConnection;
+use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
 
@@ -359,6 +360,98 @@ pub fn set_default_capture(name_or_index: Option<&str>) -> Result<()> {
 		"Default capture method set to \"{}\".",
 		method.label()
 	));
+	Ok(())
+}
+
+pub fn register_protocol_handler() -> Result<()> {
+	let xdg_data_home = std::env::var("XDG_DATA_HOME")
+		.map(PathBuf::from)
+		.or_else(|_| {
+			dirs::home_dir()
+				.map(|p| p.join(".local/share"))
+				.ok_or_else(|| anyhow::anyhow!("Could not find home directory"))
+		})?;
+
+	let apps_dir = xdg_data_home.join("applications");
+	std::fs::create_dir_all(&apps_dir)?;
+
+	let desktop_file_path = apps_dir.join("framr-handler.desktop");
+
+	if desktop_file_path.exists() {
+		let theme = ColorfulTheme::default();
+		let proceed = Confirm::with_theme(&theme)
+			.with_prompt(format!(
+				"Protocol handler already exists at {}. Overwrite?",
+				style(desktop_file_path.display()).blue()
+			))
+			.default(false)
+			.interact()?;
+
+		if !proceed {
+			println!("  {} Registration cancelled.", style("ℹ").blue().bold());
+			return Ok(());
+		}
+	}
+
+	let exe_path = std::env::current_exe()?;
+	let exe_str = exe_path
+		.to_str()
+		.ok_or_else(|| anyhow::anyhow!("Invalid executable path"))?;
+
+	if exe_str.contains("/target/") {
+		println!(
+			"  {} {}",
+			style("Warning:").yellow().bold(),
+			style("Registering a handler pointing to a build directory. Deep links will break if you move or delete this binary.").yellow()
+		);
+	}
+
+	let content = format!(
+		r#"[Desktop Entry]
+Name=Framr Deeplink Handler
+Exec={} %u
+Type=Application
+Terminal=false
+MimeType=x-scheme-handler/framr;
+NoDisplay=true
+Comment=Handle framr:// deeplinks for importing uploaders
+"#,
+		exe_str
+	);
+
+	std::fs::write(&desktop_file_path, content)?;
+
+	println!(
+		"  {} Protocol handler registered at {}",
+		style("✔").green().bold(),
+		style(desktop_file_path.display()).blue()
+	);
+
+	// Try to update desktop database
+	match std::process::Command::new("update-desktop-database")
+		.arg(&apps_dir)
+		.status()
+	{
+		Ok(status) if !status.success() => {
+			println!(
+				"  {} {}",
+				style("Note:").yellow().bold(),
+				style(
+					"'update-desktop-database' returned an error. You may need to log out for links to work."
+				)
+				.dim()
+			);
+		}
+		Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+			println!(
+				"  {} {}",
+				style("Note:").dim().bold(),
+				style("'update-desktop-database' not found. You may need to restart your session for the protocol handler to be recognized.").dim()
+			);
+		}
+		_ => {}
+	}
+
 	Ok(())
 }
 

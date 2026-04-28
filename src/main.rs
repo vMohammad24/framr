@@ -48,6 +48,18 @@ struct Cli {
 	/// Upload screenshot (uses default uploader, or specify with -u <name>)
 	#[arg(short = 'u', long, num_args = 0..=1, default_missing_value = "")]
 	upload: Option<String>,
+
+	/// Deeplink URI (framr://...)
+	#[arg(value_parser = parse_framr_uri)]
+	uri: Option<String>,
+}
+
+fn parse_framr_uri(arg: &str) -> Result<String, String> {
+	if arg.starts_with("framr://") {
+		Ok(arg.to_string())
+	} else {
+		Err("Positional arguments must be a valid framr:// URI".to_string())
+	}
 }
 
 #[derive(Subcommand)]
@@ -113,6 +125,8 @@ enum ConfigAction {
 		/// Name of the method (omitting prompts for selection)
 		method: Option<String>,
 	},
+	/// Register the framr:// protocol handler
+	Protocol,
 }
 
 fn resolve_output(cli: &Cli, default_pattern: &str, default_ext: &str) -> PathBuf {
@@ -245,6 +259,11 @@ fn handle_upload(
 
 fn main() -> Result<()> {
 	let cli = Cli::parse();
+
+	if let Some(ref uri) = cli.uri {
+		return config::import_uploader(uri);
+	}
+
 	let cfg = config::load_config().ok();
 
 	match cli.command {
@@ -267,6 +286,7 @@ fn main() -> Result<()> {
 				Some(ConfigAction::Capture { method }) => {
 					config::set_default_capture(method.as_deref())
 				}
+				Some(ConfigAction::Protocol) => config::register_protocol_handler(),
 				None => config::run_config_wizard(),
 			};
 		}

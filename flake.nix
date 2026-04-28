@@ -46,6 +46,9 @@
         framr = craneLib.buildPackage (commonArgs
           // {
             inherit cargoArtifacts;
+            postInstall = ''
+              install -Dm644 assets/framr-handler.desktop -t $out/share/applications
+            '';
           });
       in {
         packages.default = framr;

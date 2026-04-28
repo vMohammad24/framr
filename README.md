@@ -83,11 +83,21 @@ If you are building from source or running the binary system, you will need the 
 - [x] Support multiple monitor screen capture (captureing multiple monitors with the same command.)
 - [x] Add default action to config 
 - [x] Add a home-manager module (NixOS)
+- [x] Implement deeplinks for uploaders (e.g, `framr://[base64 of the sharex config or download link]`)
 - [ ] Add notifaction support
-- [ ] Implement deeplinks for uploaders (e.g, `framr://[base64 of the sharex config or download link])
 - [ ] Replace slurp-rs with custom.
 - [ ] Implement recording functionality
 - [ ] Support all linux desktop environments (currently only tested on hyprland)
+
+## Deeplinks
+Framr supports `framr://` deeplinks for easy importing of uploaders.
+- **Base64 Config**: `framr://eyJOYW1lIjogIk15IFVwbG9hZGVyIiwgLi4ufQ==` (Base64 of an `.sxcu` or `.iscu` file)
+- **Direct Link**: `framr://https://example.com/uploader.sxcu`
+
+On NixOS/Home Manager, the protocol handler is automatically registered. On other Linux distributions, you can register it manually by running:
+```bash
+framr config protocol
+```
 
 ## Contributing
 Contributions are welcome! If you have an idea for a new feature or have found a bug, please open an issue or submit a pull request.
