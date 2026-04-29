@@ -601,13 +601,14 @@ pub(crate) fn modify_uploader_at(cfg: &mut AppConfig, idx: usize) -> Result<()> 
 	let uploader = &mut cfg.uploaders[idx];
 
 	if let Some(over) = load_overrides()
-		&& over.uploaders.iter().any(|u| u.name == uploader.name) {
-			println!(
-				"  {} This uploader is managed by {} and is read-only. Any changes made here will be lost when the app restarts.",
-				style("Note:").yellow().bold(),
-				style("Nix/FRAMR_OVERRIDES").blue().bold()
-			);
-		}
+		&& over.uploaders.iter().any(|u| u.name == uploader.name)
+	{
+		println!(
+			"  {} This uploader is managed by {} and is read-only. Any changes made here will be lost when the app restarts.",
+			style("Note:").yellow().bold(),
+			style("Nix/FRAMR_OVERRIDES").blue().bold()
+		);
+	}
 
 	print!("{}", header(&format!("Modifying {}", &uploader.name)));
 
