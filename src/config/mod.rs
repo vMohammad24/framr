@@ -319,7 +319,7 @@ pub fn set_default_capture(name_or_index: Option<&str>) -> Result<()> {
 
 	if method == DefaultCaptureMethod::Screen {
 		let conn = FramrConnection::new()?;
-		let outputs = conn.get_all_outputs();
+		let outputs = conn.get_all_outputs()?;
 
 		if outputs.is_empty() {
 			anyhow::bail!("No monitors detected.");
@@ -636,7 +636,7 @@ pub fn run_config_wizard() -> Result<()> {
 						let method = DefaultCaptureMethod::from_index(sel).unwrap();
 						if method == DefaultCaptureMethod::Screen {
 							let conn = FramrConnection::new()?;
-							let outputs = conn.get_all_outputs();
+							let outputs = conn.get_all_outputs()?;
 							if outputs.is_empty() {
 								display_error("No monitors detected.");
 							} else {

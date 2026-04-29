@@ -207,7 +207,7 @@ fn capture(cli: &Cli, cfg: Option<&config::AppConfig>) -> Result<Vec<u8>> {
 		Some(config::DefaultCaptureMethod::Screen) => {
 			let screen_num = screen.unwrap_or(0);
 			let output = conn.get_output(screen_num)?;
-			conn.screenshot_output(output, cli.cursor)?
+			conn.screenshot_output(&output, cli.cursor)?
 		}
 		_ => conn.screenshot_all(cli.cursor)?,
 	};
@@ -264,11 +264,11 @@ fn handle_upload(
 		notify("Upload Successful", &url, &bytes, cli.silent)?;
 	} else {
 		if !cli.silent {
-			Notification::new()
+			let _ = Notification::new()
 				.summary("Upload Successful")
 				.body(&url)
 				.appname("framr")
-				.show()?;
+				.show();
 		}
 	}
 
@@ -283,20 +283,23 @@ fn notify(title: &str, body: &str, bytes: &[u8], silent: bool) -> Result<()> {
 		return Ok(());
 	}
 
-	let img = image::load_from_memory(bytes)?;
-	let (width, height) = img.dimensions();
-	let pixels = img.to_rgba8().into_raw();
+	let _ = (|| -> Result<()> {
+		let img = image::load_from_memory(bytes)?;
+		let (width, height) = img.dimensions();
+		let pixels = img.to_rgba8().into_raw();
 
-	Notification::new()
-		.summary(title)
-		.body(body)
-		.appname("framr")
-		.image_data(notify_rust::Image::from_rgba(
-			width as i32,
-			height as i32,
-			pixels,
-		)?)
-		.show()?;
+		Notification::new()
+			.summary(title)
+			.body(body)
+			.appname("framr")
+			.image_data(notify_rust::Image::from_rgba(
+				width as i32,
+				height as i32,
+				pixels,
+			)?)
+			.show()?;
+		Ok(())
+	})();
 
 	Ok(())
 }
@@ -351,7 +354,7 @@ fn main() -> Result<()> {
 
 	if cli.screens {
 		let conn = FramrConnection::new()?;
-		for (i, output) in conn.get_all_outputs().iter().enumerate() {
+		for (i, output) in conn.get_all_outputs()?.iter().enumerate() {
 			println!("{}: {}", i, output);
 		}
 		return Ok(());

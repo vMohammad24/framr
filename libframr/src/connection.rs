@@ -1,105 +1,49 @@
-use anyhow::Result;
-use wayland_client::Connection;
-use wayland_client::globals::{GlobalList, registry_queue_init};
-use wayland_protocols::xdg::xdg_output::zv1::client::zxdg_output_manager_v1::ZxdgOutputManagerV1;
-
-use crate::dispatch::{OutputEnumState, RegistryState};
-use crate::error::FramrError;
+use crate::backend::CaptureBackend;
+use crate::backend::wlr::WlrBackend;
 use crate::output::{LogicalRegion, OutputInfo};
+use anyhow::Result;
+use image::RgbaImage;
 
 pub struct FramrConnection {
-	pub(crate) conn: Connection,
-	pub(crate) globals: GlobalList,
-	outputs: Vec<OutputInfo>,
+	backend: Box<dyn CaptureBackend>,
 }
 
 impl FramrConnection {
 	pub fn new() -> Result<Self> {
-		let conn = Connection::connect_to_env()
-			.map_err(|e| FramrError::ConnectionFailed(format!("{e}")))?;
-		let (globals, _event_queue) = registry_queue_init::<RegistryState>(&conn)
-			.map_err(|e| FramrError::ConnectionFailed(format!("{e}")))?;
-		let mut this = Self {
-			conn,
-			globals,
-			outputs: Vec::new(),
-		};
-		this.refresh_outputs()?;
-		Ok(this)
+		Ok(Self {
+			backend: Box::new(WlrBackend::new()?),
+		})
 	}
 
-	fn refresh_outputs(&mut self) -> Result<()> {
-		let mut state = OutputEnumState::default();
-		let mut event_queue = self.conn.new_event_queue::<OutputEnumState>();
-		let qh = event_queue.handle();
-
-		let _ = self.conn.display().get_registry(&qh, ());
-		event_queue.roundtrip(&mut state)?;
-
-		let Ok(xdg_mgr): Result<ZxdgOutputManagerV1, _> = self.globals.bind(&qh, 3..=3, ()) else {
-			self.outputs = state.outputs.into_iter().map(Into::into).collect();
-			return Ok(());
-		};
-
-		let xdg_outputs: Vec<_> = state
-			.outputs
-			.iter()
-			.enumerate()
-			.map(|(i, output)| xdg_mgr.get_xdg_output(&output.wl_output, &qh, i))
-			.collect();
-		event_queue.roundtrip(&mut state)?;
-
-		for xdg in &xdg_outputs {
-			xdg.destroy();
-		}
-
-		self.outputs = state.outputs.into_iter().map(Into::into).collect();
-
-		if self.outputs.is_empty() {
-			return Err(FramrError::NoOutputs.into());
-		}
-
-		Ok(())
+	pub fn get_all_outputs(&self) -> Result<Vec<OutputInfo>> {
+		self.backend.get_outputs()
 	}
 
-	pub fn get_all_outputs(&self) -> &[OutputInfo] {
-		&self.outputs
-	}
-
-	pub fn get_output(&self, index: usize) -> Result<&OutputInfo> {
-		self.outputs
+	pub fn get_output(&self, index: usize) -> Result<OutputInfo> {
+		let outputs = self.backend.get_outputs()?;
+		outputs
 			.get(index)
-			.ok_or(FramrError::OutputNotFound(index).into())
+			.cloned()
+			.ok_or_else(|| crate::error::FramrError::OutputNotFound(index).into())
 	}
 
 	pub fn screenshot_output(
 		&self,
 		output: &OutputInfo,
 		include_cursor: bool,
-	) -> Result<image::RgbaImage> {
-		crate::capture::capture_output(&self.conn, &self.globals, output, include_cursor)
+	) -> Result<RgbaImage> {
+		self.backend.capture_output(output, None, include_cursor)
 	}
 
 	pub fn screenshot_region(
 		&self,
 		region: &LogicalRegion,
 		include_cursor: bool,
-	) -> Result<image::RgbaImage> {
-		crate::capture::capture_region(
-			&self.conn,
-			&self.globals,
-			&self.outputs,
-			region,
-			include_cursor,
-		)
+	) -> Result<RgbaImage> {
+		self.backend.capture_region(region, include_cursor)
 	}
 
-	pub fn screenshot_all(&self, include_cursor: bool) -> Result<image::RgbaImage> {
-		crate::capture::capture_all_outputs(
-			&self.conn,
-			&self.globals,
-			&self.outputs,
-			include_cursor,
-		)
+	pub fn screenshot_all(&self, include_cursor: bool) -> Result<RgbaImage> {
+		self.backend.capture_all_outputs(include_cursor)
 	}
 }
