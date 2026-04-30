@@ -15,7 +15,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Install System Dependencies
-        run: pacman -Syu --noconfirm pkg-config wayland wayland-protocols libxkbcommon cairo libxcursor mesa dbus
+        run: pacman -Syu --noconfirm pkg-config wayland wayland-protocols libxkbcommon cairo pango libxcursor mesa dbus
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
