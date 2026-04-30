@@ -12,7 +12,6 @@ libc = "0.2"
 ureq = { version = "3", features = ["multipart"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-slurp-rs = "0.2"
 wl-clipboard-rs = "0.9"
 confy = "2"
 anyhow = "1.0"
@@ -23,6 +22,12 @@ shellexpand = "3.1.2"
 dirs = "6.0.0"
 base64 = "0.22.1"
 notify-rust = { version = "4", features = ["d", "images_no_default_features"], default-features = false }
+pango = "0.22.6"
+pangocairo = "0.22.0"
+cairo-rs = { version = "0.22.0", default-features = false }
+fastblur = "0.1.1"
+wayland-client = "0.31"
+smithay-client-toolkit = "0.20"
 
 
 [package.metadata.dist]

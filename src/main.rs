@@ -4,12 +4,12 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use image::{GenericImageView, ImageFormat};
-use libframr::{FramrConnection, LogicalRegion};
+use libframr::FramrConnection;
 use notify_rust::Notification;
-use slurp_rs::SelectOptions;
 use wl_clipboard_rs::copy::{MimeType, Options as ClipboardOptions, Seat, Source};
 
 mod config;
+mod selection;
 mod upload;
 
 #[derive(Parser)]
@@ -198,11 +198,9 @@ fn capture(cli: &Cli, cfg: Option<&config::AppConfig>) -> Result<Vec<u8>> {
 
 	let image = match method {
 		Some(config::DefaultCaptureMethod::Area) => {
-			let selection = slurp_rs::select_region(SelectOptions::default())?;
-			let rect = &selection.rect;
-			let region = LogicalRegion::new(rect.x, rect.y, rect.width as u32, rect.height as u32);
-
-			conn.screenshot_region(&region, cli.cursor)?
+			let ui = selection::SelectionUI::new()?;
+			ui.run()?
+				.ok_or_else(|| anyhow::anyhow!("Selection cancelled"))?
 		}
 		Some(config::DefaultCaptureMethod::Screen) => {
 			let screen_num = screen.unwrap_or(0);

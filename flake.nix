@@ -41,6 +41,7 @@
             wayland
             libxkbcommon
             cairo
+            pango
             libxcursor
           ];
 
