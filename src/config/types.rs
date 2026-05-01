@@ -218,10 +218,6 @@ pub struct Color {
 }
 
 impl Color {
-	pub const fn new(r: u8, g: u8, b: u8, a: u8) -> Self {
-		Self { r, g, b, a }
-	}
-
 	pub fn rgb(r: f64, g: f64, b: f64) -> Self {
 		Self {
 			r: (r.clamp(0.0, 1.0) * u8::MAX as f64).round() as u8,
