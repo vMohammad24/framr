@@ -151,7 +151,12 @@ pub fn draw_annotation(
 	output: &OutputInfo,
 	config: &SelectionConfig,
 ) {
-	cr.set_source_rgba(ann.color.r, ann.color.g, ann.color.b, ann.color.a);
+	cr.set_source_rgba(
+		ann.color.r_f64(),
+		ann.color.g_f64(),
+		ann.color.b_f64(),
+		ann.color.a_f64(),
+	);
 	cr.set_line_width(config.annotation_line_width);
 	cr.set_antialias(Antialias::Best);
 	cr.set_line_cap(LineCap::Round);

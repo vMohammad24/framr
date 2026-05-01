@@ -1,6 +1,7 @@
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
+use std::str::FromStr;
 
 pub trait ConfigEnum: Sized + Copy + PartialEq {
 	fn variants() -> &'static [&'static str];
@@ -208,21 +209,125 @@ impl Default for SelectionConfig {
 	}
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Color {
-	pub r: f64,
-	pub g: f64,
-	pub b: f64,
-	pub a: f64,
+	pub r: u8,
+	pub g: u8,
+	pub b: u8,
+	pub a: u8,
 }
 
 impl Color {
+	pub const fn new(r: u8, g: u8, b: u8, a: u8) -> Self {
+		Self { r, g, b, a }
+	}
+
 	pub fn rgb(r: f64, g: f64, b: f64) -> Self {
-		Self { r, g, b, a: 1.0 }
+		Self {
+			r: (r.clamp(0.0, 1.0) * u8::MAX as f64).round() as u8,
+			g: (g.clamp(0.0, 1.0) * u8::MAX as f64).round() as u8,
+			b: (b.clamp(0.0, 1.0) * u8::MAX as f64).round() as u8,
+			a: u8::MAX,
+		}
 	}
 
 	pub fn rgba(r: f64, g: f64, b: f64, a: f64) -> Self {
-		Self { r, g, b, a }
+		Self {
+			r: (r.clamp(0.0, 1.0) * u8::MAX as f64).round() as u8,
+			g: (g.clamp(0.0, 1.0) * u8::MAX as f64).round() as u8,
+			b: (b.clamp(0.0, 1.0) * u8::MAX as f64).round() as u8,
+			a: (a.clamp(0.0, 1.0) * u8::MAX as f64).round() as u8,
+		}
+	}
+
+	pub fn r_f64(&self) -> f64 {
+		self.r as f64 / u8::MAX as f64
+	}
+	pub fn g_f64(&self) -> f64 {
+		self.g as f64 / u8::MAX as f64
+	}
+	pub fn b_f64(&self) -> f64 {
+		self.b as f64 / u8::MAX as f64
+	}
+	pub fn a_f64(&self) -> f64 {
+		self.a as f64 / u8::MAX as f64
+	}
+}
+
+impl fmt::Display for Color {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		if self.a == u8::MAX {
+			write!(f, "#{:02X}{:02X}{:02X}", self.r, self.g, self.b)
+		} else {
+			write!(
+				f,
+				"#{:02X}{:02X}{:02X}{:02X}",
+				self.r, self.g, self.b, self.a
+			)
+		}
+	}
+}
+
+#[derive(Debug)]
+pub enum ColorParseError {
+	NonAscii,
+	InvalidLength,
+	Utf8Error(std::str::Utf8Error),
+	ParseIntError(std::num::ParseIntError),
+}
+
+impl fmt::Display for ColorParseError {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			Self::NonAscii => write!(f, "hex color contains non-ASCII characters"),
+			Self::InvalidLength => write!(f, "invalid hex color length"),
+			Self::Utf8Error(e) => write!(f, "invalid utf8 in hex component: {}", e),
+			Self::ParseIntError(e) => write!(f, "invalid hex component: {}", e),
+		}
+	}
+}
+
+impl std::error::Error for ColorParseError {}
+
+impl FromStr for Color {
+	type Err = ColorParseError;
+
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		let hex = s.trim_start_matches('#');
+		if !hex.is_ascii() {
+			return Err(ColorParseError::NonAscii);
+		}
+
+		if hex.len() != 6 && hex.len() != 8 {
+			return Err(ColorParseError::InvalidLength);
+		}
+
+		let components: Result<Vec<u8>, _> = hex
+			.as_bytes()
+			.chunks(2)
+			.map(|chunk| {
+				let s = std::str::from_utf8(chunk).map_err(ColorParseError::Utf8Error)?;
+				u8::from_str_radix(s, 16).map_err(ColorParseError::ParseIntError)
+			})
+			.collect();
+
+		let components = components?;
+
+		match components.len() {
+			3 => Ok(Self {
+				r: components[0],
+				g: components[1],
+				b: components[2],
+				a: u8::MAX,
+			}),
+			4 => Ok(Self {
+				r: components[0],
+				g: components[1],
+				b: components[2],
+				a: components[3],
+			}),
+			_ => Err(ColorParseError::InvalidLength),
+		}
 	}
 }
 
@@ -231,16 +336,7 @@ impl Serialize for Color {
 	where
 		S: Serializer,
 	{
-		let r = (self.r * 255.0).round() as u8;
-		let g = (self.g * 255.0).round() as u8;
-		let b = (self.b * 255.0).round() as u8;
-		let a = (self.a * 255.0).round() as u8;
-
-		if a == 255 {
-			serializer.serialize_str(&format!("#{:02X}{:02X}{:02X}", r, g, b))
-		} else {
-			serializer.serialize_str(&format!("#{:02X}{:02X}{:02X}{:02X}", r, g, b, a))
-		}
+		serializer.collect_str(self)
 	}
 }
 
@@ -262,40 +358,7 @@ impl<'de> Deserialize<'de> for Color {
 			where
 				E: de::Error,
 			{
-				let hex = value.trim_start_matches('#');
-				if !hex.is_ascii() {
-					return Err(de::Error::custom("hex color contains non-ASCII characters"));
-				}
-
-				if hex.len() != 6 && hex.len() != 8 {
-					return Err(de::Error::custom("invalid hex color length"));
-				}
-
-				let components: Result<Vec<u8>, _> = hex
-					.as_bytes()
-					.chunks(2)
-					.map(|chunk| {
-						let s = std::str::from_utf8(chunk).map_err(de::Error::custom)?;
-						u8::from_str_radix(s, 16).map_err(de::Error::custom)
-					})
-					.collect();
-
-				let components = components?;
-
-				match components.len() {
-					3 => Ok(Color::rgb(
-						components[0] as f64 / 255.0,
-						components[1] as f64 / 255.0,
-						components[2] as f64 / 255.0,
-					)),
-					4 => Ok(Color::rgba(
-						components[0] as f64 / 255.0,
-						components[1] as f64 / 255.0,
-						components[2] as f64 / 255.0,
-						components[3] as f64 / 255.0,
-					)),
-					_ => Err(de::Error::custom("invalid hex color length")),
-				}
+				Color::from_str(value).map_err(de::Error::custom)
 			}
 		}
 

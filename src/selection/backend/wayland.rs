@@ -142,7 +142,7 @@ impl AppState {
 			}
 
 			let bg = state.config.background_color;
-			cr.set_source_rgba(bg.r, bg.g, bg.b, bg.a);
+			cr.set_source_rgba(bg.r_f64(), bg.g_f64(), bg.b_f64(), bg.a_f64());
 			cr.rectangle(0.0, 0.0, width as f64, height as f64);
 
 			if let Some(start) = state.start {
@@ -172,7 +172,7 @@ impl AppState {
 					cr.set_fill_rule(cairo::FillRule::Winding);
 
 					let bc = state.config.border_color;
-					cr.set_source_rgb(bc.r, bc.g, bc.b);
+					cr.set_source_rgb(bc.r_f64(), bc.g_f64(), bc.b_f64());
 					cr.set_line_width(state.config.border_width);
 					cr.rectangle(x, y, w, h);
 					if let Err(e) = cr.stroke() {
@@ -243,7 +243,7 @@ impl AppState {
 		let mouse_y = mouse_global.1 - offset.y as f64;
 
 		let tbg = config.toolbar_background_color;
-		cr.set_source_rgba(tbg.r, tbg.g, tbg.b, tbg.a);
+		cr.set_source_rgba(tbg.r_f64(), tbg.g_f64(), tbg.b_f64(), tbg.a_f64());
 		cr.rectangle(x, y, total_w, h);
 		cr.fill().unwrap();
 
@@ -257,12 +257,12 @@ impl AppState {
 
 			if *tool == active {
 				let tac = config.toolbar_active_color;
-				cr.set_source_rgba(tac.r, tac.g, tac.b, tac.a);
+				cr.set_source_rgba(tac.r_f64(), tac.g_f64(), tac.b_f64(), tac.a_f64());
 				cr.rectangle(tx, y, item_w, h);
 				cr.fill().unwrap();
 			} else if is_hovered {
 				let thc = config.toolbar_hover_color;
-				cr.set_source_rgba(thc.r, thc.g, thc.b, thc.a);
+				cr.set_source_rgba(thc.r_f64(), thc.g_f64(), thc.b_f64(), thc.a_f64());
 				cr.rectangle(tx, y, item_w, h);
 				cr.fill().unwrap();
 			}

@@ -12,6 +12,7 @@ use console::{Term, style};
 use dialoguer::{Confirm, Input, Select, theme::ColorfulTheme};
 use libframr::FramrConnection;
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::thread;
 use std::time::Duration;
 
@@ -520,10 +521,13 @@ pub fn run_config_wizard() -> Result<()> {
 				"Edit existing uploader",
 				"Delete uploader",
 				"Defaults...",
+				"Selection UI settings...",
 				"Save & Exit",
 			])
 			.default(5)
 			.interact()?;
+
+		let _ = term.clear_screen();
 
 		match selection {
 			0 => {
@@ -550,7 +554,6 @@ pub fn run_config_wizard() -> Result<()> {
 				thread::sleep(Duration::from_secs(1));
 			}
 			1 => {
-				let _ = term.clear_screen();
 				create_uploader_interactive(&mut cfg)?;
 				save_config(&cfg)?;
 				display_success("Uploader created and saved successfully.");
@@ -675,12 +678,193 @@ pub fn run_config_wizard() -> Result<()> {
 					_ => continue,
 				}
 			}
+			5 => {
+				modify_selection_config(&mut cfg)?;
+				save_config(&cfg)?;
+				display_success("Selection UI settings updated and saved.");
+				thread::sleep(Duration::from_secs(1));
+			}
 			_ => {
-				let _ = term.clear_screen();
 				save_config(&cfg)?;
 				display_success("Configuration saved. Exiting...");
 				return Ok(());
 			}
 		}
 	}
+}
+
+pub fn modify_selection_config(cfg: &mut AppConfig) -> Result<()> {
+	let theme = ColorfulTheme::default();
+	let mut s = cfg.selection;
+
+	loop {
+		println!("\n{}", style("Selection UI Settings").cyan().bold());
+		println!("{}", style("━━━━━━━━━━━━━━━━━━━━━━━━━━━").dim());
+
+		let items = [
+			format!(
+				"{:<25} {}",
+				style("Background Color:").bold(),
+				style_color(s.background_color)
+			),
+			format!(
+				"{:<25} {}",
+				style("Border Color:").bold(),
+				style_color(s.border_color)
+			),
+			format!(
+				"{:<25} {}",
+				style("Border Width:").bold(),
+				style(s.border_width).yellow()
+			),
+			format!(
+				"{:<25} {}",
+				style("Toolbar BG:").bold(),
+				style_color(s.toolbar_background_color)
+			),
+			format!(
+				"{:<25} {}",
+				style("Toolbar Active:").bold(),
+				style_color(s.toolbar_active_color)
+			),
+			format!(
+				"{:<25} {}",
+				style("Toolbar Hover:").bold(),
+				style_color(s.toolbar_hover_color)
+			),
+			format!(
+				"{:<25} {}",
+				style("Annotation Color:").bold(),
+				style_color(s.annotation_color)
+			),
+			format!(
+				"{:<25} {}",
+				style("Annotation Width:").bold(),
+				style(s.annotation_line_width).yellow()
+			),
+			format!(
+				"{:<25} {}",
+				style("Blur Radius:").bold(),
+				style(s.blur_radius).yellow()
+			),
+			format!(
+				"{:<25} {}",
+				style("Pixelate Block Size:").bold(),
+				style(s.pixelate_block_size).yellow()
+			),
+			format!(
+				"{:<25} {}",
+				style("Toolbar Y:").bold(),
+				style(s.toolbar_y).yellow()
+			),
+			format!(
+				"{:<25} {}",
+				style("Toolbar Item Width:").bold(),
+				style(s.toolbar_item_width).yellow()
+			),
+			format!(
+				"{:<25} {}",
+				style("Toolbar Height:").bold(),
+				style(s.toolbar_height).yellow()
+			),
+			style("Back").dim().to_string(),
+		];
+
+		let sel = Select::with_theme(&theme)
+			.with_prompt("Edit Setting")
+			.items(&items)
+			.default(items.len() - 1)
+			.interact()?;
+
+		match sel {
+			0 => s.background_color = input_color("Background Color", s.background_color)?,
+			1 => s.border_color = input_color("Border Color", s.border_color)?,
+			2 => {
+				s.border_width = Input::with_theme(&theme)
+					.with_prompt("Border Width")
+					.default(s.border_width)
+					.interact_text()?
+			}
+			3 => {
+				s.toolbar_background_color =
+					input_color("Toolbar Background Color", s.toolbar_background_color)?
+			}
+			4 => {
+				s.toolbar_active_color =
+					input_color("Toolbar Active Color", s.toolbar_active_color)?
+			}
+			5 => s.toolbar_hover_color = input_color("Toolbar Hover Color", s.toolbar_hover_color)?,
+			6 => s.annotation_color = input_color("Annotation Color", s.annotation_color)?,
+			7 => {
+				s.annotation_line_width = Input::with_theme(&theme)
+					.with_prompt("Annotation Line Width")
+					.default(s.annotation_line_width)
+					.interact_text()?
+			}
+			8 => {
+				s.blur_radius = Input::with_theme(&theme)
+					.with_prompt("Blur Radius")
+					.default(s.blur_radius)
+					.interact_text()?
+			}
+			9 => {
+				s.pixelate_block_size = Input::with_theme(&theme)
+					.with_prompt("Pixelate Block Size")
+					.default(s.pixelate_block_size)
+					.interact_text()?
+			}
+			10 => {
+				s.toolbar_y = Input::with_theme(&theme)
+					.with_prompt("Toolbar Y")
+					.default(s.toolbar_y)
+					.interact_text()?
+			}
+			11 => {
+				s.toolbar_item_width = Input::with_theme(&theme)
+					.with_prompt("Toolbar Item Width")
+					.default(s.toolbar_item_width)
+					.interact_text()?
+			}
+			12 => {
+				s.toolbar_height = Input::with_theme(&theme)
+					.with_prompt("Toolbar Height")
+					.default(s.toolbar_height)
+					.interact_text()?
+			}
+			_ => break,
+		}
+	}
+
+	cfg.selection = s;
+	Ok(())
+}
+
+fn style_color(c: Color) -> String {
+	style(c.to_string())
+		.color256(get_color256(c.r, c.g, c.b))
+		.to_string()
+}
+
+fn get_color256(r: u8, g: u8, b: u8) -> u8 {
+	let r = (r as u32 * 5 / 255) as u8;
+	let g = (g as u32 * 5 / 255) as u8;
+	let b = (b as u32 * 5 / 255) as u8;
+	16 + 36 * r + 6 * g + b
+}
+
+fn input_color(prompt: &str, current: Color) -> Result<Color> {
+	let theme = ColorfulTheme::default();
+	let current_hex = current.to_string();
+
+	let input: String = Input::with_theme(&theme)
+		.with_prompt(prompt)
+		.default(current_hex)
+		.validate_with(|input: &String| -> Result<(), String> {
+			Color::from_str(input)
+				.map(|_| ())
+				.map_err(|e| e.to_string())
+		})
+		.interact_text()?;
+
+	Ok(Color::from_str(&input).unwrap())
 }
