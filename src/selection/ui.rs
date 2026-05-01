@@ -12,6 +12,7 @@ use smithay_client_toolkit::{
 use std::sync::{Arc, Mutex};
 use wayland_client::{Connection, globals::registry_queue_init};
 
+use crate::config::SelectionConfig;
 use crate::selection::backend::wayland::{AppState, SurfaceData};
 use crate::selection::graphics;
 use crate::selection::state::{SelectionState, Tool};
@@ -48,7 +49,7 @@ fn image_to_cairo_surface(img: &RgbaImage) -> cairo::ImageSurface {
 }
 
 impl SelectionUI {
-	pub fn new() -> Result<Self> {
+	pub fn new(config: SelectionConfig) -> Result<Self> {
 		let conn = FramrConnection::new()?;
 		let outputs_info = conn.get_all_outputs()?;
 		let mut outputs = Vec::new();
@@ -78,6 +79,7 @@ impl SelectionUI {
 				dirty: true,
 				current_offset: (0.0, 0.0),
 				editing_text_idx: None,
+				config,
 			})),
 		})
 	}
@@ -163,12 +165,16 @@ impl SelectionUI {
 			let img = img.clone();
 			let tx = tx.clone();
 			let conn_handle = conn.clone();
+			let (blur_radius, pixelate_block_size) = {
+				let state = app.state.lock().unwrap();
+				(state.config.blur_radius, state.config.pixelate_block_size)
+			};
 			std::thread::spawn(move || {
 				let (w, h) = (info.logical_size.width, info.logical_size.height);
 				let mut blurred_img = img.clone();
-				graphics::apply_blur(&mut blurred_img, 0, 0, w, h);
+				graphics::apply_blur(&mut blurred_img, 0, 0, w, h, blur_radius);
 				let mut pixelated_img = img.clone();
-				graphics::apply_pixelate(&mut pixelated_img, 0, 0, w, h);
+				graphics::apply_pixelate(&mut pixelated_img, 0, 0, w, h, pixelate_block_size);
 
 				let _ = tx.send(UserEvent::ProcessingFinished {
 					surface_idx: i,
@@ -250,7 +256,7 @@ impl SelectionUI {
 
 			if intersect_x < intersect_x2 && intersect_y < intersect_y2 {
 				let mut base = img.clone();
-				graphics::apply_annotations(&mut base, &state.annotations, info);
+				graphics::apply_annotations(&mut base, &state.annotations, info, &state.config);
 
 				let local_x = (intersect_x - out_x) as u32;
 				let local_y = (intersect_y - out_y) as u32;

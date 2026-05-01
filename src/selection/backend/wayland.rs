@@ -31,6 +31,7 @@ use wayland_client::{
 	},
 };
 
+use crate::config::SelectionConfig;
 use crate::selection::{
 	graphics,
 	state::{Annotation, SelectionState, Tool},
@@ -136,11 +137,12 @@ impl AppState {
 						}
 					}
 				} else {
-					graphics::draw_annotation(&cr, ann, &surface_data.output);
+					graphics::draw_annotation(&cr, ann, &surface_data.output, &state.config);
 				}
 			}
 
-			cr.set_source_rgba(0.0, 0.0, 0.0, 0.4);
+			let bg = state.config.background_color;
+			cr.set_source_rgba(bg.r, bg.g, bg.b, bg.a);
 			cr.rectangle(0.0, 0.0, width as f64, height as f64);
 
 			if let Some(start) = state.start {
@@ -169,8 +171,9 @@ impl AppState {
 					}
 					cr.set_fill_rule(cairo::FillRule::Winding);
 
-					cr.set_source_rgb(0.0, 0.5, 1.0);
-					cr.set_line_width(2.0);
+					let bc = state.config.border_color;
+					cr.set_source_rgb(bc.r, bc.g, bc.b);
+					cr.set_line_width(state.config.border_width);
 					cr.rectangle(x, y, w, h);
 					if let Err(e) = cr.stroke() {
 						eprintln!("failed to stroke selection: {}", e);
@@ -198,6 +201,7 @@ impl AppState {
 				state.active_tool,
 				state.current,
 				surface_data.output.logical_position,
+				&state.config,
 			);
 		}
 
@@ -225,19 +229,21 @@ impl AppState {
 		active: Tool,
 		mouse_global: (f64, f64),
 		offset: Position,
+		config: &SelectionConfig,
 	) {
 		let tools = Tool::all();
 
-		let item_w = 50.0;
-		let h = 40.0;
+		let item_w = config.toolbar_item_width;
+		let h = config.toolbar_height;
 		let total_w = item_w * tools.len() as f64;
 		let x = (width - total_w) / 2.0;
-		let y = 20.0;
+		let y = config.toolbar_y;
 
 		let mouse_x = mouse_global.0 - offset.x as f64;
 		let mouse_y = mouse_global.1 - offset.y as f64;
 
-		cr.set_source_rgba(0.15, 0.15, 0.15, 0.95);
+		let tbg = config.toolbar_background_color;
+		cr.set_source_rgba(tbg.r, tbg.g, tbg.b, tbg.a);
 		cr.rectangle(x, y, total_w, h);
 		cr.fill().unwrap();
 
@@ -250,11 +256,13 @@ impl AppState {
 				mouse_x >= tx && mouse_x <= tx + item_w && mouse_y >= y && mouse_y <= y + h;
 
 			if *tool == active {
-				cr.set_source_rgba(0.3, 0.6, 1.0, 0.8);
+				let tac = config.toolbar_active_color;
+				cr.set_source_rgba(tac.r, tac.g, tac.b, tac.a);
 				cr.rectangle(tx, y, item_w, h);
 				cr.fill().unwrap();
 			} else if is_hovered {
-				cr.set_source_rgba(0.3, 0.3, 0.3, 0.8);
+				let thc = config.toolbar_hover_color;
+				cr.set_source_rgba(thc.r, thc.g, thc.b, thc.a);
 				cr.rectangle(tx, y, item_w, h);
 				cr.fill().unwrap();
 			}
@@ -415,8 +423,10 @@ impl PointerHandler for AppState {
                 PointerEventKind::Press { button, .. } => {
                     if button == 0x110 {
                         // lclick
-                        if event.position.1 >= 20.0 && event.position.1 <= 60.0 {
-                            let item_w = 50.0;
+						let ty = state.config.toolbar_y;
+						let th = state.config.toolbar_height;
+                        if event.position.1 >= ty && event.position.1 <= ty + th {
+                            let item_w = state.config.toolbar_item_width;
                             let total_w = item_w * Tool::all().len() as f64;
                             let x_start = (state.last_surface_width - total_w) / 2.0;
 
@@ -435,6 +445,7 @@ impl PointerHandler for AppState {
                             state.is_dragging = true;
                         } else {
                             let tool = state.active_tool;
+                            let color = state.config.annotation_color;
                             state.annotations.push(Annotation {
                                 tool,
                                 points: vec![global_pos],
@@ -443,7 +454,7 @@ impl PointerHandler for AppState {
                                 } else {
                                     None
                                 },
-                                color: (1.0, 0.0, 0.0),
+                                color,
                             });
 
                             if tool == Tool::Text {

@@ -3,9 +3,15 @@ use image::{Rgba, RgbaImage};
 use libframr::OutputInfo;
 use pangocairo::functions::{create_layout, show_layout};
 
+use crate::config::SelectionConfig;
 use crate::selection::state::{Annotation, Tool};
 
-pub fn apply_annotations(img: &mut RgbaImage, annotations: &[Annotation], output: &OutputInfo) {
+pub fn apply_annotations(
+	img: &mut RgbaImage,
+	annotations: &[Annotation],
+	output: &OutputInfo,
+	config: &SelectionConfig,
+) {
 	for ann in annotations {
 		if (ann.tool == Tool::Blur || ann.tool == Tool::Pixelate) && ann.points.len() >= 2 {
 			let (x1, y1) = (
@@ -22,9 +28,9 @@ pub fn apply_annotations(img: &mut RgbaImage, annotations: &[Annotation], output
 			let bh = ((y1 - y2).abs() as u32).min(img.height() - by);
 			if bw > 0 && bh > 0 {
 				if ann.tool == Tool::Blur {
-					apply_blur(img, bx, by, bw, bh);
+					apply_blur(img, bx, by, bw, bh, config.blur_radius);
 				} else {
-					apply_pixelate(img, bx, by, bw, bh);
+					apply_pixelate(img, bx, by, bw, bh, config.pixelate_block_size);
 				}
 			}
 		}
@@ -60,7 +66,7 @@ pub fn apply_annotations(img: &mut RgbaImage, annotations: &[Annotation], output
 		}
 		for ann in annotations {
 			if ann.tool != Tool::Blur && ann.tool != Tool::Pixelate {
-				draw_annotation(&cr, ann, output);
+				draw_annotation(&cr, ann, output, config);
 			}
 		}
 	}
@@ -76,7 +82,7 @@ pub fn apply_annotations(img: &mut RgbaImage, annotations: &[Annotation], output
 	}
 }
 
-pub fn apply_blur(img: &mut RgbaImage, x: u32, y: u32, w: u32, h: u32) {
+pub fn apply_blur(img: &mut RgbaImage, x: u32, y: u32, w: u32, h: u32, radius: f32) {
 	let mut data = vec![[0u8; 3]; (w * h) as usize];
 	let img_w = img.width();
 	let raw = img.as_raw();
@@ -91,7 +97,7 @@ pub fn apply_blur(img: &mut RgbaImage, x: u32, y: u32, w: u32, h: u32) {
 		}
 	}
 
-	fastblur::gaussian_blur(&mut data, w as usize, h as usize, 10.0);
+	fastblur::gaussian_blur(&mut data, w as usize, h as usize, radius);
 
 	let raw_mut = img.as_mut();
 	for py in 0..h {
@@ -108,8 +114,7 @@ pub fn apply_blur(img: &mut RgbaImage, x: u32, y: u32, w: u32, h: u32) {
 	}
 }
 
-pub fn apply_pixelate(img: &mut RgbaImage, x: u32, y: u32, w: u32, h: u32) {
-	let block_size = 10;
+pub fn apply_pixelate(img: &mut RgbaImage, x: u32, y: u32, w: u32, h: u32, block_size: usize) {
 	let img_w = img.width();
 	let raw = img.as_mut();
 
@@ -140,9 +145,14 @@ pub fn apply_pixelate(img: &mut RgbaImage, x: u32, y: u32, w: u32, h: u32) {
 	}
 }
 
-pub fn draw_annotation(cr: &Context, ann: &Annotation, output: &OutputInfo) {
-	cr.set_source_rgb(ann.color.0, ann.color.1, ann.color.2);
-	cr.set_line_width(4.0);
+pub fn draw_annotation(
+	cr: &Context,
+	ann: &Annotation,
+	output: &OutputInfo,
+	config: &SelectionConfig,
+) {
+	cr.set_source_rgba(ann.color.r, ann.color.g, ann.color.b, ann.color.a);
+	cr.set_line_width(config.annotation_line_width);
 	cr.set_antialias(Antialias::Best);
 	cr.set_line_cap(LineCap::Round);
 	cr.set_line_join(LineJoin::Round);

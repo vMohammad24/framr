@@ -198,7 +198,8 @@ fn capture(cli: &Cli, cfg: Option<&config::AppConfig>) -> Result<Vec<u8>> {
 
 	let image = match method {
 		Some(config::DefaultCaptureMethod::Area) => {
-			let ui = selection::SelectionUI::new()?;
+			let selection_cfg = cfg.map(|c| c.selection).unwrap_or_default();
+			let ui = selection::SelectionUI::new(selection_cfg)?;
 			ui.run()?
 				.ok_or_else(|| anyhow::anyhow!("Selection cancelled"))?
 		}

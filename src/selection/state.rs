@@ -1,3 +1,5 @@
+use crate::config::{Color, SelectionConfig};
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Tool {
 	Select,
@@ -44,7 +46,7 @@ pub struct Annotation {
 	pub tool: Tool,
 	pub points: Vec<(f64, f64)>,
 	pub text: Option<String>,
-	pub color: (f64, f64, f64),
+	pub color: Color,
 }
 
 pub struct SelectionState {
@@ -60,4 +62,5 @@ pub struct SelectionState {
 	pub dirty: bool,
 	pub current_offset: (f64, f64),
 	pub editing_text_idx: Option<usize>,
+	pub config: SelectionConfig,
 }
