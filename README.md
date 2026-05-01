@@ -75,6 +75,7 @@ If you are building from source or running the binary system, you will need the 
 - `wayland`
 - `libxkbcommon`
 - `cairo`
+- `pango`
 - `dbus`
 - `libxcursor`
 
