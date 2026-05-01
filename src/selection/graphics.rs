@@ -145,6 +145,104 @@ pub fn apply_pixelate(img: &mut RgbaImage, x: u32, y: u32, w: u32, h: u32, block
 	}
 }
 
+pub fn get_text_size(text: &str) -> (f64, f64) {
+	let surface = ImageSurface::create(Format::ARgb32, 1, 1).expect("failed to create surface");
+	let cr = Context::new(&surface).expect("failed to create context");
+	let layout = create_layout(&cr);
+	layout.set_text(text);
+	let font = pango::FontDescription::from_string("system-ui Bold 20");
+	layout.set_font_description(Some(&font));
+	let (_, logical_rect) = layout.pixel_extents();
+	(logical_rect.width() as f64, logical_rect.height() as f64)
+}
+
+pub fn hit_test(ann: &Annotation, point: (f64, f64), threshold: f64) -> bool {
+	match ann.tool {
+		Tool::Circle => {
+			if ann.points.len() >= 2 {
+				let center = ann.points[0];
+				let edge = ann.points[1];
+				let dx = center.0 - edge.0;
+				let dy = center.1 - edge.1;
+				let radius = (dx * dx + dy * dy).sqrt();
+
+				let pdx = center.0 - point.0;
+				let pdy = center.1 - point.1;
+				let dist = (pdx * pdx + pdy * pdy).sqrt();
+
+				(dist - radius).abs() <= threshold
+			} else {
+				false
+			}
+		}
+		Tool::Arrow => {
+			if ann.points.len() >= 2 {
+				dist_to_segment(point, ann.points[0], ann.points[1]) <= threshold
+			} else {
+				false
+			}
+		}
+		Tool::Checkmark => {
+			if !ann.points.is_empty() {
+				let p = ann.points[0];
+				let dx = (point.0 - p.0).abs();
+				let dy = (point.1 - p.1).abs();
+				dx <= 20.0 && dy <= 20.0
+			} else {
+				false
+			}
+		}
+		Tool::Annotate => ann
+			.points
+			.windows(2)
+			.any(|w| dist_to_segment(point, w[0], w[1]) <= threshold),
+		Tool::Text => {
+			if let Some(text) = &ann.text
+				&& !ann.points.is_empty()
+			{
+				let p = ann.points[0];
+				let (w, h) = get_text_size(text);
+				let dx = point.0 - p.0;
+				let dy = point.1 - p.1;
+				dx >= 0.0 && dx <= w && dy >= 0.0 && dy <= h
+			} else {
+				false
+			}
+		}
+		Tool::Blur | Tool::Pixelate => {
+			if ann.points.len() >= 2 {
+				let (x1, y1) = ann.points[0];
+				let (x2, y2) = ann.points[1];
+				let x = x1.min(x2);
+				let y = y1.min(y2);
+				let w = (x1 - x2).abs();
+				let h = (y1 - y2).abs();
+				point.0 >= x && point.0 <= x + w && point.1 >= y && point.1 <= y + h
+			} else {
+				false
+			}
+		}
+		Tool::Select => false,
+	}
+}
+
+fn dist_to_segment(p: (f64, f64), a: (f64, f64), b: (f64, f64)) -> f64 {
+	let dx = b.0 - a.0;
+	let dy = b.1 - a.1;
+	if dx == 0.0 && dy == 0.0 {
+		let dpx = p.0 - a.0;
+		let dpy = p.1 - a.1;
+		return (dpx * dpx + dpy * dpy).sqrt();
+	}
+	let t = ((p.0 - a.0) * dx + (p.1 - a.1) * dy) / (dx * dx + dy * dy);
+	let t = t.clamp(0.0, 1.0);
+	let nearest_x = a.0 + t * dx;
+	let nearest_y = a.1 + t * dy;
+	let dpx = p.0 - nearest_x;
+	let dpy = p.1 - nearest_y;
+	(dpx * dpx + dpy * dpy).sqrt()
+}
+
 pub fn draw_annotation(
 	cr: &Context,
 	ann: &Annotation,

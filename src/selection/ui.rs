@@ -9,6 +9,7 @@ use smithay_client_toolkit::{
 	shell::wlr_layer::{Anchor, KeyboardInteractivity, Layer, LayerShell},
 	shm::{Shm, slot::SlotPool},
 };
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use wayland_client::{Connection, globals::registry_queue_init};
 
@@ -73,6 +74,12 @@ impl SelectionUI {
 				is_dragging: false,
 				active_tool: Tool::Select,
 				annotations: Vec::new(),
+				undo_stack: VecDeque::new(),
+				redo_stack: VecDeque::new(),
+				selected_annotation: None,
+				is_moving_annotation: false,
+				move_start_point: None,
+				original_points: None,
 				finished: false,
 				cancelled: false,
 				last_surface_width,
@@ -116,6 +123,7 @@ impl SelectionUI {
 			state: self.state.clone(),
 			exit: false,
 			rx,
+			modifiers: Default::default(),
 		};
 
 		event_queue.roundtrip(&mut app)?;

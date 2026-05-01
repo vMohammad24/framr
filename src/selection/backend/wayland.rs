@@ -63,6 +63,7 @@ pub struct AppState {
 	pub rx: std::sync::mpsc::Receiver<crate::selection::ui::UserEvent>,
 
 	pub exit: bool,
+	pub modifiers: Modifiers,
 }
 
 impl AppState {
@@ -99,7 +100,7 @@ impl AppState {
 				eprintln!("failed to paint: {}", e);
 			}
 
-			for ann in &state.annotations {
+			for (idx, ann) in state.annotations.iter().enumerate() {
 				if ann.tool == Tool::Blur || ann.tool == Tool::Pixelate {
 					if ann.points.len() >= 2 {
 						let offset_x = surface_data.output.logical_position.x as f64;
@@ -138,6 +139,48 @@ impl AppState {
 					}
 				} else {
 					graphics::draw_annotation(&cr, ann, &surface_data.output, &state.config);
+				}
+
+				if Some(idx) == state.selected_annotation {
+					let offset_x = surface_data.output.logical_position.x as f64;
+					let offset_y = surface_data.output.logical_position.y as f64;
+					cr.set_source_rgba(1.0, 1.0, 1.0, 0.5);
+					cr.set_dash(&[5.0, 5.0], 0.0);
+					cr.set_line_width(1.0);
+
+					if ann.tool == Tool::Circle && ann.points.len() >= 2 {
+						let center = (ann.points[0].0 - offset_x, ann.points[0].1 - offset_y);
+						let edge = (ann.points[1].0 - offset_x, ann.points[1].1 - offset_y);
+						let radius =
+							((center.0 - edge.0).powi(2) + (center.1 - edge.1).powi(2)).sqrt();
+						cr.arc(
+							center.0,
+							center.1,
+							radius + 2.0,
+							0.0,
+							2.0 * std::f64::consts::PI,
+						);
+						cr.stroke().ok();
+					} else if !ann.points.is_empty() {
+						let mut min_x = ann.points[0].0;
+						let mut min_y = ann.points[0].1;
+						let mut max_x = ann.points[0].0;
+						let mut max_y = ann.points[0].1;
+						for p in &ann.points[1..] {
+							min_x = min_x.min(p.0);
+							min_y = min_y.min(p.1);
+							max_x = max_x.max(p.0);
+							max_y = max_y.max(p.1);
+						}
+						cr.rectangle(
+							min_x - offset_x - 5.0,
+							min_y - offset_y - 5.0,
+							max_x - min_x + 10.0,
+							max_y - min_y + 10.0,
+						);
+						cr.stroke().ok();
+					}
+					cr.set_dash(&[], 0.0);
 				}
 			}
 
@@ -245,7 +288,7 @@ impl AppState {
 		let tbg = config.toolbar_background_color;
 		cr.set_source_rgba(tbg.r_f64(), tbg.g_f64(), tbg.b_f64(), tbg.a_f64());
 		cr.rectangle(x, y, total_w, h);
-		cr.fill().unwrap();
+		cr.fill().ok();
 
 		let mut hovered_tooltip = None;
 
@@ -259,12 +302,12 @@ impl AppState {
 				let tac = config.toolbar_active_color;
 				cr.set_source_rgba(tac.r_f64(), tac.g_f64(), tac.b_f64(), tac.a_f64());
 				cr.rectangle(tx, y, item_w, h);
-				cr.fill().unwrap();
+				cr.fill().ok();
 			} else if is_hovered {
 				let thc = config.toolbar_hover_color;
 				cr.set_source_rgba(thc.r_f64(), thc.g_f64(), thc.b_f64(), thc.a_f64());
 				cr.rectangle(tx, y, item_w, h);
-				cr.fill().unwrap();
+				cr.fill().ok();
 			}
 
 			if is_hovered {
@@ -304,7 +347,7 @@ impl AppState {
 
 			cr.set_source_rgba(0.0, 0.0, 0.0, 0.9);
 			cr.rectangle(adjusted_x, t_y, tip_w, tip_h);
-			cr.fill().unwrap();
+			cr.fill().ok();
 
 			cr.set_source_rgb(1.0, 1.0, 1.0);
 			cr.move_to(
@@ -434,16 +477,37 @@ impl PointerHandler for AppState {
                                 let tx = x_start + i as f64 * item_w;
                                 if event.position.0 >= tx && event.position.0 <= tx + item_w {
                                     state.active_tool = Tool::from_index(i);
+                                    state.selected_annotation = None;
                                     state.dirty = true;
                                     return;
                                 }
                             }
                         }
-                        if state.active_tool == Tool::Select {
-                            state.start = Some(global_pos);
-                            state.end = None;
-                            state.is_dragging = true;
+                        if state.active_tool == Tool::Select || self.modifiers.ctrl {
+                            let mut hit_idx = None;
+                            for (idx, ann) in state.annotations.iter().enumerate().rev() {
+                                if graphics::hit_test(ann, global_pos, 5.0) {
+                                    hit_idx = Some(idx);
+                                    break;
+                                }
+                            }
+
+                            if let Some(idx) = hit_idx {
+                                state.push_undo();
+                                state.selected_annotation = Some(idx);
+                                state.is_moving_annotation = true;
+                                state.move_start_point = Some(global_pos);
+                                state.original_points = Some(state.annotations[idx].points.clone());
+                            } else {
+                                state.selected_annotation = None;
+                                if state.active_tool == Tool::Select {
+                                    state.start = Some(global_pos);
+                                    state.end = None;
+                                    state.is_dragging = true;
+                                }
+                            }
                         } else {
+                            state.push_undo();
                             let tool = state.active_tool;
                             let color = state.config.annotation_color;
                             state.annotations.push(Annotation {
@@ -459,6 +523,7 @@ impl PointerHandler for AppState {
 
                             if tool == Tool::Text {
                                 state.editing_text_idx = Some(state.annotations.len() - 1);
+                                state.selected_annotation = Some(state.annotations.len() - 1);
                             } else {
                                 state.editing_text_idx = None;
                                 state.is_dragging = true;
@@ -480,25 +545,58 @@ impl PointerHandler for AppState {
                     }
                 }
                 PointerEventKind::Release { button, .. } => {
-                    if button == 0x110 && state.is_dragging {
-                        state.is_dragging = false;
-                        if state.active_tool == Tool::Select {
-                            state.end = Some(global_pos);
-                            if let Some(start) = state.start {
-                                let dx = (start.0 - global_pos.0).abs();
-                                let dy = (start.1 - global_pos.1).abs();
-                                if dx > 5.0 && dy > 5.0 {
-                                    state.finished = true;
-                                } else {
-                                    state.start = None;
-                                    state.end = None;
+                    if button == 0x110 {
+                        if state.is_moving_annotation {
+                            state.is_moving_annotation = false;
+                            state.move_start_point = None;
+                            state.original_points = None;
+                        }
+                        if state.is_dragging {
+                            state.is_dragging = false;
+                            if state.active_tool == Tool::Select {
+                                state.end = Some(global_pos);
+                                if let Some(start) = state.start {
+                                    let dx = (start.0 - global_pos.0).abs();
+                                    let dy = (start.1 - global_pos.1).abs();
+                                    if dx > 5.0 && dy > 5.0 {
+                                        state.finished = true;
+                                    } else {
+                                        state.start = None;
+                                        state.end = None;
+                                    }
                                 }
                             }
                         }
                     }
                 }
                 PointerEventKind::Motion { .. } => {
-                    if state.is_dragging {
+                    if state.is_moving_annotation {
+                        let move_info = if let (Some(start), Some(orig), Some(idx)) =
+                            (state.move_start_point, &state.original_points, state.selected_annotation)
+                        {
+                            Some((start, orig.clone(), idx))
+                        } else {
+                            None
+                        };
+
+                        if let Some((start, orig, idx)) = move_info {
+                            let mut dx = global_pos.0 - start.0;
+                            let mut dy = global_pos.1 - start.1;
+
+                            if self.modifiers.shift {
+                                if dx.abs() > dy.abs() {
+                                    dy = 0.0;
+                                } else {
+                                    dx = 0.0;
+                                }
+                            }
+
+                            for (i, p) in state.annotations[idx].points.iter_mut().enumerate() {
+                                p.0 = orig[i].0 + dx;
+                                p.1 = orig[i].1 + dy;
+                            }
+                        }
+                    } else if state.is_dragging {
                         if state.active_tool == Tool::Select {
                             state.end = Some(global_pos);
                         } else if let Some(ann) = state.annotations.last_mut() {
@@ -555,13 +653,70 @@ impl KeyboardHandler for AppState {
             Keysym::Return => s.finished = true,
             Keysym::Escape => s.cancelled = true,
             Keysym::BackSpace => {
-                s.annotations.pop();
-                s.dirty = true;
+                if !s.annotations.is_empty() {
+                    s.push_undo();
+                    s.annotations.pop();
+                    s.dirty = true;
+                }
             }
-            _ => {}
+            Keysym::Delete => {
+                if let Some(idx) = s.selected_annotation {
+                    s.push_undo();
+                    s.annotations.remove(idx);
+                    s.selected_annotation = None;
+                    s.dirty = true;
+                }
+            }
+            Keysym::z | Keysym::Z => {
+                if self.modifiers.ctrl {
+                    if self.modifiers.shift {
+                        s.redo();
+                    } else {
+                        s.undo();
+                    }
+                }
+            }
+            Keysym::y | Keysym::Y => {
+                if self.modifiers.ctrl {
+                    s.redo();
+                }
+            }
+            Keysym::d | Keysym::D if self.modifiers.ctrl => {
+                s.duplicate_selected();
+            }
+            Keysym::bracketleft => {
+                if self.modifiers.ctrl {
+                    if self.modifiers.shift {
+                        s.move_selected_to_back();
+                    } else {
+                        s.move_selected_down();
+                    }
+                }
+            }
+            Keysym::bracketright => {
+                if self.modifiers.ctrl {
+                    if self.modifiers.shift {
+                        s.move_selected_to_front();
+                    } else {
+                        s.move_selected_up();
+                    }
+                }
+            }
+            _ => {
+                for (tool, _, _) in Tool::all() {
+                    if tool.keysyms().contains(&event.keysym) {
+                        s.active_tool = *tool;
+                        s.selected_annotation = None;
+                        s.dirty = true;
+                        return;
+                    }
+                }
+            }
         }
     }
-    fn update_modifiers(&mut self,	_: &Connection,	_: &QueueHandle<Self>,	_: &WlKeyboard,	_: u32,	_: Modifiers,	_: RawModifiers,	_: u32,) {}
+    fn update_modifiers(&mut self,	_: &Connection,	_: &QueueHandle<Self>,	_: &WlKeyboard,	_: u32,	modifiers: Modifiers,	_: RawModifiers,	_: u32,) {
+        self.modifiers = modifiers;
+    }
     fn release_key(	&mut self,	_: &Connection,	_: &QueueHandle<Self>,	_: &WlKeyboard,	_: u32,	_: KeyEvent,) {}
     fn repeat_key(&mut self,_: &Connection,	_: &QueueHandle<Self>,	_: &wl_keyboard::WlKeyboard,	_: u32,	_: KeyEvent) {}
     fn enter(&mut self,	_: &Connection,	_: &QueueHandle<Self>,	_: &WlKeyboard,	_: &WlSurface,	_: u32,	_: &[u32],	_: &[Keysym]){}
