@@ -1,4 +1,5 @@
 use crate::backend::CaptureBackend;
+use crate::backend::kde::KdeBackend;
 use crate::backend::wlr::WlrBackend;
 use crate::output::{LogicalRegion, OutputInfo};
 use anyhow::Result;
@@ -10,9 +11,28 @@ pub struct FramrConnection {
 
 impl FramrConnection {
 	pub fn new() -> Result<Self> {
-		Ok(Self {
-			backend: Box::new(WlrBackend::new()?),
-		})
+		match WlrBackend::new() {
+			Ok(backend) => {
+				return Ok(Self {
+					backend: Box::new(backend),
+				});
+			}
+			Err(e) => {
+				if let Some(crate::error::FramrError::ProtocolNotSupported(_)) =
+					e.downcast_ref::<crate::error::FramrError>()
+				{
+					if let Ok(backend) = KdeBackend::new() {
+						return Ok(Self {
+							backend: Box::new(backend),
+						});
+					}
+				} else {
+					return Err(e);
+				}
+			}
+		}
+
+		anyhow::bail!("No supported screen capture backend found. (Checked: wlroots, KDE KWin)")
 	}
 
 	pub fn get_all_outputs(&self) -> Result<Vec<OutputInfo>> {

@@ -62,6 +62,31 @@ impl WlrBackend {
 		let (globals, _) = registry_queue_init::<RegistryState>(&conn)
 			.map_err(|e| FramrError::ConnectionFailed(format!("{e}")))?;
 
+		if !globals
+			.contents()
+			.clone_list()
+			.iter()
+			.any(|g| g.interface == "zwlr_screencopy_manager_v1")
+		{
+			return Err(FramrError::ProtocolNotSupported("wlr-screencopy".into()).into());
+		}
+
+		let mut this = Self {
+			conn,
+			globals,
+			outputs: Vec::new(),
+			wl_outputs: Vec::new(),
+		};
+		this.refresh_outputs()?;
+		Ok(this)
+	}
+
+	pub(crate) fn new_without_screencopy() -> Result<Self> {
+		let conn = Connection::connect_to_env()
+			.map_err(|e| FramrError::ConnectionFailed(format!("{e}")))?;
+		let (globals, _) = registry_queue_init::<RegistryState>(&conn)
+			.map_err(|e| FramrError::ConnectionFailed(format!("{e}")))?;
+
 		let mut this = Self {
 			conn,
 			globals,

@@ -415,6 +415,7 @@ Type=Application
 Terminal=false
 MimeType=x-scheme-handler/framr;
 NoDisplay=true
+X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2
 Comment=Handle framr:// deeplinks for importing uploaders
 "#,
 		exe_str

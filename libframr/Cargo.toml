@@ -11,7 +11,8 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 memmap2 = "0.9"
 rustix = { version = "1", features = ["fs", "shm"] }
 anyhow = "1.0"
-
+drm-fourcc = "2.2"
+dbus = "0.9.11"
 
 [profile.release]
 opt-level = 3
