@@ -3,7 +3,7 @@
 framr is an open-source wayland (wlroots) screenshotting tool with a focus on simplicity and ease of use. It allows users to quickly capture their screen and share the image anywhere using any uploader they'd like.
 
 > [!NOTE]
-> framr currently only supports wlroots-based compositors (e.g, sway, hyprland, river, etc) and is not compatible with X11 or non-wlroots compositors (KDE, Gnome). It is also currently in early development and may have some bugs or missing features.
+> framr currently only supports wlroots-based compositors (e.g, sway, hyprland, river, etc) and KDE (Wayland) and is not compatible with X11 or other compositors (Gnome). It is also currently in early development and may have some bugs or missing features (open an issue if you find any).
 
 ## Features
 - Simple and intuitive interface
@@ -89,7 +89,7 @@ If you are building from source or running the binary system, you will need the 
 - [x] Replace slurp-rs with custom.
 - [x] improve the selection ui (add keyboard shortcuts, undo/redo, interchangeable colors, etc)
 - [ ] Implement recording functionality
-- [ ] Support all linux desktop environments (currently only tested on hyprland)
+- [ ] Support all linux desktop environments (currently only tested on hyprland and KDE (wayland))
 
 ## Deeplinks
 Framr supports `framr://` deeplinks for easy importing of uploaders.
