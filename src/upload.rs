@@ -186,15 +186,25 @@ fn parse_response_schema(body: &str, schema: &str) -> Result<Option<String>> {
 
 fn navigate_json_path(json: &Value, path: &str) -> Result<String> {
 	let mut current = json;
-	for key in path.split('.') {
-		current = current.get(key).ok_or_else(|| {
+
+	let normalized_path = path.replace("[", ".").replace("]", "");
+
+	for key in normalized_path.split('.').filter(|k| !k.is_empty()) {
+		current = if let Ok(index) = key.parse::<usize>() {
+			current.get(index)
+		} else {
+			current.get(key)
+		}
+		.ok_or_else(|| {
 			anyhow::anyhow!(
-				"JSON path '{}' not found in response: {}",
+				"JSON path segment '{}' (from path '{}') not found in response: {}",
+				key,
 				path,
 				serde_json::to_string(json).unwrap_or_else(|_| json.to_string())
 			)
 		})?;
 	}
+
 	match current {
 		Value::String(s) => Ok(s.clone()),
 		other => Ok(other.to_string()),
