@@ -10,6 +10,7 @@ use smithay_client_toolkit::{
 	seat::{
 		Capability, SeatHandler, SeatState,
 		keyboard::{KeyEvent, KeyboardHandler, Keysym, Modifiers, RawModifiers},
+		pointer::cursor_shape::CursorShapeManager,
 		pointer::{PointerEvent, PointerEventKind, PointerHandler},
 	},
 	shell::{
@@ -22,13 +23,14 @@ use smithay_client_toolkit::{
 	},
 };
 use std::sync::{Arc, Mutex};
-use wayland_client::{
-	Connection, QueueHandle,
-	protocol::{
-		wl_keyboard::{self, WlKeyboard},
-		wl_output, wl_pointer, wl_seat, wl_shm,
-		wl_surface::{self, WlSurface},
-	},
+use wayland_client::protocol::{
+	wl_keyboard::{self, WlKeyboard},
+	wl_output, wl_pointer, wl_seat, wl_shm,
+	wl_surface::{self, WlSurface},
+};
+use wayland_client::{Connection, QueueHandle};
+use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::{
+	Shape, WpCursorShapeDeviceV1,
 };
 
 use crate::config::SelectionConfig;
@@ -56,6 +58,7 @@ pub struct AppState {
 	pub layer_shell: LayerShell,
 	pub seat_state: SeatState,
 	pub pool: SlotPool,
+	pub cursor_shape_manager: Option<CursorShapeManager>,
 
 	pub surfaces: Vec<SurfaceData>,
 	pub state: Arc<Mutex<SelectionState>>,
@@ -64,6 +67,7 @@ pub struct AppState {
 
 	pub exit: bool,
 	pub modifiers: Modifiers,
+	pub cursor_shape_device: Option<WpCursorShapeDeviceV1>,
 }
 
 impl AppState {
@@ -442,11 +446,21 @@ impl SeatHandler for AppState {
 #[rustfmt::skip]
 impl PointerHandler for AppState {
     fn pointer_frame(
-        &mut self,_: &Connection,_: &QueueHandle<Self>,_: &wl_pointer::WlPointer,
+        &mut self,_: &Connection,qh: &QueueHandle<Self>,pointer: &wl_pointer::WlPointer,
         events: &[PointerEvent],
     ) {
         let mut state = self.state.lock().unwrap();
         for event in events {
+            if let PointerEventKind::Enter { serial, .. } = event.kind {
+                if self.cursor_shape_device.is_none()
+                    && let Some(ref mgr) = self.cursor_shape_manager {
+                        self.cursor_shape_device = Some(mgr.get_shape_device(pointer, qh));
+                    }
+                if let Some(ref device) = self.cursor_shape_device {
+                    device.set_shape(serial, Shape::Crosshair);
+                }
+            }
+
             if let PointerEventKind::Enter { .. } = event.kind &&
                 let Some(sd) = self.surfaces.iter().find(|s| s.wl_surface == event.surface) {
                 state.last_surface_width = sd.dimensions.0 as f64;

@@ -6,6 +6,7 @@ use smithay_client_toolkit::{
 	output::OutputState,
 	registry::RegistryState,
 	seat::SeatState,
+	seat::pointer::cursor_shape::CursorShapeManager,
 	shell::wlr_layer::{Anchor, KeyboardInteractivity, Layer, LayerShell},
 	shm::{Shm, slot::SlotPool},
 };
@@ -111,6 +112,8 @@ impl SelectionUI {
 
 		let (tx, rx) = std::sync::mpsc::channel();
 
+		let cursor_shape_manager = CursorShapeManager::bind(&globals, &qh).ok();
+
 		let mut app = AppState {
 			registry_state,
 			output_state,
@@ -119,11 +122,13 @@ impl SelectionUI {
 			layer_shell,
 			seat_state,
 			pool,
+			cursor_shape_manager,
 			surfaces: Vec::new(),
 			state: self.state.clone(),
 			exit: false,
 			rx,
 			modifiers: Default::default(),
+			cursor_shape_device: None,
 		};
 
 		event_queue.roundtrip(&mut app)?;
