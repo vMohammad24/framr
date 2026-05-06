@@ -1,10 +1,22 @@
+use std::fs::File;
+use std::path::Path;
+
 use anyhow::{Result, bail};
 use serde_json::Value;
 use ureq::unversioned::multipart::{Form, Part};
 
 use crate::config::{AppConfig, BodyType, UploadConfig, find_uploader_index, load_uploader_config};
 
-pub fn upload(png_bytes: &[u8], uploader_name: Option<&str>, filename: &str) -> Result<String> {
+pub enum UploadPayload<'a> {
+	Bytes(&'a [u8]),
+	File(&'a Path),
+}
+
+pub fn upload(
+	payload: UploadPayload,
+	uploader_name: Option<&str>,
+	filename: &str,
+) -> Result<String> {
 	let cfg = load_uploader_config()?;
 
 	if cfg.uploaders.is_empty() {
@@ -14,7 +26,7 @@ pub fn upload(png_bytes: &[u8], uploader_name: Option<&str>, filename: &str) -> 
 	}
 
 	let uploader = resolve_uploader(&cfg, uploader_name)?;
-	let response_body = send_request(png_bytes, filename, uploader)?;
+	let response_body = send_request(payload, filename, uploader)?;
 
 	let url = parse_response_schema(&response_body, &uploader.output_url)?.ok_or_else(|| {
 		anyhow::anyhow!(
@@ -42,7 +54,14 @@ fn resolve_uploader<'a>(cfg: &'a AppConfig, name: Option<&str>) -> Result<&'a Up
 	Ok(&cfg.uploaders[idx])
 }
 
-fn send_request(png_bytes: &[u8], filename: &str, uploader: &UploadConfig) -> Result<String> {
+fn infer_mime_type(path: &Path) -> &'static str {
+	if let Ok(Some(kind)) = infer::get_from_path(path) {
+		return kind.mime_type();
+	}
+	"application/octet-stream"
+}
+
+fn send_request(payload: UploadPayload, filename: &str, uploader: &UploadConfig) -> Result<String> {
 	let method = uploader.request_method.to_uppercase();
 
 	if method == "GET" {
@@ -78,11 +97,17 @@ fn send_request(png_bytes: &[u8], filename: &str, uploader: &UploadConfig) -> Re
 	request = request.config().http_status_as_error(false).build();
 
 	let response = match uploader.body_type {
-		BodyType::Binary => request
-			.send(png_bytes)
-			.map_err(|e| anyhow::anyhow!("{e}"))?,
+		BodyType::Binary => match payload {
+			UploadPayload::Bytes(bytes) => {
+				request.send(bytes).map_err(|e| anyhow::anyhow!("{e}"))?
+			}
+			UploadPayload::File(path) => {
+				let file = File::open(path)?;
+				request.send(file).map_err(|e| anyhow::anyhow!("{e}"))?
+			}
+		},
 		BodyType::FormData => {
-			let form = build_multipart_form(png_bytes, filename, uploader)?;
+			let form = build_multipart_form(payload, filename, uploader)?;
 			request.send(form).map_err(|e| anyhow::anyhow!("{e}"))?
 		}
 		BodyType::URLEncoded => {
@@ -136,7 +161,7 @@ fn read_response_body(
 }
 
 fn build_multipart_form<'a>(
-	png_bytes: &'a [u8],
+	payload: UploadPayload<'a>,
 	filename: &str,
 	uploader: &'a UploadConfig,
 ) -> Result<Form<'a>> {
@@ -145,10 +170,20 @@ fn build_multipart_form<'a>(
 		form = form.text(key.as_str(), value.as_str());
 	}
 	let form_name = uploader.file_form_name.as_deref().unwrap_or("file");
-	let part = Part::bytes(png_bytes)
-		.file_name(filename)
-		.mime_str("image/png")
-		.map_err(|e| anyhow::anyhow!("{e}"))?;
+	let part = match payload {
+		UploadPayload::Bytes(bytes) => Part::bytes(bytes)
+			.file_name(filename)
+			.mime_str("image/png")
+			.map_err(|e| anyhow::anyhow!("{e}"))?,
+		UploadPayload::File(path) => {
+			let mime_type = infer_mime_type(path);
+			Part::file(path)
+				.map_err(|e| anyhow::anyhow!("Failed to create file part: {}", e))?
+				.file_name(filename)
+				.mime_str(mime_type)
+				.map_err(|e| anyhow::anyhow!("{e}"))?
+		}
+	};
 	Ok(form.part(form_name, part))
 }
 

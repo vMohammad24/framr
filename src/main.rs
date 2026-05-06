@@ -8,6 +8,8 @@ use libframr::FramrConnection;
 use notify_rust::Notification;
 use wl_clipboard_rs::copy::{MimeType, Options as ClipboardOptions, Seat, Source};
 
+use crate::config::DefaultAction;
+
 mod config;
 mod selection;
 mod upload;
@@ -228,9 +230,15 @@ fn handle_upload(
 	uploader: Option<&str>,
 	name: Option<&str>,
 ) -> Result<()> {
-	let (bytes, filename) = if let Some(path) = file {
-		let bytes = std::fs::read(path)?;
-		let filename = name
+	let payload: upload::UploadPayload;
+	let filename: String;
+	let is_image: bool;
+
+	let mut stdin_bytes = Vec::new();
+
+	if let Some(path) = file {
+		payload = upload::UploadPayload::File(path.as_path());
+		filename = name
 			.map(|n| n.to_string())
 			.or_else(|| {
 				path.file_name()
@@ -238,37 +246,48 @@ fn handle_upload(
 					.map(|n| n.to_string())
 			})
 			.unwrap_or_else(|| "file".to_string());
-		(bytes, filename)
+
+		let mut f = std::fs::File::open(path)?;
+		let mut header = [0; 8192];
+		let n = f.read(&mut header).unwrap_or(0);
+		is_image = infer::get(&header[..n])
+			.map(|m| m.matcher_type() == infer::MatcherType::Image)
+			.unwrap_or(false);
 	} else {
 		if io::stdin().is_terminal() {
 			anyhow::bail!("No file specified. Provide a file path or pipe data to stdin.");
 		}
-		let mut bytes = Vec::new();
-		io::stdin().read_to_end(&mut bytes)?;
+		io::stdin().read_to_end(&mut stdin_bytes)?;
+		payload = upload::UploadPayload::Bytes(&stdin_bytes);
 
-		let filename = if let Some(n) = name {
+		is_image = infer::get(&stdin_bytes)
+			.map(|m| m.matcher_type() == infer::MatcherType::Image)
+			.unwrap_or(false);
+
+		filename = if let Some(n) = name {
 			n.to_string()
 		} else {
-			let ext = infer::get(&bytes).map(|m| m.extension()).unwrap_or("bin");
+			let ext = infer::get(&stdin_bytes)
+				.map(|m| m.extension())
+				.unwrap_or("bin");
 			let pattern = format!("upload_%Y-%m-%d_%H-%M-%S.{}", ext);
-
 			resolve_output(cli, &pattern, ext)
 				.to_string_lossy()
 				.into_owned()
 		};
-		(bytes, filename)
 	};
 
-	let url = upload::upload(&bytes, uploader, &filename)?;
+	let url = upload::upload(payload, uploader, &filename)?;
 	println!("{}", url);
 
-	let is_image = infer::get(&bytes)
-		.map(|m| m.matcher_type() == infer::MatcherType::Image)
-		.unwrap_or(false);
-	if is_image {
-		notify("Upload Successful", &url, &bytes, cli.silent)?;
-	} else {
-		if !cli.silent {
+	if !cli.silent {
+		if is_image {
+			let image_data = match file {
+				Some(p) => std::fs::read(p)?,
+				None => stdin_bytes.clone(),
+			};
+			notify("Upload Successful", &url, &image_data, cli.silent)?;
+		} else {
 			let _ = Notification::new()
 				.summary("Upload Successful")
 				.body(&url)
@@ -365,18 +384,54 @@ fn main() -> Result<()> {
 		return Ok(());
 	}
 
-	if cli.record {
+	let action = if cli.upload.is_some() {
+		if cli.copy {
+			DefaultAction::UploadAndCopy
+		} else {
+			DefaultAction::Upload
+		}
+	} else if cli.copy {
+		DefaultAction::Copy
+	} else if let Some(ref c) = cfg {
+		if let Some(def_act) = &c.default_action {
+			if cli.output.is_none() {
+				match def_act {
+					config::DefaultAction::Save => DefaultAction::Save,
+					config::DefaultAction::Copy => DefaultAction::Copy,
+					config::DefaultAction::Upload => DefaultAction::Upload,
+					config::DefaultAction::UploadAndCopy => DefaultAction::UploadAndCopy,
+				}
+			} else {
+				DefaultAction::Save
+			}
+		} else {
+			DefaultAction::Save
+		}
+	} else {
+		DefaultAction::Save
+	};
+
+	let is_upload_action =
+		action == DefaultAction::Upload || action == DefaultAction::UploadAndCopy;
+
+	let (bytes_opt, path, filename, is_image) = if cli.record {
 		let conn = FramrConnection::new()?;
 
 		let filename = resolve_output(&cli, "recording_%Y-%m-%d_%H-%M-%S.mp4", "mp4")
 			.to_string_lossy()
 			.to_string();
-		let path = match &cli.output {
-			Some(dir) => {
-				std::fs::create_dir_all(dir)?;
-				dir.join(&filename)
+
+		let path = if is_upload_action && cli.output.is_none() {
+			std::env::temp_dir().join(&filename)
+		} else {
+			let p = match &cli.output {
+				Some(dir) => dir.join(&filename),
+				None => PathBuf::from(&filename),
+			};
+			if let Some(parent) = p.parent() {
+				std::fs::create_dir_all(parent)?;
 			}
-			None => PathBuf::from(&filename),
+			p
 		};
 
 		let handle = if let Some(screen_num) = cli.screen {
@@ -419,97 +474,118 @@ fn main() -> Result<()> {
 			.join()
 			.map_err(|_| anyhow::anyhow!("Pipeline thread panicked"))??;
 
-		println!("Recording saved to {}", path.display());
-		if !cli.silent {
-			let _ = Notification::new()
-				.summary("Recording Saved")
-				.body(&path.to_string_lossy())
-				.appname("framr")
-				.show();
-		}
+		(None, path, filename, false)
+	} else {
+		let png_bytes = capture(&cli, cfg.as_ref())?;
+		let filename = resolve_output(&cli, "screenshot_%Y-%m-%d_%H-%M-%S.png", "png")
+			.to_string_lossy()
+			.to_string();
 
-		return Ok(());
-	}
-
-	let png_bytes = capture(&cli, cfg.as_ref())?;
-	let filename = resolve_output(&cli, "screenshot_%Y-%m-%d_%H-%M-%S.png", "png")
-		.to_string_lossy()
-		.to_string();
-
-	if let Some(ref uploader_name) = cli.upload {
-		let name = if uploader_name.is_empty() {
-			None
-		} else {
-			Some(uploader_name.as_str())
+		let path = match &cli.output {
+			Some(dir) => dir.join(&filename),
+			None => PathBuf::from(&filename),
 		};
-		let url = upload::upload(&png_bytes, name, &filename)?;
-		println!("{}", url);
-		notify("Upload Successful", &url, &png_bytes, cli.silent)?;
-		if cli.copy {
-			copy_to_clipboard_text(&url)?;
-		}
-		return Ok(());
-	}
-
-	if cli.copy {
-		copy_to_clipboard_image(png_bytes.clone())?;
-		notify(
-			"Copied to Clipboard",
-			"Screenshot copied to clipboard",
-			&png_bytes,
-			cli.silent,
-		)?;
-		return Ok(());
-	}
-
-	if let Some(ref cfg) = cfg
-		&& let Some(action) = cfg.default_action
-		&& cli.output.is_none()
-	{
-		use config::DefaultAction;
-		match action {
-			DefaultAction::Save => {}
-			DefaultAction::Copy => {
-				copy_to_clipboard_image(png_bytes.clone())?;
-				notify(
-					"Copied to Clipboard",
-					"Screenshot copied to clipboard",
-					&png_bytes,
-					cli.silent,
-				)?;
-				return Ok(());
-			}
-			DefaultAction::Upload => {
-				let url = upload::upload(&png_bytes, None, &filename)?;
-				println!("{}", url);
-				notify("Upload Successful", &url, &png_bytes, cli.silent)?;
-				return Ok(());
-			}
-			DefaultAction::UploadAndCopy => {
-				let url = upload::upload(&png_bytes, None, &filename)?;
-				println!("{}", url);
-				notify("Upload Successful", &url, &png_bytes, cli.silent)?;
-				copy_to_clipboard_text(&url)?;
-				return Ok(());
-			}
-		}
-	}
-
-	let path = match &cli.output {
-		Some(dir) => {
-			std::fs::create_dir_all(dir)?;
-			dir.join(&filename)
-		}
-		None => PathBuf::from(&filename),
+		(Some(png_bytes), path, filename, true)
 	};
 
-	std::fs::write(&path, &png_bytes)?;
-	println!("{}", path.display());
-	notify(
-		"Screenshot Saved",
-		&path.to_string_lossy(),
-		&png_bytes,
-		cli.silent,
-	)?;
+	let payload = match &bytes_opt {
+		Some(b) => upload::UploadPayload::Bytes(b),
+		None => upload::UploadPayload::File(&path),
+	};
+
+	match action {
+		DefaultAction::Upload | DefaultAction::UploadAndCopy => {
+			let uploader_name = cli.upload.as_deref().filter(|s| !s.is_empty());
+			let url = upload::upload(payload, uploader_name, &filename)?;
+			println!("{}", url);
+
+			if is_image {
+				if let Some(ref b) = bytes_opt {
+					notify("Upload Successful", &url, b, cli.silent)?;
+				} else {
+					if !cli.silent {
+						let _ = Notification::new()
+							.summary("Upload Successful")
+							.body(&url)
+							.appname("framr")
+							.show();
+					}
+				}
+			} else {
+				if !cli.silent {
+					let _ = Notification::new()
+						.summary("Upload Successful")
+						.body(&url)
+						.appname("framr")
+						.show();
+				}
+			}
+
+			if action == DefaultAction::UploadAndCopy {
+				copy_to_clipboard_text(&url)?;
+			}
+
+			if !is_image && cli.output.is_none() {
+				let _ = std::fs::remove_file(&path);
+			}
+		}
+		DefaultAction::Copy => {
+			if is_image {
+				if let Some(ref bytes) = bytes_opt {
+					copy_to_clipboard_image(bytes.clone())?;
+				}
+				if let Some(ref b) = bytes_opt {
+					notify(
+						"Copied to Clipboard",
+						"Screenshot copied to clipboard",
+						b,
+						cli.silent,
+					)?;
+				}
+			} else {
+				copy_to_clipboard_text(&path.to_string_lossy())?;
+				if !cli.silent {
+					let _ = Notification::new()
+						.summary("Video Path Copied")
+						.body("The path to the recording was copied to your clipboard")
+						.appname("framr")
+						.show();
+				}
+			}
+		}
+		DefaultAction::Save => {
+			if let Some(parent) = path.parent() {
+				std::fs::create_dir_all(parent)?;
+			}
+			if is_image && let Some(ref bytes) = bytes_opt {
+				std::fs::write(&path, bytes)?;
+			}
+
+			println!("{}", path.display());
+
+			if is_image {
+				if let Some(ref b) = bytes_opt {
+					notify("Screenshot Saved", &path.to_string_lossy(), b, cli.silent)?;
+				} else {
+					if !cli.silent {
+						let _ = Notification::new()
+							.summary("Recording Saved")
+							.body(&path.to_string_lossy())
+							.appname("framr")
+							.show();
+					}
+				}
+			} else {
+				if !cli.silent {
+					let _ = Notification::new()
+						.summary("Recording Saved")
+						.body(&path.to_string_lossy())
+						.appname("framr")
+						.show();
+				}
+			}
+		}
+	}
+
 	Ok(())
 }
