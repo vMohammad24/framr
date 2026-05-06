@@ -1,6 +1,6 @@
 use anyhow::Result;
 use image::{GenericImageView, RgbaImage};
-use libframr::FramrConnection;
+use libframr::{FramrConnection, LogicalRegion, Position, Size};
 use smithay_client_toolkit::{
 	compositor::CompositorState,
 	output::OutputState,
@@ -92,7 +92,7 @@ impl SelectionUI {
 		})
 	}
 
-	pub fn run(self) -> Result<Option<RgbaImage>> {
+	pub fn run(self, capture_image: bool) -> Result<Option<(LogicalRegion, Option<RgbaImage>)>> {
 		let conn = Connection::connect_to_env()?;
 		let (globals, mut event_queue) = registry_queue_init(&conn)?;
 		let qh = event_queue.handle();
@@ -253,6 +253,15 @@ impl SelectionUI {
 			return Ok(None);
 		}
 
+		let region = LogicalRegion {
+			position: Position { x, y },
+			size: Size { width, height },
+		};
+
+		if !capture_image {
+			return Ok(Some((region, None)));
+		}
+
 		let mut final_img = RgbaImage::new(width, height);
 		let mut has_content = false;
 
@@ -297,7 +306,7 @@ impl SelectionUI {
 		}
 
 		if has_content {
-			Ok(Some(final_img))
+			Ok(Some((region, Some(final_img))))
 		} else {
 			Ok(None)
 		}
