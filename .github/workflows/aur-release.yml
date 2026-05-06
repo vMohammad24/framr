@@ -1,0 +1,30 @@
+name: Publish to AUR
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  aur-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update PKGBUILD version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          sed -i "s/pkgver=.*/pkgver=$VERSION/" PKGBUILD
+
+      - name: Publish AUR package
+        uses: KSXGitHub/github-actions-deploy-aur@v4
+        with:
+          pkgname: framr
+          pkgbuild: ./PKGBUILD
+          updpkgsums: true
+          test: true
+          commit_username: vMohammad
+          commit_email: vmohammad@vmohammad.dev
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: "Update to ${{ github.ref_name }} (gh action)"
+          ssh_keyscan_types: ed25519

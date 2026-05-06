@@ -16,7 +16,11 @@ framr is an open-source wayland (wlroots) screenshotting tool with a focus on si
 Pre-built binaries for Linux (x86_64) are available on the [Releases](https://github.com/vMohammad24/framr/releases) page.
 
 ### Arch Linux (AUR)
-coming soon
+
+framr is available in the AUR as `framr`:
+```sh
+yay -S framr
+```
 
 ### Cargo
 You can install `framr` from source using `cargo`:
