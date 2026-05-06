@@ -6,6 +6,7 @@ pkgdesc="A Wayland screenshot tool written in Rust"
 arch=('x86_64')
 url="https://github.com/vMohammad24/framr"
 license=('AGPL3')
+options=('!lto')
 depends=('wayland' 'libxkbcommon' 'dbus' 'cairo' 'libxcursor' 'gstreamer' 'gst-plugins-base-libs' 'gst-plugins-base' 'gst-plugins-good' 'gst-plugins-ugly')
 makedepends=('cargo' 'pkgconf')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
