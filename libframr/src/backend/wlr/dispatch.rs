@@ -223,6 +223,18 @@ wayland_client::delegate_noop!(CaptureState: ignore WlBuffer);
 wayland_client::delegate_noop!(CaptureState: ignore WlRegistry);
 wayland_client::delegate_noop!(CaptureState: ignore ZwlrScreencopyManagerV1);
 
+impl Dispatch<WlRegistry, GlobalListContents> for CaptureState {
+	fn event(
+		_: &mut Self,
+		_: &WlRegistry,
+		_: <WlRegistry as Proxy>::Event,
+		_: &GlobalListContents,
+		_: &Connection,
+		_: &QueueHandle<Self>,
+	) {
+	}
+}
+
 impl Dispatch<ZwlrScreencopyFrameV1, ()> for CaptureState {
 	fn event(
 		state: &mut Self,
@@ -316,6 +328,18 @@ wayland_client::delegate_noop!(MultiCaptureState: ignore WlShmPool);
 wayland_client::delegate_noop!(MultiCaptureState: ignore WlBuffer);
 wayland_client::delegate_noop!(MultiCaptureState: ignore WlRegistry);
 wayland_client::delegate_noop!(MultiCaptureState: ignore ZwlrScreencopyManagerV1);
+
+impl Dispatch<WlRegistry, GlobalListContents> for MultiCaptureState {
+	fn event(
+		_: &mut Self,
+		_: &WlRegistry,
+		_: <WlRegistry as Proxy>::Event,
+		_: &GlobalListContents,
+		_: &Connection,
+		_: &QueueHandle<Self>,
+	) {
+	}
+}
 
 impl Dispatch<ZwlrScreencopyFrameV1, usize> for MultiCaptureState {
 	fn event(

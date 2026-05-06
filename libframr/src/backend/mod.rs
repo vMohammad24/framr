@@ -2,6 +2,11 @@ use crate::output::{LogicalRegion, OutputInfo};
 use anyhow::Result;
 use image::RgbaImage;
 
+pub struct RecordingHandle {
+	pub stop_sender: crossbeam_channel::Sender<()>,
+	pub pipeline_thread: std::thread::JoinHandle<Result<()>>,
+}
+
 pub trait CaptureBackend: Send + Sync {
 	fn get_outputs(&self) -> Result<Vec<OutputInfo>>;
 	fn capture_output(
@@ -11,6 +16,52 @@ pub trait CaptureBackend: Send + Sync {
 		include_cursor: bool,
 	) -> Result<RgbaImage>;
 	fn capture_all_outputs(&self, include_cursor: bool) -> Result<RgbaImage>;
+
+	fn start_recording_all(
+		&self,
+		include_cursor: bool,
+		output_path: std::path::PathBuf,
+	) -> Result<RecordingHandle>;
+
+	fn start_recording(
+		&self,
+		output: &OutputInfo,
+		region: Option<LogicalRegion>,
+		include_cursor: bool,
+		output_path: std::path::PathBuf,
+	) -> Result<RecordingHandle>;
+
+	fn start_recording_region(
+		&self,
+		region: &LogicalRegion,
+		include_cursor: bool,
+		output_path: std::path::PathBuf,
+	) -> Result<RecordingHandle> {
+		let outputs = self.get_outputs()?;
+		let containing = outputs.iter().find(|o| {
+			let ox = o.logical_position.x;
+			let oy = o.logical_position.y;
+			let ow = o.logical_size.width as i32;
+			let oh = o.logical_size.height as i32;
+			region.position.x >= ox
+				&& region.position.y >= oy
+				&& region.position.x + region.size.width as i32 <= ox + ow
+				&& region.position.y + region.size.height as i32 <= oy + oh
+		});
+
+		if let Some(output) = containing {
+			return self.start_recording(output, Some(*region), include_cursor, output_path);
+		}
+
+		self.start_recording_region_internal(region, include_cursor, output_path)
+	}
+
+	fn start_recording_region_internal(
+		&self,
+		region: &LogicalRegion,
+		include_cursor: bool,
+		output_path: std::path::PathBuf,
+	) -> Result<RecordingHandle>;
 
 	fn capture_region(&self, region: &LogicalRegion, include_cursor: bool) -> Result<RgbaImage> {
 		let outputs = self.get_outputs()?;

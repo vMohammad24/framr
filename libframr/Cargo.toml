@@ -9,10 +9,14 @@ wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 memmap2 = "0.9"
-rustix = { version = "1", features = ["fs", "shm"] }
+rustix = { version = "1", features = ["fs", "shm", "pipe"] }
 anyhow = "1.0"
 drm-fourcc = "2.2"
 dbus = "0.9.11"
+gstreamer = "0.25"
+gstreamer-app = "0.25"
+gstreamer-video = "0.25"
+crossbeam-channel = "0.5"
 
 [profile.release]
 opt-level = 3

@@ -7,6 +7,7 @@ pub enum FramrError {
     OutputNotFound(usize),
     NoSupportedBufferFormat,
     FrameCaptureFailed,
+    ResolutionChanged,
     ProtocolNotSupported(String),
     Io(std::io::Error),
 }
@@ -19,6 +20,9 @@ impl fmt::Display for FramrError {
             Self::OutputNotFound(idx) => write!(f, "output {idx} not found"),
             Self::NoSupportedBufferFormat => write!(f, "no supported buffer format"),
             Self::FrameCaptureFailed => write!(f, "frame capture failed"),
+            Self::ResolutionChanged => {
+                write!(f, "display resolution changed; recording stopped")
+            }
             Self::ProtocolNotSupported(name) => write!(f, "protocol not supported: {name}"),
             Self::Io(e) => write!(f, "io error: {e}"),
         }

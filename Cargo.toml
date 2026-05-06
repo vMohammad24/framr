@@ -22,6 +22,7 @@ shellexpand = "3.1.2"
 dirs = "6.0.0"
 base64 = "0.22.1"
 notify-rust = { version = "4", features = ["d", "images_no_default_features"], default-features = false }
+ctrlc = "3.4"
 pango = "0.22.6"
 pangocairo = "0.22.0"
 cairo-rs = { version = "0.22.0", default-features = false }

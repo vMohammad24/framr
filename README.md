@@ -88,7 +88,7 @@ If you are building from source or running the binary system, you will need the 
 - [x] Add notifaction support
 - [x] Replace slurp-rs with custom.
 - [x] improve the selection ui (add keyboard shortcuts, undo/redo, interchangeable colors, etc)
-- [ ] Implement recording functionality
+- [x] Implement recording functionality
 - [ ] Support all linux desktop environments (currently only tested on hyprland and KDE (wayland))
 
 ## Deeplinks

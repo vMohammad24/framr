@@ -1,4 +1,4 @@
-use crate::backend::CaptureBackend;
+use crate::backend::{CaptureBackend, RecordingHandle};
 use crate::backend::kde::KdeBackend;
 use crate::backend::wlr::WlrBackend;
 use crate::output::{LogicalRegion, OutputInfo};
@@ -65,5 +65,26 @@ impl FramrConnection {
 
 	pub fn screenshot_all(&self, include_cursor: bool) -> Result<RgbaImage> {
 		self.backend.capture_all_outputs(include_cursor)
+	}
+
+	pub fn start_recording(
+		&self,
+		output: &OutputInfo,
+		region: Option<LogicalRegion>,
+		include_cursor: bool,
+		output_path: std::path::PathBuf,
+	) -> Result<RecordingHandle> {
+		self.backend
+			.start_recording(output, region, include_cursor, output_path)
+	}
+
+	pub fn start_recording_region(
+		&self,
+		region: &LogicalRegion,
+		include_cursor: bool,
+		output_path: std::path::PathBuf,
+	) -> Result<RecordingHandle> {
+		self.backend
+			.start_recording_region(region, include_cursor, output_path)
 	}
 }

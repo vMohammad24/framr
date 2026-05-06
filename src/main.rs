@@ -46,6 +46,10 @@ struct Cli {
 	#[arg(long)]
 	cursor: bool,
 
+	/// Record video
+	#[arg(short, long)]
+	record: bool,
+
 	/// Upload screenshot (uses default uploader, or specify with -u <name>)
 	#[arg(short = 'u', long, num_args = 0..=1, default_missing_value = "")]
 	upload: Option<String>,
@@ -200,8 +204,10 @@ fn capture(cli: &Cli, cfg: Option<&config::AppConfig>) -> Result<Vec<u8>> {
 		Some(config::DefaultCaptureMethod::Area) => {
 			let selection_cfg = cfg.map(|c| c.selection).unwrap_or_default();
 			let ui = selection::SelectionUI::new(selection_cfg)?;
-			ui.run()?
-				.ok_or_else(|| anyhow::anyhow!("Selection cancelled"))?
+			let (_, img) = ui
+				.run(true)?
+				.ok_or_else(|| anyhow::anyhow!("Selection cancelled"))?;
+			img.ok_or_else(|| anyhow::anyhow!("Failed to capture image"))?
 		}
 		Some(config::DefaultCaptureMethod::Screen) => {
 			let screen_num = screen.unwrap_or(0);
@@ -356,6 +362,72 @@ fn main() -> Result<()> {
 		for (i, output) in conn.get_all_outputs()?.iter().enumerate() {
 			println!("{}: {}", i, output);
 		}
+		return Ok(());
+	}
+
+	if cli.record {
+		let conn = FramrConnection::new()?;
+
+		let filename = resolve_output(&cli, "recording_%Y-%m-%d_%H-%M-%S.mp4", "mp4")
+			.to_string_lossy()
+			.to_string();
+		let path = match &cli.output {
+			Some(dir) => {
+				std::fs::create_dir_all(dir)?;
+				dir.join(&filename)
+			}
+			None => PathBuf::from(&filename),
+		};
+
+		let handle = if let Some(screen_num) = cli.screen {
+			let output = conn.get_output(screen_num)?;
+			conn.start_recording(&output, None, cli.cursor, path.clone())?
+		} else {
+			let selection_cfg = cfg.as_ref().map(|c| c.selection).unwrap_or_default();
+			let ui = selection::SelectionUI::new(selection_cfg)?;
+			let (region, _) = ui
+				.run(false)?
+				.ok_or_else(|| anyhow::anyhow!("Selection cancelled"))?;
+
+			conn.start_recording_region(&region, cli.cursor, path.clone())?
+		};
+
+		println!("Recording to {}... Press Ctrl+C to stop.", path.display());
+
+		let (tx, rx) = std::sync::mpsc::channel();
+		ctrlc::set_handler(move || {
+			let _ = tx.send(());
+		})?;
+
+		loop {
+			if rx
+				.recv_timeout(std::time::Duration::from_millis(100))
+				.is_ok()
+			{
+				println!("\nStopping recording...");
+				break;
+			}
+			if handle.pipeline_thread.is_finished() {
+				println!("\nRecording stopped unexpectedly.");
+				break;
+			}
+		}
+
+		let _ = handle.stop_sender.send(());
+		handle
+			.pipeline_thread
+			.join()
+			.map_err(|_| anyhow::anyhow!("Pipeline thread panicked"))??;
+
+		println!("Recording saved to {}", path.display());
+		if !cli.silent {
+			let _ = Notification::new()
+				.summary("Recording Saved")
+				.body(&path.to_string_lossy())
+				.appname("framr")
+				.show();
+		}
+
 		return Ok(());
 	}
 

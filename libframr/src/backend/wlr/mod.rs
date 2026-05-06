@@ -12,15 +12,76 @@ use wayland_protocols::xdg::xdg_output::zv1::client::zxdg_output_manager_v1::Zxd
 use wayland_protocols_wlr::screencopy::v1::client::zwlr_screencopy_frame_v1::ZwlrScreencopyFrameV1;
 use wayland_protocols_wlr::screencopy::v1::client::zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1;
 
-use crate::backend::CaptureBackend;
+use crate::backend::{CaptureBackend, RecordingHandle};
 use crate::buffer::create_shm_fd;
 use crate::convert::convert_to_rgba;
 use crate::error::FramrError;
-use crate::output::{FrameFormat, LogicalRegion, OutputInfo, PixelFormat};
+use crate::output::{FrameFormat, LogicalRegion, OutputInfo, PixelFormat, Position, Size};
 use crate::transform::apply_transform;
+
+use gstreamer::prelude::*;
+use gstreamer_app::AppSrc;
 
 mod dispatch;
 use dispatch::*;
+
+fn pixel_format_to_wl_shm(fmt: PixelFormat) -> wayland_client::protocol::wl_shm::Format {
+	use wayland_client::protocol::wl_shm::Format as WlFormat;
+	match fmt {
+		PixelFormat::Argb8888 => WlFormat::Argb8888,
+		PixelFormat::Xrgb8888 => WlFormat::Xrgb8888,
+		PixelFormat::Abgr8888 => WlFormat::Abgr8888,
+		PixelFormat::Xbgr8888 => WlFormat::Xbgr8888,
+		PixelFormat::Abgr2101010 => WlFormat::Abgr2101010,
+		PixelFormat::Xbgr2101010 => WlFormat::Xbgr2101010,
+	}
+}
+
+fn wait_for_gstreamer_eos(pipeline: &gstreamer::Pipeline) -> Result<()> {
+	let bus = pipeline.bus().unwrap();
+	for msg in bus.iter_timed(gstreamer::ClockTime::NONE) {
+		use gstreamer::MessageView;
+		match msg.view() {
+			MessageView::Eos(..) => break,
+			MessageView::Error(err) => {
+				return Err(anyhow::anyhow!(
+					"GStreamer error: {} ({})",
+					err.error(),
+					err.debug().unwrap_or_else(|| "no debug info".into())
+				));
+			}
+			_ => (),
+		}
+	}
+	pipeline.set_state(gstreamer::State::Null)?;
+	Ok(())
+}
+
+fn allocate_shm_buffer<T>(
+	shm: &WlShm,
+	qh: &wayland_client::QueueHandle<T>,
+	width: i32,
+	height: i32,
+	stride: i32,
+	wl_fmt: wayland_client::protocol::wl_shm::Format,
+) -> Result<(WlBuffer, std::fs::File, memmap2::Mmap)>
+where
+	T: wayland_client::Dispatch<wayland_client::protocol::wl_shm_pool::WlShmPool, ()>
+		+ wayland_client::Dispatch<WlBuffer, ()>
+		+ 'static,
+{
+	let byte_size = stride * height;
+	let fd = create_shm_fd()?;
+	let file = std::fs::File::from(fd);
+	file.set_len(byte_size as u64)?;
+
+	let pool = shm.create_pool(file.as_fd(), byte_size, qh, ());
+	let buffer = pool.create_buffer(0, width, height, stride, wl_fmt, qh, ());
+	pool.destroy();
+
+	let mmap = unsafe { memmap2::Mmap::map(&file)? };
+	Ok((buffer, file, mmap))
+}
 
 pub struct WlrBackend {
 	pub(crate) conn: Connection,
@@ -222,15 +283,7 @@ impl CaptureBackend for WlrBackend {
 		let shm: WlShm = self.globals.bind(&qh, 1..=1, ())?;
 		let pool = shm.create_pool(file.as_fd(), byte_size as i32, &qh, ());
 
-		// Map our PixelFormat back to Wayland format for buffer creation
-		let wl_fmt = match frame_format.format {
-			PixelFormat::Argb8888 => wayland_client::protocol::wl_shm::Format::Argb8888,
-			PixelFormat::Xrgb8888 => wayland_client::protocol::wl_shm::Format::Xrgb8888,
-			PixelFormat::Abgr8888 => wayland_client::protocol::wl_shm::Format::Abgr8888,
-			PixelFormat::Xbgr8888 => wayland_client::protocol::wl_shm::Format::Xbgr8888,
-			PixelFormat::Abgr2101010 => wayland_client::protocol::wl_shm::Format::Abgr2101010,
-			PixelFormat::Xbgr2101010 => wayland_client::protocol::wl_shm::Format::Xbgr2101010,
-		};
+		let wl_fmt = pixel_format_to_wl_shm(frame_format.format);
 
 		let buffer = WlBufferGuard(pool.create_buffer(
 			0,
@@ -324,6 +377,8 @@ impl CaptureBackend for WlrBackend {
 		let mut buffers_files: Vec<(WlBufferGuard, std::fs::File, FrameFormat)> =
 			Vec::with_capacity(outputs.len());
 
+		let shm: WlShm = self.globals.bind(&qh, 1..=1, ())?;
+
 		for (i, slot) in state.slots.iter().enumerate() {
 			let frame_format = slot
 				.formats
@@ -331,34 +386,17 @@ impl CaptureBackend for WlrBackend {
 				.ok_or(FramrError::NoSupportedBufferFormat)?
 				.clone();
 
-			let byte_size = frame_format.byte_size();
-			let fd = create_shm_fd()?;
-			let file = std::fs::File::from(fd);
-			file.set_len(byte_size as u64)?;
-
-			let shm: WlShm = self.globals.bind(&qh, 1..=1, ())?;
-			let pool = shm.create_pool(file.as_fd(), byte_size as i32, &qh, ());
-
-			let wl_fmt = match frame_format.format {
-				PixelFormat::Argb8888 => wayland_client::protocol::wl_shm::Format::Argb8888,
-				PixelFormat::Xrgb8888 => wayland_client::protocol::wl_shm::Format::Xrgb8888,
-				PixelFormat::Abgr8888 => wayland_client::protocol::wl_shm::Format::Abgr8888,
-				PixelFormat::Xbgr8888 => wayland_client::protocol::wl_shm::Format::Xbgr8888,
-				PixelFormat::Abgr2101010 => wayland_client::protocol::wl_shm::Format::Abgr2101010,
-				PixelFormat::Xbgr2101010 => wayland_client::protocol::wl_shm::Format::Xbgr2101010,
-			};
-
-			let buffer = WlBufferGuard(pool.create_buffer(
-				0,
+			let wl_fmt = pixel_format_to_wl_shm(frame_format.format);
+			let (buffer, file, _) = allocate_shm_buffer(
+				&shm,
+				&qh,
 				frame_format.width,
 				frame_format.height,
 				frame_format.stride,
 				wl_fmt,
-				&qh,
-				(),
-			));
-			pool.destroy();
+			)?;
 
+			let buffer = WlBufferGuard(buffer);
 			frames[i].copy(&buffer);
 			buffers_files.push((buffer, file, frame_format));
 		}
@@ -403,5 +441,720 @@ impl CaptureBackend for WlrBackend {
 		}
 
 		Ok(composite)
+	}
+
+	fn start_recording(
+		&self,
+		output: &OutputInfo,
+		region: Option<LogicalRegion>,
+		include_cursor: bool,
+		output_path: std::path::PathBuf,
+	) -> Result<RecordingHandle> {
+		gstreamer::init()?;
+
+		let (stop_sender, stop_receiver) = crossbeam_channel::bounded(1);
+		let (frame_sender, frame_receiver) =
+			crossbeam_channel::bounded::<(std::sync::Arc<memmap2::Mmap>, usize, u64, FrameFormat)>(
+				3,
+			);
+		let (return_sender, return_receiver) = crossbeam_channel::bounded::<usize>(3);
+
+		let conn = self.conn.clone();
+		let wl_output = self
+			.wl_outputs
+			.get(output.id)
+			.ok_or_else(|| anyhow::anyhow!("WlOutput not found for id {}", output.id))?
+			.clone();
+		let output_info = output.clone();
+
+		std::thread::spawn(move || -> Result<()> {
+			let (globals, mut event_queue) = registry_queue_init::<CaptureState>(&conn)
+				.map_err(|e| FramrError::ConnectionFailed(format!("{e}")))?;
+			let qh = event_queue.handle();
+
+			let screencopy_mgr: ZwlrScreencopyManagerV1 = globals
+				.bind(&qh, 3..=3, ())
+				.map_err(|_| FramrError::ProtocolNotSupported("wlr-screencopy".into()))?;
+
+			let shm: WlShm = globals.bind(&qh, 1..=1, ())?;
+
+			let cursor_val = if include_cursor { 1 } else { 0 };
+
+			let mut pool: Vec<(WlBuffer, std::fs::File, std::sync::Arc<memmap2::Mmap>, bool)> =
+				Vec::new();
+			let mut pool_format: Option<FrameFormat> = None;
+
+			let mut first_pts = None;
+
+			loop {
+				if stop_receiver.try_recv().is_ok() {
+					break;
+				}
+
+				while let Ok(idx) = return_receiver.try_recv() {
+					if let Some(slot) = pool.get_mut(idx) {
+						slot.3 = false;
+					}
+				}
+
+				let mut state = CaptureState::default();
+				let frame = WlFrameGuard(if let Some(region) = region {
+					let local_x = region.position.x - output_info.logical_position.x;
+					let local_y = region.position.y - output_info.logical_position.y;
+					screencopy_mgr.capture_output_region(
+						cursor_val,
+						&wl_output,
+						local_x,
+						local_y,
+						region.size.width as i32,
+						region.size.height as i32,
+						&qh,
+						(),
+					)
+				} else {
+					screencopy_mgr.capture_output_region(
+						cursor_val,
+						&wl_output,
+						0,
+						0,
+						output_info.logical_size.width as i32,
+						output_info.logical_size.height as i32,
+						&qh,
+						(),
+					)
+				});
+
+				while !state.buffer_done {
+					event_queue.blocking_dispatch(&mut state)?;
+				}
+
+				let frame_format = state
+					.formats
+					.first()
+					.ok_or(FramrError::NoSupportedBufferFormat)?
+					.clone();
+
+				if let Some(ref f) = pool_format {
+					if f.format != frame_format.format
+						|| f.width != frame_format.width
+						|| f.height != frame_format.height
+					{
+						return Err(FramrError::ResolutionChanged.into());
+					}
+				}
+
+				if pool_format.is_none() {
+					pool_format = Some(frame_format.clone());
+				}
+
+				let buffer_idx = if let Some(idx) = pool.iter().position(|slot| !slot.3) {
+					idx
+				} else if pool.len() < 3 {
+					let wl_fmt = pixel_format_to_wl_shm(frame_format.format);
+					let (buffer, file, mmap) = allocate_shm_buffer(
+						&shm,
+						&qh,
+						frame_format.width,
+						frame_format.height,
+						frame_format.stride,
+						wl_fmt,
+					)?;
+					let mmap = std::sync::Arc::new(mmap);
+					pool.push((buffer, file, mmap, false));
+					pool.len() - 1
+				} else {
+					match return_receiver.recv() {
+						Ok(idx) => {
+							if let Some(slot) = pool.get_mut(idx) {
+								slot.3 = false;
+							}
+							idx
+						}
+						Err(_) => break,
+					}
+				};
+
+				let (wl_buffer, _, mmap, in_use) = &mut pool[buffer_idx];
+				*in_use = true;
+
+				frame.copy(wl_buffer);
+
+				while state.frame_state == FrameState::Pending {
+					event_queue.blocking_dispatch(&mut state)?;
+				}
+
+				if state.frame_state == FrameState::Failed {
+					return Err(FramrError::FrameCaptureFailed.into());
+				}
+
+				let pts_nanos = (state.tv_sec_hi as u64) << 32 | (state.tv_sec_lo as u64);
+				let pts = pts_nanos * 1_000_000_000 + (state.tv_nsec as u64);
+
+				let relative_pts = if let Some(first) = first_pts {
+					pts.saturating_sub(first)
+				} else {
+					first_pts = Some(pts);
+					0
+				};
+
+				if frame_sender
+					.send((mmap.clone(), buffer_idx, relative_pts, frame_format))
+					.is_err()
+				{
+					break;
+				}
+			}
+			for (buffer, _, _, _) in pool {
+				buffer.destroy();
+			}
+
+			Ok(())
+		});
+
+		let transform = output.transform;
+		let pipeline_thread = std::thread::spawn(move || -> Result<()> {
+			let flip_method = match transform {
+				crate::output::Transform::Normal => "none",
+				crate::output::Transform::_90 => "clockwise",
+				crate::output::Transform::_180 => "rotate-180",
+				crate::output::Transform::_270 => "counterclockwise",
+				crate::output::Transform::Flipped => "horizontal-flip",
+				crate::output::Transform::Flipped90 => "upper-left-diagonal",
+				crate::output::Transform::Flipped180 => "vertical-flip",
+				crate::output::Transform::Flipped270 => "upper-right-diagonal",
+			};
+
+			let pipeline_str = format!(
+				"appsrc name=src format=time is-live=true ! videoconvert ! videoflip method={} ! x264enc tune=zerolatency speed-preset=ultrafast bitrate=4000 key-int-max=60 ! mp4mux ! filesink location={}",
+				flip_method,
+				output_path.to_string_lossy()
+			);
+
+			let pipeline = gstreamer::parse::launch(&pipeline_str)
+				.map_err(|e| anyhow::anyhow!("Failed to launch GStreamer pipeline. Ensure gst-plugins-good and gst-plugins-ugly (for x264enc) are installed. Error: {}", e))?
+				.dynamic_cast::<gstreamer::Pipeline>()
+				.map_err(|_| anyhow::anyhow!("Failed to cast to Pipeline"))?;
+
+			let appsrc = pipeline
+				.by_name("src")
+				.ok_or_else(|| anyhow::anyhow!("Failed to find appsrc"))?
+				.dynamic_cast::<AppSrc>()
+				.map_err(|_| anyhow::anyhow!("Failed to cast to AppSrc"))?;
+
+			appsrc.set_max_bytes(1024 * 1024 * 50);
+			appsrc.set_property("emit-signals", false);
+			appsrc.set_property("is-live", true);
+
+			pipeline.set_state(gstreamer::State::Ready)?;
+
+			let (mmap, buffer_idx, pts, format) = frame_receiver.recv()?;
+
+			let gst_format = match format.format {
+				PixelFormat::Argb8888 => gstreamer_video::VideoFormat::Bgra,
+				PixelFormat::Xrgb8888 => gstreamer_video::VideoFormat::Bgrx,
+				PixelFormat::Abgr8888 => gstreamer_video::VideoFormat::Rgba,
+				PixelFormat::Xbgr8888 => gstreamer_video::VideoFormat::Rgbx,
+				_ => {
+					return Err(anyhow::anyhow!(
+						"Unsupported pixel format for recording: {:?}",
+						format.format
+					));
+				}
+			};
+
+			let caps = gstreamer_video::VideoCapsBuilder::new()
+				.format(gst_format)
+				.width(format.width)
+				.height(format.height)
+				.framerate(gstreamer::Fraction::new(0, 1))
+				.build();
+
+			appsrc.set_caps(Some(&caps));
+
+			pipeline.set_state(gstreamer::State::Playing)?;
+
+			let mut buffer = gstreamer::Buffer::with_size(mmap.len())
+				.map_err(|_| anyhow::anyhow!("Failed to create buffer"))?;
+
+			{
+				let buffer_mut = buffer.get_mut().unwrap();
+				buffer_mut.set_pts(gstreamer::ClockTime::from_nseconds(pts));
+				buffer_mut
+					.copy_from_slice(0, &mmap)
+					.map_err(|_| anyhow::anyhow!("Failed to copy to buffer"))?;
+			}
+
+			appsrc.push_buffer(buffer)?;
+
+			let _ = return_sender.send(buffer_idx);
+
+			let mut previous_pts = pts;
+
+			while let Ok((mmap, buffer_idx, pts, _format)) = frame_receiver.recv() {
+				let mut buffer = gstreamer::Buffer::with_size(mmap.len())
+					.map_err(|_| anyhow::anyhow!("Failed to create buffer"))?;
+
+				{
+					let buffer_mut = buffer.get_mut().unwrap();
+					buffer_mut.set_pts(gstreamer::ClockTime::from_nseconds(pts));
+
+					if pts > previous_pts {
+						let duration = gstreamer::ClockTime::from_nseconds(pts - previous_pts);
+						buffer_mut.set_duration(Some(duration));
+					}
+
+					buffer_mut
+						.copy_from_slice(0, &mmap)
+						.map_err(|_| anyhow::anyhow!("Failed to copy to buffer"))?;
+				}
+
+				appsrc.push_buffer(buffer)?;
+
+				let _ = return_sender.send(buffer_idx);
+
+				previous_pts = pts;
+			}
+
+			appsrc.end_of_stream()?;
+			wait_for_gstreamer_eos(&pipeline)?;
+			Ok(())
+		});
+
+		Ok(RecordingHandle {
+			stop_sender,
+			pipeline_thread,
+		})
+	}
+
+	fn start_recording_all(
+		&self,
+		include_cursor: bool,
+		output_path: std::path::PathBuf,
+	) -> Result<RecordingHandle> {
+		let outputs = self.outputs.clone();
+		if outputs.is_empty() {
+			return Err(FramrError::NoOutputs.into());
+		}
+
+		let min_x = outputs.iter().map(|o| o.logical_position.x).min().unwrap();
+		let min_y = outputs.iter().map(|o| o.logical_position.y).min().unwrap();
+		let max_x = outputs
+			.iter()
+			.map(|o| o.logical_position.x + o.logical_size.width as i32)
+			.max()
+			.unwrap();
+		let max_y = outputs
+			.iter()
+			.map(|o| o.logical_position.y + o.logical_size.height as i32)
+			.max()
+			.unwrap();
+
+		let region = LogicalRegion {
+			position: Position { x: min_x, y: min_y },
+			size: Size {
+				width: (max_x - min_x) as u32,
+				height: (max_y - min_y) as u32,
+			},
+		};
+
+		self.start_recording_region_internal(&region, include_cursor, output_path)
+	}
+
+	fn start_recording_region_internal(
+		&self,
+		region: &LogicalRegion,
+		include_cursor: bool,
+		output_path: std::path::PathBuf,
+	) -> Result<RecordingHandle> {
+		gstreamer::init()?;
+
+		let conn = self.conn.clone();
+		let outputs = self.outputs.clone();
+		let wl_outputs = self.wl_outputs.clone();
+		let region = *region;
+
+		let mut intersecting = Vec::new();
+		for (i, output) in outputs.iter().enumerate() {
+			let ox = output.logical_position.x;
+			let oy = output.logical_position.y;
+			let ow = output.logical_size.width as i32;
+			let oh = output.logical_size.height as i32;
+
+			let rx = region.position.x;
+			let ry = region.position.y;
+			let rw = region.size.width as i32;
+			let rh = region.size.height as i32;
+
+			if rx < ox + ow && rx + rw > ox && ry < oy + oh && ry + rh > oy {
+				intersecting.push((i, output.clone()));
+			}
+		}
+
+		if intersecting.is_empty() {
+			return Err(anyhow::anyhow!("No outputs intersect with region"));
+		}
+
+		let max_scale = intersecting
+			.iter()
+			.map(|(_, o)| o.scale.max(1))
+			.max()
+			.unwrap_or(1) as i32;
+
+		let composite_width = (region.size.width as i32 * max_scale + 1) / 2 * 2;
+		let composite_height = (region.size.height as i32 * max_scale + 1) / 2 * 2;
+
+		let num_outputs = intersecting.len();
+		let (stop_sender, stop_receiver) = crossbeam_channel::bounded(1);
+		let frame_senders: Vec<_> = (0..num_outputs)
+			.map(|_| {
+				crossbeam_channel::bounded::<(std::sync::Arc<memmap2::Mmap>, usize, u64, FrameFormat)>(
+					3,
+				)
+			})
+			.collect();
+		let frame_receivers: Vec<_> = frame_senders.iter().map(|s| s.1.clone()).collect();
+		let (format_senders, format_receivers): (Vec<_>, Vec<_>) = (0..num_outputs)
+			.map(|_| crossbeam_channel::bounded::<FrameFormat>(1))
+			.unzip();
+		let (return_senders, return_receivers): (Vec<_>, Vec<_>) = (0..num_outputs)
+			.map(|_| crossbeam_channel::bounded::<usize>(3))
+			.unzip();
+
+		for (output_idx, (_, output)) in intersecting.iter().enumerate() {
+			let conn = conn.clone();
+			let wl_outputs = wl_outputs.clone();
+			let stop_receiver = stop_receiver.clone();
+			let frame_sender = frame_senders[output_idx].0.clone();
+			let return_receiver = return_receivers[output_idx].clone();
+			let format_sender = format_senders[output_idx].clone();
+			let output = output.clone();
+			let wl_output = wl_outputs[output.id].clone();
+
+			std::thread::spawn(move || -> Result<()> {
+				let (globals, mut event_queue) = registry_queue_init::<CaptureState>(&conn)
+					.map_err(|e| FramrError::ConnectionFailed(format!("{e}")))?;
+				let qh = event_queue.handle();
+
+				let screencopy_mgr: ZwlrScreencopyManagerV1 = globals
+					.bind(&qh, 3..=3, ())
+					.map_err(|_| FramrError::ProtocolNotSupported("wlr-screencopy".into()))?;
+
+				let shm: WlShm = globals.bind(&qh, 1..=1, ())?;
+				let cursor_val = if include_cursor { 1 } else { 0 };
+
+				let mut pool: Vec<(WlBuffer, std::fs::File, std::sync::Arc<memmap2::Mmap>, bool)> =
+					Vec::new();
+
+				let mut state = CaptureState::default();
+				let frame =
+					WlFrameGuard(screencopy_mgr.capture_output(cursor_val, &wl_output, &qh, ()));
+
+				while !state.buffer_done {
+					event_queue.blocking_dispatch(&mut state)?;
+				}
+
+				let frame_format = state
+					.formats
+					.first()
+					.ok_or(FramrError::NoSupportedBufferFormat)?
+					.clone();
+
+				let wl_fmt = pixel_format_to_wl_shm(frame_format.format);
+				let (buffer, file, mmap) = allocate_shm_buffer(
+					&shm,
+					&qh,
+					frame_format.width,
+					frame_format.height,
+					frame_format.stride,
+					wl_fmt,
+				)?;
+				let mmap = std::sync::Arc::new(mmap);
+				pool.push((buffer, file, mmap, false));
+
+				let (wl_buffer, _, mmap, in_use) = &mut pool[0];
+				*in_use = true;
+
+				frame.copy(wl_buffer);
+
+				while state.frame_state == FrameState::Pending {
+					event_queue.blocking_dispatch(&mut state)?;
+				}
+
+				if state.frame_state == FrameState::Failed {
+					return Err(FramrError::FrameCaptureFailed.into());
+				}
+
+				if format_sender.send(frame_format.clone()).is_err() {
+					return Ok(());
+				}
+
+				let pts_nanos = (state.tv_sec_hi as u64) << 32 | (state.tv_sec_lo as u64);
+				let pts = pts_nanos * 1_000_000_000 + (state.tv_nsec as u64);
+
+				if frame_sender
+					.send((mmap.clone(), 0, pts, frame_format.clone()))
+					.is_err()
+				{
+					return Ok(());
+				}
+
+				loop {
+					if stop_receiver.try_recv().is_ok() {
+						break;
+					}
+
+					while let Ok(idx) = return_receiver.try_recv() {
+						if let Some(slot) = pool.get_mut(idx) {
+							slot.3 = false;
+						}
+					}
+
+					let mut state = CaptureState::default();
+					let frame = WlFrameGuard(screencopy_mgr.capture_output(
+						cursor_val,
+						&wl_output,
+						&qh,
+						(),
+					));
+
+					while !state.buffer_done {
+						event_queue.blocking_dispatch(&mut state)?;
+					}
+
+					let frame_format = state
+						.formats
+						.first()
+						.ok_or(FramrError::NoSupportedBufferFormat)?
+						.clone();
+
+					let buffer_idx = if let Some(idx) = pool.iter().position(|slot| !slot.3) {
+						idx
+					} else if pool.len() < 3 {
+						let wl_fmt = pixel_format_to_wl_shm(frame_format.format);
+						let (buffer, file, mmap) = allocate_shm_buffer(
+							&shm,
+							&qh,
+							frame_format.width,
+							frame_format.height,
+							frame_format.stride,
+							wl_fmt,
+						)?;
+						let mmap = std::sync::Arc::new(mmap);
+						pool.push((buffer, file, mmap, false));
+						pool.len() - 1
+					} else {
+						return Ok(());
+					};
+
+					let (wl_buffer, _, mmap, in_use) = &mut pool[buffer_idx];
+					*in_use = true;
+
+					frame.copy(wl_buffer);
+
+					while state.frame_state == FrameState::Pending {
+						event_queue.blocking_dispatch(&mut state)?;
+					}
+
+					if state.frame_state == FrameState::Failed {
+						return Err(FramrError::FrameCaptureFailed.into());
+					}
+
+					let pts_nanos = (state.tv_sec_hi as u64) << 32 | (state.tv_sec_lo as u64);
+					let pts = pts_nanos * 1_000_000_000 + (state.tv_nsec as u64);
+
+					if frame_sender
+						.send((mmap.clone(), buffer_idx, pts, frame_format.clone()))
+						.is_err()
+					{
+						break;
+					}
+				}
+
+				Ok(())
+			});
+		}
+
+		let pipeline_thread = std::thread::spawn(move || -> Result<()> {
+			let pipeline = gstreamer::Pipeline::new();
+
+			let mut appsrcs = Vec::with_capacity(num_outputs);
+			let compositor = gstreamer::ElementFactory::make("compositor")
+				.build()
+				.map_err(|_| anyhow::anyhow!("Failed to create compositor"))?;
+
+			compositor.set_property("background", 0u32);
+			compositor.set_property("width", composite_width);
+			compositor.set_property("height", composite_height);
+
+			let videoconvert = gstreamer::ElementFactory::make("videoconvert")
+				.build()
+				.map_err(|_| anyhow::anyhow!("Failed to create videoconvert"))?;
+
+			let encoder = gstreamer::ElementFactory::make("x264enc")
+				.build()
+				.map_err(|_| anyhow::anyhow!("Failed to create x264enc"))?;
+
+			encoder.set_property("tune", 0x00000004i32);
+			encoder.set_property("speed-preset", 7i32);
+			encoder.set_property("bitrate", 4000u32);
+			encoder.set_property("key-int-max", 60i32);
+
+			let muxer = gstreamer::ElementFactory::make("mp4mux")
+				.build()
+				.map_err(|_| anyhow::anyhow!("Failed to create mp4mux"))?;
+
+			let sink = gstreamer::ElementFactory::make("filesink")
+				.build()
+				.map_err(|_| anyhow::anyhow!("Failed to create filesink"))?;
+
+			sink.set_property("location", output_path.to_string_lossy().as_ref());
+
+			pipeline.add_many(&[&compositor, &videoconvert, &encoder, &muxer, &sink])?;
+			gstreamer::Element::link_many(&[&compositor, &videoconvert, &encoder, &muxer, &sink])?;
+
+			for (i, (_, output)) in intersecting.iter().enumerate() {
+				let appsrc = gstreamer::ElementFactory::make("appsrc")
+					.name(&format!("src_{}", i))
+					.build()
+					.map_err(|_| anyhow::anyhow!("Failed to create appsrc"))?;
+
+				appsrc.set_property("format", gstreamer::Format::Time);
+				appsrc.set_property("is-live", true);
+
+				pipeline.add(&appsrc)?;
+
+				let sink_pad = compositor
+					.request_pad_simple(&format!("sink_{}", i))
+					.ok_or_else(|| anyhow::anyhow!("Failed to get sink pad"))?;
+
+				let src_pad = appsrc
+					.static_pad("src")
+					.ok_or_else(|| anyhow::anyhow!("Failed to get src pad"))?;
+
+				src_pad.link(&sink_pad)?;
+
+				let rel_x = output.logical_position.x - region.position.x;
+				let rel_y = output.logical_position.y - region.position.y;
+
+				sink_pad.set_property("xpos", rel_x * max_scale);
+				sink_pad.set_property("ypos", rel_y * max_scale);
+				sink_pad.set_property("width", output.logical_size.width as i32 * max_scale);
+				sink_pad.set_property("height", output.logical_size.height as i32 * max_scale);
+				sink_pad.set_property("zorder", 0i32);
+
+				appsrcs.push((appsrc, output.clone()));
+			}
+
+			pipeline.set_state(gstreamer::State::Ready)?;
+
+			let mut frame_formats = Vec::with_capacity(num_outputs);
+			for (i, format_receiver) in format_receivers.iter().enumerate() {
+				let frame_format = format_receiver
+					.recv()
+					.map_err(|_| anyhow::anyhow!("Failed to receive initial format"))?;
+				frame_formats.push(frame_format.clone());
+
+				let gst_format = match frame_format.format {
+					PixelFormat::Argb8888 => gstreamer_video::VideoFormat::Bgra,
+					PixelFormat::Xrgb8888 => gstreamer_video::VideoFormat::Bgrx,
+					PixelFormat::Abgr8888 => gstreamer_video::VideoFormat::Rgba,
+					PixelFormat::Xbgr8888 => gstreamer_video::VideoFormat::Rgbx,
+					_ => {
+						return Err(anyhow::anyhow!(
+							"Unsupported pixel format for recording: {:?}",
+							frame_format.format
+						));
+					}
+				};
+
+				let caps = gstreamer_video::VideoCapsBuilder::new()
+					.format(gst_format)
+					.width(frame_format.width)
+					.height(frame_format.height)
+					.framerate(gstreamer::Fraction::new(0, 1))
+					.build();
+
+				appsrcs[i].0.set_property("caps", &caps);
+			}
+
+			pipeline.set_state(gstreamer::State::Playing)?;
+
+			let mut start_pts = None;
+			let mut previous_pts_vec: Vec<Option<u64>> = vec![None; num_outputs];
+
+			let mut select = crossbeam_channel::Select::new();
+			for i in 0..num_outputs {
+				select.recv(&frame_receivers[i]);
+			}
+			select.recv(&stop_receiver);
+
+			loop {
+				let oper = select.select();
+				let index = oper.index();
+
+				if index == num_outputs {
+					let _ = oper.recv(&stop_receiver);
+					break;
+				} else {
+					let i = index;
+					if let Ok((mmap, buffer_idx, pts, _frame_format)) =
+						oper.recv(&frame_receivers[i])
+					{
+						let (appsrc, _) = &appsrcs[i];
+
+						if start_pts.is_none() {
+							start_pts = Some(pts);
+						}
+						let relative_pts = pts.saturating_sub(start_pts.unwrap());
+
+						let mut buffer = gstreamer::Buffer::with_size(mmap.len())
+							.map_err(|_| anyhow::anyhow!("Failed to create buffer"))?;
+
+						{
+							let buffer_mut = buffer.get_mut().unwrap();
+							buffer_mut.set_pts(gstreamer::ClockTime::from_nseconds(relative_pts));
+
+							if let Some(prev) = previous_pts_vec[i] {
+								if relative_pts > prev {
+									let duration =
+										gstreamer::ClockTime::from_nseconds(relative_pts - prev);
+									buffer_mut.set_duration(Some(duration));
+								}
+							}
+
+							buffer_mut
+								.copy_from_slice(0, &*mmap)
+								.map_err(|e| anyhow::anyhow!("copy_from_slice failed: {e}"))?;
+						}
+
+						let appsrc_ref = appsrc.clone();
+						appsrc_ref
+							.downcast::<AppSrc>()
+							.map_err(|_| anyhow::anyhow!("Failed to cast to AppSrc"))?
+							.push_buffer(buffer)?;
+
+						let _ = return_senders[i].send(buffer_idx);
+
+						previous_pts_vec[i] = Some(relative_pts);
+					}
+				}
+			}
+
+			for (appsrc, _) in &appsrcs {
+				let appsrc_ref = appsrc.clone();
+				appsrc_ref
+					.downcast::<AppSrc>()
+					.map_err(|_| anyhow::anyhow!("Failed to cast to AppSrc"))?
+					.end_of_stream()?;
+			}
+
+			wait_for_gstreamer_eos(&pipeline)?;
+			Ok(())
+		});
+
+		Ok(RecordingHandle {
+			stop_sender,
+			pipeline_thread,
+		})
 	}
 }

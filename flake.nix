@@ -43,11 +43,17 @@
             cairo
             pango
             libxcursor
+            gst_all_1.gstreamer.dev
+            gst_all_1.gst-plugins-base.dev
+            gst_all_1.gst-plugins-good
+            gst_all_1.gst-plugins-ugly
           ];
 
           nativeBuildInputs = with pkgs; [
             pkg-config
             rustPlatform.bindgenHook
+            gst_all_1.gstreamer.dev
+            gst_all_1.gst-plugins-base.dev
           ];
         };
 
