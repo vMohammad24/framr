@@ -23,6 +23,7 @@ jobs:
           pkgbuild: ./PKGBUILD
           updpkgsums: true
           test: true
+          test_flags: -s --noconfirm --clean --cleanbuild
           commit_username: vMohammad
           commit_email: vmohammad@vmohammad.dev
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
