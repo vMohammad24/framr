@@ -8,6 +8,8 @@ use libframr::{FramrConnection, H264SpeedPreset, H264Tune, LogicalRegion, Record
 use notify_rust::Notification;
 use wl_clipboard_rs::copy::{MimeType, Options as ClipboardOptions, Seat, Source};
 
+mod pidfile;
+
 use crate::config::DefaultAction;
 use crate::selection::window::{get_window_at_pos, get_windows};
 
@@ -460,6 +462,11 @@ fn main() -> Result<()> {
 		action == DefaultAction::Upload || action == DefaultAction::UploadAndCopy;
 
 	let (bytes_opt, path, filename, is_image) = if cli.record {
+		if pidfile::try_acquire_lock().is_err() {
+			pidfile::stop_recording()?;
+			return Ok(());
+		}
+
 		let conn = FramrConnection::new()?;
 		let recording_config = get_recording_config(&cli, cfg.as_ref());
 

@@ -93,6 +93,7 @@ If you are building from source or running the binary system, you will need the 
 - [x] Replace slurp-rs with custom.
 - [x] improve the selection ui (add keyboard shortcuts, undo/redo, interchangeable colors, etc)
 - [x] Implement recording functionality
+- [ ] support multi-monitor recording
 - [ ] Support all linux desktop environments (currently only tested on hyprland and KDE (wayland))
 
 ## Deeplinks
