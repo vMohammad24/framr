@@ -1175,6 +1175,7 @@ dependencies = [
  "image",
  "memmap2",
  "rustix",
+ "serde",
  "wayland-client",
  "wayland-protocols",
  "wayland-protocols-wlr",

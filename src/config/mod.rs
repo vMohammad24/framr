@@ -10,7 +10,7 @@ pub use types::{ConfigEnum, DefaultAction, DefaultCaptureMethod};
 use anyhow::Result;
 use console::{Term, style};
 use dialoguer::{Confirm, Input, Select, theme::ColorfulTheme};
-use libframr::FramrConnection;
+use libframr::{FramrConnection, H264SpeedPreset, H264Tune};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::thread;
@@ -103,6 +103,40 @@ pub fn list_uploaders() -> Result<()> {
 			style(label).yellow().bold()
 		);
 	}
+
+	println!();
+	println!("{}", style("Recording Settings:").cyan().bold());
+	println!(
+		"  {} {}",
+		style("Bitrate:").bold(),
+		style(cfg.recording.bitrate).yellow()
+	);
+	println!(
+		"  {} {}",
+		style("Keyframe Interval:").bold(),
+		style(cfg.recording.keyframe_interval).yellow()
+	);
+	println!(
+		"  {} {}",
+		style("Threads:").bold(),
+		style(
+			cfg.recording
+				.threads
+				.map(|t| t.to_string())
+				.unwrap_or_else(|| "Auto".to_string())
+		)
+		.yellow()
+	);
+	println!(
+		"  {} {}",
+		style("H.264 Tune:").bold(),
+		style(cfg.recording.tune.as_str()).yellow()
+	);
+	println!(
+		"  {} {}",
+		style("H.264 Speed Preset:").bold(),
+		style(cfg.recording.speed_preset.as_str()).yellow()
+	);
 
 	println!(
 		"\n  {} {}",
@@ -514,6 +548,41 @@ pub fn run_config_wizard() -> Result<()> {
 				.unwrap_or_else(|| style("(none)").dim().to_string())
 		);
 
+		println!();
+		println!("{}", style("Recording Settings:").cyan().bold());
+		println!(
+			"  {} {}",
+			style("Bitrate:").bold(),
+			style(cfg.recording.bitrate).yellow()
+		);
+		println!(
+			"  {} {}",
+			style("Keyframe Interval:").bold(),
+			style(cfg.recording.keyframe_interval).yellow()
+		);
+		println!(
+			"  {} {}",
+			style("Threads:").bold(),
+			style(
+				cfg.recording
+					.threads
+					.map(|t| t.to_string())
+					.unwrap_or_else(|| "Auto".to_string())
+			)
+			.yellow()
+		);
+		println!(
+			"  {} {}",
+			style("H.264 Tune:").bold(),
+			style(cfg.recording.tune.as_str()).yellow()
+		);
+		println!(
+			"  {} {}",
+			style("H.264 Speed Preset:").bold(),
+			style(cfg.recording.speed_preset.as_str()).yellow()
+		);
+		println!();
+
 		let selection = Select::with_theme(&theme)
 			.with_prompt("Whatcha doin?")
 			.items([
@@ -523,6 +592,7 @@ pub fn run_config_wizard() -> Result<()> {
 				"Delete uploader",
 				"Defaults...",
 				"Selection UI settings...",
+				"Recording settings...",
 				"Save & Exit",
 			])
 			.default(5)
@@ -683,6 +753,12 @@ pub fn run_config_wizard() -> Result<()> {
 				modify_selection_config(&mut cfg)?;
 				save_config(&cfg)?;
 				display_success("Selection UI settings updated and saved.");
+				thread::sleep(Duration::from_secs(1));
+			}
+			6 => {
+				modify_recording_config(&mut cfg)?;
+				save_config(&cfg)?;
+				display_success("Recording settings updated and saved.");
 				thread::sleep(Duration::from_secs(1));
 			}
 			_ => {
@@ -868,4 +944,185 @@ fn input_color(prompt: &str, current: Color) -> Result<Color> {
 		.interact_text()?;
 
 	Ok(Color::from_str(&input).unwrap())
+}
+
+pub fn modify_recording_config(cfg: &mut AppConfig) -> Result<()> {
+	let theme = ColorfulTheme::default();
+	let mut r = cfg.recording;
+
+	loop {
+		println!("\n{}", style("Recording Settings").cyan().bold());
+		println!("{}", style("━━━━━━━━━━━━━━━━━━━━━━━━━━━").dim());
+
+		let items = [
+			format!(
+				"{:<25} {}",
+				style("Bitrate (kbps):").bold(),
+				style(r.bitrate).yellow()
+			),
+			format!(
+				"{:<25} {}",
+				style("Keyframe Interval:").bold(),
+				style(r.keyframe_interval).yellow()
+			),
+			format!(
+				"{:<25} {}",
+				style("Threads:").bold(),
+				style(
+					r.threads
+						.map(|t| t.to_string())
+						.unwrap_or_else(|| "Auto".to_string())
+				)
+				.yellow()
+			),
+			format!(
+				"{:<25} {}",
+				style("H.264 Tune:").bold(),
+				style(r.tune.as_str()).yellow()
+			),
+			format!(
+				"{:<25} {}",
+				style("H.264 Speed Preset:").bold(),
+				style(r.speed_preset.as_str()).yellow()
+			),
+			style("Back").dim().to_string(),
+		];
+
+		let sel = Select::with_theme(&theme)
+			.with_prompt("Edit Setting")
+			.items(&items)
+			.default(items.len() - 1)
+			.interact()?;
+
+		match sel {
+			0 => {
+				let bitrate_str: String = Input::with_theme(&theme)
+					.with_prompt("Bitrate (kbps)")
+					.default(r.bitrate.to_string())
+					.validate_with(|input: &String| -> Result<(), String> {
+						input
+							.parse::<u32>()
+							.map(|v| (v > 0).then_some(()))
+							.map_err(|_| "Must be a valid number".to_string())
+							.and_then(|_| match input.parse::<u32>() {
+								Ok(0) => Err("Bitrate must be greater than 0".to_string()),
+								_ => Ok(()),
+							})
+					})
+					.interact_text()?;
+				r.bitrate = bitrate_str.parse().unwrap();
+			}
+			1 => {
+				let interval_str: String = Input::with_theme(&theme)
+					.with_prompt("Keyframe Interval (frames)")
+					.default(r.keyframe_interval.to_string())
+					.validate_with(|input: &String| -> Result<(), String> {
+						input
+							.parse::<u32>()
+							.map(|v| (v > 0).then_some(()))
+							.map_err(|_| "Must be a valid number".to_string())
+							.and_then(|_| match input.parse::<u32>() {
+								Ok(0) => {
+									Err("Keyframe interval must be greater than 0".to_string())
+								}
+								_ => Ok(()),
+							})
+					})
+					.interact_text()?;
+				r.keyframe_interval = interval_str.parse().unwrap();
+			}
+			2 => {
+				let threads_str: String = Input::with_theme(&theme)
+					.with_prompt("Threads (0 for auto)")
+					.default(
+						r.threads
+							.map(|t| t.to_string())
+							.unwrap_or_else(|| "0".to_string()),
+					)
+					.validate_with(|input: &String| -> Result<(), String> {
+						input
+							.parse::<u32>()
+							.map(|_| ())
+							.map_err(|_| "Must be a valid number or 0 for auto".to_string())
+					})
+					.interact_text()?;
+				let parsed_threads: u32 = threads_str.parse().unwrap();
+				r.threads = if parsed_threads == 0 {
+					None
+				} else {
+					Some(parsed_threads)
+				};
+			}
+			3 => {
+				let tune_options = [
+					"zerolatency",
+					"film",
+					"animation",
+					"grain",
+					"stillimage",
+					"fastdecode",
+				];
+				let current_tune_idx = tune_options
+					.iter()
+					.position(|&t| t == r.tune.as_str())
+					.unwrap_or(0);
+				let selection = Select::with_theme(&theme)
+					.with_prompt("Select H.264 Tune")
+					.items(tune_options)
+					.default(current_tune_idx)
+					.interact()?;
+
+				r.tune = match selection {
+					0 => H264Tune::Zerolatency,
+					1 => H264Tune::Film,
+					2 => H264Tune::Animation,
+					3 => H264Tune::Grain,
+					4 => H264Tune::Stillimage,
+					5 => H264Tune::Fastdecode,
+					_ => r.tune,
+				};
+			}
+			4 => {
+				let preset_options = [
+					"ultrafast",
+					"superfast",
+					"veryfast",
+					"faster",
+					"fast",
+					"medium",
+					"slow",
+					"slower",
+					"veryslow",
+					"placebo",
+				];
+				let current_preset_idx = preset_options
+					.iter()
+					.position(|&p| p == r.speed_preset.as_str())
+					.unwrap_or(0);
+				let selection = Select::with_theme(&theme)
+					.with_prompt("Select H.264 Speed Preset")
+					.items(preset_options)
+					.default(current_preset_idx)
+					.interact()?;
+
+				r.speed_preset = match selection {
+					0 => H264SpeedPreset::Ultrafast,
+					1 => H264SpeedPreset::Superfast,
+					2 => H264SpeedPreset::Veryfast,
+					3 => H264SpeedPreset::Faster,
+					4 => H264SpeedPreset::Fast,
+					5 => H264SpeedPreset::Medium,
+					6 => H264SpeedPreset::Slow,
+					7 => H264SpeedPreset::Slower,
+					8 => H264SpeedPreset::Veryslow,
+					9 => H264SpeedPreset::Placebo,
+					_ => r.speed_preset,
+				};
+			}
+			_ => break,
+		}
+	}
+
+	cfg.recording = r;
+	Ok(())
 }

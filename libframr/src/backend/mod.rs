@@ -1,4 +1,5 @@
 use crate::output::{LogicalRegion, OutputInfo};
+use crate::RecordingConfig;
 use anyhow::Result;
 use image::RgbaImage;
 
@@ -21,6 +22,7 @@ pub trait CaptureBackend: Send + Sync {
 		&self,
 		include_cursor: bool,
 		output_path: std::path::PathBuf,
+		recording_config: RecordingConfig,
 	) -> Result<RecordingHandle>;
 
 	fn start_recording(
@@ -29,6 +31,7 @@ pub trait CaptureBackend: Send + Sync {
 		region: Option<LogicalRegion>,
 		include_cursor: bool,
 		output_path: std::path::PathBuf,
+		recording_config: RecordingConfig,
 	) -> Result<RecordingHandle>;
 
 	fn start_recording_region(
@@ -36,6 +39,7 @@ pub trait CaptureBackend: Send + Sync {
 		region: &LogicalRegion,
 		include_cursor: bool,
 		output_path: std::path::PathBuf,
+		recording_config: RecordingConfig,
 	) -> Result<RecordingHandle> {
 		let outputs = self.get_outputs()?;
 		let containing = outputs.iter().find(|o| {
@@ -50,10 +54,10 @@ pub trait CaptureBackend: Send + Sync {
 		});
 
 		if let Some(output) = containing {
-			return self.start_recording(output, Some(*region), include_cursor, output_path);
+			return self.start_recording(output, Some(*region), include_cursor, output_path, recording_config);
 		}
 
-		self.start_recording_region_internal(region, include_cursor, output_path)
+		self.start_recording_region_internal(region, include_cursor, output_path, recording_config)
 	}
 
 	fn start_recording_region_internal(
@@ -61,6 +65,7 @@ pub trait CaptureBackend: Send + Sync {
 		region: &LogicalRegion,
 		include_cursor: bool,
 		output_path: std::path::PathBuf,
+		recording_config: RecordingConfig,
 	) -> Result<RecordingHandle>;
 
 	fn capture_region(&self, region: &LogicalRegion, include_cursor: bool) -> Result<RgbaImage> {

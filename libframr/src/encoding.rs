@@ -5,6 +5,7 @@ use gstreamer::prelude::*;
 use gstreamer_app::AppSrc;
 use memmap2::Mmap;
 
+use crate::RecordingConfig;
 use crate::output::{FrameFormat, LogicalRegion, OutputInfo, PixelFormat, Transform};
 
 pub fn wait_for_gstreamer_eos(pipeline: &gstreamer::Pipeline) -> Result<()> {
@@ -32,6 +33,7 @@ pub fn run_single_encoding_pipeline(
 	output_path: std::path::PathBuf,
 	frame_receiver: crossbeam_channel::Receiver<(Arc<Mmap>, usize, u64, FrameFormat)>,
 	return_sender: crossbeam_channel::Sender<usize>,
+	recording_config: RecordingConfig,
 ) -> Result<()> {
 	let flip_method = match transform {
 		Transform::Normal => "none",
@@ -44,9 +46,22 @@ pub fn run_single_encoding_pipeline(
 		Transform::Flipped270 => "upper-right-diagonal",
 	};
 
+	let tune_prop = if recording_config.tune.is_psy_tune() {
+		"psy-tune"
+	} else {
+		"tune"
+	};
+
+	let threads = recording_config.threads.unwrap_or(0);
 	let pipeline_str = format!(
-		"appsrc name=src format=time is-live=true ! videoconvert ! videoflip method={} ! x264enc tune=zerolatency speed-preset=ultrafast bitrate=4000 key-int-max=60 ! mp4mux ! filesink location={}",
+		"appsrc name=src format=time is-live=true ! videoconvert ! videoflip method={} ! x264enc {}={} speed-preset={} bitrate={} key-int-max={} threads={} ! mp4mux ! filesink location={}",
 		flip_method,
+		tune_prop,
+		recording_config.tune.as_str(),
+		recording_config.speed_preset.as_str(),
+		recording_config.bitrate,
+		recording_config.keyframe_interval,
+		threads,
 		output_path.to_string_lossy()
 	);
 
@@ -149,6 +164,7 @@ pub fn run_composite_encoding_pipeline(
 	format_receivers: Vec<crossbeam_channel::Receiver<FrameFormat>>,
 	return_senders: Vec<crossbeam_channel::Sender<usize>>,
 	stop_receiver: crossbeam_channel::Receiver<()>,
+	recording_config: RecordingConfig,
 ) -> Result<()> {
 	let num_outputs = intersecting_outputs.len();
 	let composite_width = (region.size.width as i32 * max_scale + 1) / 2 * 2;
@@ -159,7 +175,7 @@ pub fn run_composite_encoding_pipeline(
 	let mut appsrcs = Vec::with_capacity(num_outputs);
 	let compositor = gstreamer::ElementFactory::make("compositor")
 		.build()
-		.map_err(|_| anyhow::anyhow!("Failed to create compositor"))?;
+		.map_err(|e| anyhow::anyhow!("Failed to create compositor. Error: {}", e))?;
 
 	compositor.set_property("background", 0u32);
 	compositor.set_property("width", composite_width);
@@ -167,24 +183,29 @@ pub fn run_composite_encoding_pipeline(
 
 	let videoconvert = gstreamer::ElementFactory::make("videoconvert")
 		.build()
-		.map_err(|_| anyhow::anyhow!("Failed to create videoconvert"))?;
+		.map_err(|e| anyhow::anyhow!("Failed to create videoconvert. Error: {}", e))?;
 
 	let encoder = gstreamer::ElementFactory::make("x264enc")
 		.build()
-		.map_err(|_| anyhow::anyhow!("Failed to create x264enc"))?;
+		.map_err(|e| anyhow::anyhow!("Failed to create x264enc element. Ensure gst-plugins-bad is installed and x264enc element is available.\nError: {}", e))?;
 
-	encoder.set_property("tune", 0x00000004i32);
-	encoder.set_property("speed-preset", 7i32);
-	encoder.set_property("bitrate", 4000u32);
-	encoder.set_property("key-int-max", 60i32);
+	if recording_config.tune.is_psy_tune() {
+		encoder.set_property("psy-tune", recording_config.tune.to_gst_value());
+	} else {
+		encoder.set_property("tune", recording_config.tune.to_gst_value());
+	}
+	encoder.set_property("speed-preset", recording_config.speed_preset.to_gst_value());
+	encoder.set_property("bitrate", recording_config.bitrate);
+	encoder.set_property("key-int-max", recording_config.keyframe_interval);
+	encoder.set_property("threads", recording_config.threads.unwrap_or(0u32));
 
 	let muxer = gstreamer::ElementFactory::make("mp4mux")
 		.build()
-		.map_err(|_| anyhow::anyhow!("Failed to create mp4mux"))?;
+		.map_err(|e| anyhow::anyhow!("Failed to create mp4mux. Error: {}", e))?;
 
 	let sink = gstreamer::ElementFactory::make("filesink")
 		.build()
-		.map_err(|_| anyhow::anyhow!("Failed to create filesink"))?;
+		.map_err(|e| anyhow::anyhow!("Failed to create filesink. Error: {}", e))?;
 
 	sink.set_property("location", output_path.to_string_lossy().as_ref());
 
@@ -195,7 +216,7 @@ pub fn run_composite_encoding_pipeline(
 		let appsrc = gstreamer::ElementFactory::make("appsrc")
 			.name(&format!("src_{}", i))
 			.build()
-			.map_err(|_| anyhow::anyhow!("Failed to create appsrc"))?;
+			.map_err(|e| anyhow::anyhow!("Failed to create appsrc. Error: {}", e))?;
 
 		appsrc.set_property("format", gstreamer::Format::Time);
 		appsrc.set_property("is-live", true);
@@ -282,6 +303,7 @@ pub fn run_composite_encoding_pipeline(
 				if start_pts.is_none() {
 					start_pts = Some(pts);
 				}
+
 				let relative_pts = pts.saturating_sub(start_pts.unwrap());
 
 				let mut buffer = gstreamer::Buffer::with_size(mmap.len())

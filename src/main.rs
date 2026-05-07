@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use image::{GenericImageView, ImageFormat};
-use libframr::{FramrConnection, LogicalRegion};
+use libframr::{FramrConnection, H264SpeedPreset, H264Tune, LogicalRegion, RecordingConfig};
 use notify_rust::Notification;
 use wl_clipboard_rs::copy::{MimeType, Options as ClipboardOptions, Seat, Source};
 
@@ -56,6 +56,26 @@ struct Cli {
 	/// Record video
 	#[arg(short, long)]
 	record: bool,
+
+	/// Recording bitrate in kbps
+	#[arg(long)]
+	bitrate: Option<u32>,
+
+	/// Recording keyframe interval in frames
+	#[arg(long)]
+	keyframe_interval: Option<u32>,
+
+	/// Recording threads (0 for auto)
+	#[arg(long)]
+	threads: Option<u32>,
+
+	/// H.264 tune preset (zerolatency, film, animation, grain, stillimage, fastdecode)
+	#[arg(long)]
+	tune: Option<H264Tune>,
+
+	/// H.264 speed preset (ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow, placebo)
+	#[arg(long)]
+	speed_preset: Option<H264SpeedPreset>,
 
 	/// Upload screenshot (uses default uploader, or specify with -u <name>)
 	#[arg(short = 'u', long, num_args = 0..=1, default_missing_value = "")]
@@ -188,6 +208,20 @@ fn copy_to_clipboard_text(text: &str) -> Result<()> {
 		_ => {}
 	}
 	Ok(())
+}
+
+fn get_recording_config(cli: &Cli, cfg: Option<&config::AppConfig>) -> RecordingConfig {
+	let base_config = cfg.map(|c| c.recording).unwrap_or_default();
+
+	RecordingConfig {
+		bitrate: cli.bitrate.unwrap_or(base_config.bitrate),
+		keyframe_interval: cli
+			.keyframe_interval
+			.unwrap_or(base_config.keyframe_interval),
+		threads: cli.threads.filter(|&t| t != 0).or(base_config.threads),
+		tune: cli.tune.unwrap_or(base_config.tune),
+		speed_preset: cli.speed_preset.unwrap_or(base_config.speed_preset),
+	}
 }
 
 fn capture(cli: &Cli, cfg: Option<&config::AppConfig>) -> Result<(Vec<u8>, Option<LogicalRegion>)> {
@@ -427,6 +461,7 @@ fn main() -> Result<()> {
 
 	let (bytes_opt, path, filename, is_image) = if cli.record {
 		let conn = FramrConnection::new()?;
+		let recording_config = get_recording_config(&cli, cfg.as_ref());
 
 		let filename = resolve_output(&cli, "recording_%Y-%m-%d_%H-%M-%S.mp4", "mp4")
 			.to_string_lossy()
@@ -447,7 +482,7 @@ fn main() -> Result<()> {
 
 		let handle = if let Some(screen_num) = cli.screen {
 			let output = conn.get_output(screen_num)?;
-			conn.start_recording(&output, None, cli.cursor, path.clone())?
+			conn.start_recording(&output, None, cli.cursor, path.clone(), recording_config)?
 		} else {
 			let selection_cfg = cfg.as_ref().map(|c| c.selection).unwrap_or_default();
 			let ui = selection::SelectionUI::new(selection_cfg)?;
@@ -455,7 +490,7 @@ fn main() -> Result<()> {
 				.run(false)?
 				.ok_or_else(|| anyhow::anyhow!("Selection cancelled"))?;
 
-			conn.start_recording_region(&region, cli.cursor, path.clone())?
+			conn.start_recording_region(&region, cli.cursor, path.clone(), recording_config)?
 		};
 
 		println!("Recording to {}... Press Ctrl+C to stop.", path.display());

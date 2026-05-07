@@ -1,6 +1,7 @@
 use crate::backend::{CaptureBackend, RecordingHandle};
 use crate::convert::convert_to_rgba;
 use crate::output::{LogicalRegion, OutputInfo, PixelFormat};
+use crate::RecordingConfig;
 use anyhow::{Result, anyhow};
 use dbus::arg::{self, RefArg};
 use dbus::blocking::SyncConnection;
@@ -170,6 +171,7 @@ impl CaptureBackend for KdeBackend {
 		&self,
 		_include_cursor: bool,
 		_output_path: std::path::PathBuf,
+		_recording_config: RecordingConfig,
 	) -> Result<RecordingHandle> {
 		Err(anyhow!(
 			"Recording is not supported on KDE KWin backend yet"
@@ -181,6 +183,7 @@ impl CaptureBackend for KdeBackend {
 		_region: &LogicalRegion,
 		_include_cursor: bool,
 		_output_path: std::path::PathBuf,
+		_recording_config: RecordingConfig,
 	) -> Result<RecordingHandle> {
 		Err(anyhow!(
 			"Recording is not supported on KDE KWin backend yet"
@@ -193,6 +196,7 @@ impl CaptureBackend for KdeBackend {
 		_region: Option<LogicalRegion>,
 		_include_cursor: bool,
 		_output_path: std::path::PathBuf,
+		_recording_config: RecordingConfig,
 	) -> Result<RecordingHandle> {
 		Err(anyhow!(
 			"Recording is not supported on KDE KWin backend yet"

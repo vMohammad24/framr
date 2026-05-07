@@ -3,6 +3,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::str::FromStr;
 
+pub use libframr::RecordingConfig;
+
 pub trait ConfigEnum: Sized + Copy + PartialEq {
 	fn variants() -> &'static [&'static str];
 	fn from_index(i: usize) -> Option<Self>;
@@ -169,6 +171,8 @@ pub struct AppConfig {
 	pub allowed_directories: Vec<String>,
 	#[serde(default)]
 	pub selection: SelectionConfig,
+	#[serde(default)]
+	pub recording: RecordingConfig,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]

@@ -18,6 +18,7 @@ use crate::convert::convert_to_rgba;
 use crate::error::FramrError;
 use crate::output::{FrameFormat, LogicalRegion, OutputInfo, PixelFormat, Position, Size};
 use crate::transform::apply_transform;
+use crate::RecordingConfig;
 
 mod dispatch;
 use dispatch::*;
@@ -426,6 +427,7 @@ impl CaptureBackend for WlrBackend {
 		region: Option<LogicalRegion>,
 		include_cursor: bool,
 		output_path: std::path::PathBuf,
+		recording_config: RecordingConfig,
 	) -> Result<RecordingHandle> {
 		gstreamer::init()?;
 
@@ -595,6 +597,7 @@ impl CaptureBackend for WlrBackend {
 				output_path,
 				frame_receiver,
 				return_sender,
+				recording_config,
 			)
 		});
 
@@ -608,6 +611,7 @@ impl CaptureBackend for WlrBackend {
 		&self,
 		include_cursor: bool,
 		output_path: std::path::PathBuf,
+		recording_config: RecordingConfig,
 	) -> Result<RecordingHandle> {
 		let outputs = self.outputs.clone();
 		if outputs.is_empty() {
@@ -635,7 +639,7 @@ impl CaptureBackend for WlrBackend {
 			},
 		};
 
-		self.start_recording_region_internal(&region, include_cursor, output_path)
+		self.start_recording_region_internal(&region, include_cursor, output_path, recording_config)
 	}
 
 	fn start_recording_region_internal(
@@ -643,6 +647,7 @@ impl CaptureBackend for WlrBackend {
 		region: &LogicalRegion,
 		include_cursor: bool,
 		output_path: std::path::PathBuf,
+		recording_config: RecordingConfig,
 	) -> Result<RecordingHandle> {
 		gstreamer::init()?;
 
@@ -860,6 +865,7 @@ impl CaptureBackend for WlrBackend {
 				format_receivers,
 				return_senders,
 				stop_receiver,
+				recording_config,
 			)
 		});
 
