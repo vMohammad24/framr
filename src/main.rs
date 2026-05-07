@@ -25,6 +25,10 @@ struct Cli {
 	#[arg(short, long)]
 	screen: Option<usize>,
 
+	/// Version
+	#[arg(short, long)]
+	version: bool,
+
 	/// List available screens
 	#[arg(long)]
 	screens: bool,
@@ -335,6 +339,11 @@ fn main() -> Result<()> {
 
 	if let Some(ref uri) = cli.uri {
 		return config::import_uploader(uri);
+	}
+
+	if cli.version {
+		println!("framr v{}", env!("CARGO_PKG_VERSION"));
+		return Ok(());
 	}
 
 	let cfg = config::load_config().ok();
