@@ -4,11 +4,12 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use image::{GenericImageView, ImageFormat};
-use libframr::FramrConnection;
+use libframr::{FramrConnection, LogicalRegion};
 use notify_rust::Notification;
 use wl_clipboard_rs::copy::{MimeType, Options as ClipboardOptions, Seat, Source};
 
 use crate::config::DefaultAction;
+use crate::selection::window::{get_window_at_pos, get_windows};
 
 mod config;
 mod selection;
@@ -185,7 +186,7 @@ fn copy_to_clipboard_text(text: &str) -> Result<()> {
 	Ok(())
 }
 
-fn capture(cli: &Cli, cfg: Option<&config::AppConfig>) -> Result<Vec<u8>> {
+fn capture(cli: &Cli, cfg: Option<&config::AppConfig>) -> Result<(Vec<u8>, Option<LogicalRegion>)> {
 	let conn = FramrConnection::new()?;
 
 	let (method, screen) = if cli.area {
@@ -202,26 +203,27 @@ fn capture(cli: &Cli, cfg: Option<&config::AppConfig>) -> Result<Vec<u8>> {
 		(Some(config::DefaultCaptureMethod::Full), None)
 	};
 
-	let image = match method {
+	let (image, region) = match method {
 		Some(config::DefaultCaptureMethod::Area) => {
 			let selection_cfg = cfg.map(|c| c.selection).unwrap_or_default();
 			let ui = selection::SelectionUI::new(selection_cfg)?;
-			let (_, img) = ui
+			let (r, img) = ui
 				.run(true)?
 				.ok_or_else(|| anyhow::anyhow!("Selection cancelled"))?;
-			img.ok_or_else(|| anyhow::anyhow!("Failed to capture image"))?
+			let img = img.ok_or_else(|| anyhow::anyhow!("Failed to capture image"))?;
+			(img, Some(r))
 		}
 		Some(config::DefaultCaptureMethod::Screen) => {
 			let screen_num = screen.unwrap_or(0);
 			let output = conn.get_output(screen_num)?;
-			conn.screenshot_output(&output, cli.cursor)?
+			(conn.screenshot_output(&output, cli.cursor)?, None)
 		}
-		_ => conn.screenshot_all(cli.cursor)?,
+		_ => (conn.screenshot_all(cli.cursor)?, None),
 	};
 
 	let mut buf = Cursor::new(Vec::new());
 	image.write_to(&mut buf, ImageFormat::Png)?;
-	Ok(buf.into_inner())
+	Ok((buf.into_inner(), region))
 }
 
 fn handle_upload(
@@ -476,11 +478,25 @@ fn main() -> Result<()> {
 
 		(None, path, filename, false)
 	} else {
-		let png_bytes = capture(&cli, cfg.as_ref())?;
-		let filename = resolve_output(&cli, "screenshot_%Y-%m-%d_%H-%M-%S.png", "png")
+		let (png_bytes, region) = capture(&cli, cfg.as_ref())?;
+		let windows = get_windows()?;
+		let pos = region
+			.map(|r| (r.position.x as f64, r.position.y as f64))
+			.unwrap_or((0.0, 0.0));
+		let active_window = get_window_at_pos(pos, &windows);
+		let mut filename = resolve_output(&cli, "{window}_%Y-%m-%d_%H-%M-%S.png", "png")
 			.to_string_lossy()
 			.to_string();
 
+		if let Some(i) = active_window {
+			let window = &windows[i];
+			let title = if cli.upload.is_some() {
+				&window.title.replace(" ", "_")
+			} else {
+				&window.title.replace("/", "_")
+			};
+			filename = filename.replace("{window}", title);
+		}
 		let path = match &cli.output {
 			Some(dir) => dir.join(&filename),
 			None => PathBuf::from(&filename),
