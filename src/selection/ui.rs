@@ -18,6 +18,7 @@ use crate::config::SelectionConfig;
 use crate::selection::backend::wayland::{AppState, SurfaceData};
 use crate::selection::graphics;
 use crate::selection::state::{SelectionState, Tool};
+use crate::selection::window::get_windows;
 
 pub enum UserEvent {
 	ProcessingFinished {
@@ -66,6 +67,8 @@ impl SelectionUI {
 			last_surface_width = info.logical_size.width as f64;
 		}
 
+		let windows = get_windows();
+
 		Ok(Self {
 			outputs,
 			state: Arc::new(Mutex::new(SelectionState {
@@ -88,6 +91,8 @@ impl SelectionUI {
 				current_offset: (0.0, 0.0),
 				editing_text_idx: None,
 				config,
+				windows: windows.ok().unwrap_or_default(),
+				hovered_window: None,
 			})),
 		})
 	}

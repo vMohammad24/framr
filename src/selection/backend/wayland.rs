@@ -33,11 +33,11 @@ use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::
 	Shape, WpCursorShapeDeviceV1,
 };
 
-use crate::config::SelectionConfig;
 use crate::selection::{
 	graphics,
 	state::{Annotation, SelectionState, Tool},
 };
+use crate::{config::SelectionConfig, selection::window::get_window_at_pos};
 
 pub struct SurfaceData {
 	pub output: OutputInfo,
@@ -237,11 +237,43 @@ impl AppState {
 						eprintln!("failed to fill background: {}", e);
 					}
 				}
+			} else if let Some(hovered_idx) = state.hovered_window
+				&& let Some(win) = state.windows.get(hovered_idx)
+			{
+				let offset_x = surface_data.output.logical_position.x as f64;
+				let offset_y = surface_data.output.logical_position.y as f64;
+				let win_x = win.x as f64 - offset_x;
+				let win_y = win.y as f64 - offset_y;
+				let win_w = win.width as f64;
+				let win_h = win.height as f64;
+
+				cr.rectangle(win_x, win_y, win_w, win_h);
+				cr.set_fill_rule(cairo::FillRule::EvenOdd);
+				if let Err(e) = cr.fill() {
+					eprintln!("failed to fill hovered window: {}", e);
+				}
+				cr.set_fill_rule(cairo::FillRule::Winding);
+
+				let bc = state.config.border_color;
+				cr.set_source_rgb(bc.r_f64(), bc.g_f64(), bc.b_f64());
+				cr.set_line_width(state.config.border_width);
+				cr.rectangle(win_x, win_y, win_w, win_h);
+				if let Err(e) = cr.stroke() {
+					eprintln!("failed to stroke hovered window: {}", e);
+				}
+
+				let dim_text = format!("{}x{}", win_w as u32, win_h as u32);
+				let layout = create_layout(&cr);
+				layout.set_text(&dim_text);
+				cr.set_source_rgb(1.0, 1.0, 1.0);
+				cr.move_to(win_x, win_y - 20.0);
+				show_layout(&cr, &layout);
 			} else {
 				if let Err(e) = cr.fill() {
 					eprintln!("failed to fill background: {}", e);
 				}
 			}
+
 			Self::draw_toolbar(
 				&cr,
 				width as f64,
@@ -480,8 +512,8 @@ impl PointerHandler for AppState {
                 PointerEventKind::Press { button, .. } => {
                     if button == 0x110 {
                         // lclick
-						let ty = state.config.toolbar_y;
-						let th = state.config.toolbar_height;
+                        let ty = state.config.toolbar_y;
+                        let th = state.config.toolbar_height;
                         if event.position.1 >= ty && event.position.1 <= ty + th {
                             let item_w = state.config.toolbar_item_width;
                             let total_w = item_w * Tool::all().len() as f64;
@@ -497,7 +529,38 @@ impl PointerHandler for AppState {
                                 }
                             }
                         }
-                        if state.active_tool == Tool::Select || self.modifiers.ctrl {
+                        if state.active_tool == Tool::Select {
+                            let hovered_win = get_window_at_pos(global_pos, &state.windows);
+
+                            if hovered_win.is_some() {
+                                state.start = Some(global_pos);
+                                state.move_start_point = Some(global_pos);
+                                state.end = Some(global_pos);
+                                state.is_dragging = true;
+                            } else {
+                                let mut hit_idx = None;
+                                for (idx, ann) in state.annotations.iter().enumerate().rev() {
+                                    if graphics::hit_test(ann, global_pos, 5.0) {
+                                        hit_idx = Some(idx);
+                                        break;
+                                    }
+                                }
+
+                                if let Some(idx) = hit_idx {
+                                    state.push_undo();
+                                    state.selected_annotation = Some(idx);
+                                    state.is_moving_annotation = true;
+                                    state.move_start_point = Some(global_pos);
+                                    state.original_points = Some(state.annotations[idx].points.clone());
+                                } else {
+                                    state.selected_annotation = None;
+                                    state.start = Some(global_pos);
+                                    state.move_start_point = Some(global_pos);
+                                    state.end = None;
+                                    state.is_dragging = true;
+                                }
+                            }
+                        } else if self.modifiers.ctrl {
                             let mut hit_idx = None;
                             for (idx, ann) in state.annotations.iter().enumerate().rev() {
                                 if graphics::hit_test(ann, global_pos, 5.0) {
@@ -512,13 +575,6 @@ impl PointerHandler for AppState {
                                 state.is_moving_annotation = true;
                                 state.move_start_point = Some(global_pos);
                                 state.original_points = Some(state.annotations[idx].points.clone());
-                            } else {
-                                state.selected_annotation = None;
-                                if state.active_tool == Tool::Select {
-                                    state.start = Some(global_pos);
-                                    state.end = None;
-                                    state.is_dragging = true;
-                                }
                             }
                         } else {
                             state.push_undo();
@@ -567,23 +623,41 @@ impl PointerHandler for AppState {
                         }
                         if state.is_dragging {
                             state.is_dragging = false;
-                            if state.active_tool == Tool::Select {
-                                state.end = Some(global_pos);
-                                if let Some(start) = state.start {
-                                    let dx = (start.0 - global_pos.0).abs();
-                                    let dy = (start.1 - global_pos.1).abs();
-                                    if dx > 5.0 && dy > 5.0 {
-                                        state.finished = true;
-                                    } else {
-                                        state.start = None;
-                                        state.end = None;
+                                if state.active_tool == Tool::Select {
+                                    if let Some(start) = state.start {
+                                        let dx = (start.0 - global_pos.0).abs();
+                                        let dy = (start.1 - global_pos.1).abs();
+
+                                        if dx <= 5.0 && dy <= 5.0 {
+                                            if let Some(hovered_idx) = state.hovered_window {
+                                                if let Some(win) = state.windows.get(hovered_idx).cloned() {
+                                                    let win_x = win.x as f64;
+                                                    let win_y = win.y as f64;
+                                                    let win_w = win.width as f64;
+                                                    let win_h = win.height as f64;
+                                                    state.start = Some((win_x, win_y));
+                                                    state.end = Some((win_x + win_w, win_y + win_h));
+                                                }
+                                            } else {
+                                                state.start = None;
+                                                state.end = None;
+                                            }
+                                        } else {
+                                            state.end = Some(global_pos);
+                                        }
                                     }
+
+                                    state.finished = true;
+                                    state.move_start_point = None;
                                 }
-                            }
                         }
                     }
                 }
                 PointerEventKind::Motion { .. } => {
+                    if state.active_tool == Tool::Select && !state.is_dragging {
+                        state.hovered_window = get_window_at_pos(global_pos, &state.windows);
+                    }
+
                     if state.is_moving_annotation {
                         let move_info = if let (Some(start), Some(orig), Some(idx)) =
                             (state.move_start_point, &state.original_points, state.selected_annotation)

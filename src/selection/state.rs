@@ -1,4 +1,5 @@
 use crate::config::{Color, SelectionConfig};
+use crate::selection::window::Window;
 use smithay_client_toolkit::seat::keyboard::Keysym;
 use std::collections::VecDeque;
 
@@ -84,6 +85,8 @@ pub struct SelectionState {
 	pub current_offset: (f64, f64),
 	pub editing_text_idx: Option<usize>,
 	pub config: SelectionConfig,
+	pub windows: Vec<Window>,
+	pub hovered_window: Option<usize>,
 }
 
 impl SelectionState {
