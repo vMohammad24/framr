@@ -1,9 +1,10 @@
 mod handler;
 mod types;
-
 pub(crate) use handler::find_uploader_index;
 pub use handler::load_config;
 pub use handler::load_uploader_config;
+use libframr::RecordingConfig;
+use std::str::FromStr;
 pub(crate) use types::{AppConfig, BodyType, Color, SelectionConfig, UploadConfig};
 pub use types::{ConfigEnum, DefaultAction, DefaultCaptureMethod};
 
@@ -12,11 +13,12 @@ use console::{Term, style};
 use dialoguer::{Confirm, Input, Select, theme::ColorfulTheme};
 use libframr::{FramrConnection, H264SpeedPreset, H264Tune};
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::thread;
 use std::time::Duration;
 
-use handler::*;
+use crate::config::handler::*;
+
+type ConfigModifier<'a, T> = Box<dyn Fn(&mut T) -> Result<()> + 'a>;
 
 pub fn import_uploader(source: &str) -> Result<()> {
 	let mut cfg = load_config()?;
@@ -262,7 +264,8 @@ fn set_default_enum<T: ConfigEnum>(
 	let idx = match name_or_index {
 		Some(n) => {
 			let n_lower = n.to_lowercase();
-			T::variants()
+			let variants = T::variants();
+			variants
 				.iter()
 				.position(|v| v.to_lowercase().contains(&n_lower))
 				.ok_or_else(|| {
@@ -270,7 +273,7 @@ fn set_default_enum<T: ConfigEnum>(
 						"Unknown {} \"{}\". Valid options: {}",
 						item_name,
 						n,
-						T::variants()
+						variants
 							.iter()
 							.map(|v| v.to_lowercase())
 							.collect::<Vec<_>>()
@@ -280,9 +283,10 @@ fn set_default_enum<T: ConfigEnum>(
 		}
 		None => {
 			let default_idx = current.map(|a| a.to_index()).unwrap_or(0);
+			let variants = T::variants();
 			Select::with_theme(&ColorfulTheme::default())
 				.with_prompt(prompt)
-				.items(T::variants())
+				.items(&variants)
 				.default(default_idx)
 				.interact()?
 		}
@@ -463,7 +467,6 @@ Comment=Handle framr:// deeplinks for importing uploaders
 		style(desktop_file_path.display()).blue()
 	);
 
-	// Try to update desktop database
 	match std::process::Command::new("update-desktop-database")
 		.arg(&apps_dir)
 		.status()
@@ -689,9 +692,10 @@ pub fn run_config_wizard() -> Result<()> {
 					}
 					1 => {
 						let default_idx = cfg.default_action.map(|a| a.to_index()).unwrap_or(0);
+						let variants = DefaultAction::variants();
 						let sel = Select::with_theme(&theme)
 							.with_prompt("Select default action")
-							.items(DefaultAction::variants())
+							.items(&variants)
 							.default(default_idx)
 							.interact()?;
 						let action = DefaultAction::from_index(sel).unwrap();
@@ -702,9 +706,10 @@ pub fn run_config_wizard() -> Result<()> {
 					}
 					2 => {
 						let default_idx = cfg.default_capture.map(|m| m.to_index()).unwrap_or(0);
+						let variants = DefaultCaptureMethod::variants();
 						let sel = Select::with_theme(&theme)
 							.with_prompt("Select default capture method")
-							.items(DefaultCaptureMethod::variants())
+							.items(&variants)
 							.default(default_idx)
 							.interact()?;
 						let method = DefaultCaptureMethod::from_index(sel).unwrap();
@@ -772,80 +777,119 @@ pub fn run_config_wizard() -> Result<()> {
 
 pub fn modify_selection_config(cfg: &mut AppConfig) -> Result<()> {
 	let theme = ColorfulTheme::default();
-	let mut s = cfg.selection;
+
+	let fields: Vec<(&str, ConfigModifier<'_, SelectionConfig>)> = vec![
+		(
+			"Background Color",
+			Box::new(|s| {
+				s.background_color = input_color("Background Color", s.background_color)?;
+				Ok(())
+			}),
+		),
+		(
+			"Border Color",
+			Box::new(|s| {
+				s.border_color = input_color("Border Color", s.border_color)?;
+				Ok(())
+			}),
+		),
+		(
+			"Border Width",
+			Box::new(|s| {
+				s.border_width = text_input("Border Width", s.border_width)?;
+				Ok(())
+			}),
+		),
+		(
+			"Toolbar BG",
+			Box::new(|s| {
+				s.toolbar_background_color =
+					input_color("Toolbar Background Color", s.toolbar_background_color)?;
+				Ok(())
+			}),
+		),
+		(
+			"Toolbar Active",
+			Box::new(|s| {
+				s.toolbar_active_color =
+					input_color("Toolbar Active Color", s.toolbar_active_color)?;
+				Ok(())
+			}),
+		),
+		(
+			"Toolbar Hover",
+			Box::new(|s| {
+				s.toolbar_hover_color = input_color("Toolbar Hover Color", s.toolbar_hover_color)?;
+				Ok(())
+			}),
+		),
+		(
+			"Annotation Color",
+			Box::new(|s| {
+				s.annotation_color = input_color("Annotation Color", s.annotation_color)?;
+				Ok(())
+			}),
+		),
+		(
+			"Annotation Width",
+			Box::new(|s| {
+				s.annotation_line_width =
+					text_input("Annotation Line Width", s.annotation_line_width)?;
+				Ok(())
+			}),
+		),
+		(
+			"Blur Radius",
+			Box::new(|s| {
+				s.blur_radius = text_input("Blur Radius", s.blur_radius)?;
+				Ok(())
+			}),
+		),
+		(
+			"Pixelate Block Size",
+			Box::new(|s| {
+				s.pixelate_block_size = text_input("Pixelate Block Size", s.pixelate_block_size)?;
+				Ok(())
+			}),
+		),
+		(
+			"Toolbar Y",
+			Box::new(|s| {
+				s.toolbar_y = text_input("Toolbar Y", s.toolbar_y)?;
+				Ok(())
+			}),
+		),
+		(
+			"Toolbar Item Width",
+			Box::new(|s| {
+				s.toolbar_item_width = text_input("Toolbar Item Width", s.toolbar_item_width)?;
+				Ok(())
+			}),
+		),
+		(
+			"Toolbar Height",
+			Box::new(|s| {
+				s.toolbar_height = text_input("Toolbar Height", s.toolbar_height)?;
+				Ok(())
+			}),
+		),
+	];
 
 	loop {
 		println!("\n{}", style("Selection UI Settings").cyan().bold());
 		println!("{}", style("━━━━━━━━━━━━━━━━━━━━━━━━━━━").dim());
 
-		let items = [
-			format!(
-				"{:<25} {}",
-				style("Background Color:").bold(),
-				style_color(s.background_color)
-			),
-			format!(
-				"{:<25} {}",
-				style("Border Color:").bold(),
-				style_color(s.border_color)
-			),
-			format!(
-				"{:<25} {}",
-				style("Border Width:").bold(),
-				style(s.border_width).yellow()
-			),
-			format!(
-				"{:<25} {}",
-				style("Toolbar BG:").bold(),
-				style_color(s.toolbar_background_color)
-			),
-			format!(
-				"{:<25} {}",
-				style("Toolbar Active:").bold(),
-				style_color(s.toolbar_active_color)
-			),
-			format!(
-				"{:<25} {}",
-				style("Toolbar Hover:").bold(),
-				style_color(s.toolbar_hover_color)
-			),
-			format!(
-				"{:<25} {}",
-				style("Annotation Color:").bold(),
-				style_color(s.annotation_color)
-			),
-			format!(
-				"{:<25} {}",
-				style("Annotation Width:").bold(),
-				style(s.annotation_line_width).yellow()
-			),
-			format!(
-				"{:<25} {}",
-				style("Blur Radius:").bold(),
-				style(s.blur_radius).yellow()
-			),
-			format!(
-				"{:<25} {}",
-				style("Pixelate Block Size:").bold(),
-				style(s.pixelate_block_size).yellow()
-			),
-			format!(
-				"{:<25} {}",
-				style("Toolbar Y:").bold(),
-				style(s.toolbar_y).yellow()
-			),
-			format!(
-				"{:<25} {}",
-				style("Toolbar Item Width:").bold(),
-				style(s.toolbar_item_width).yellow()
-			),
-			format!(
-				"{:<25} {}",
-				style("Toolbar Height:").bold(),
-				style(s.toolbar_height).yellow()
-			),
-			style("Back").dim().to_string(),
-		];
+		let items: Vec<String> = fields
+			.iter()
+			.map(|(label, _)| {
+				format!(
+					"{:<25} {}",
+					style(*label).bold(),
+					format_field_value(label, &cfg.selection)
+				)
+			})
+			.chain(std::iter::once(style("Back").dim().to_string()))
+			.collect();
 
 		let sel = Select::with_theme(&theme)
 			.with_prompt("Edit Setting")
@@ -853,67 +897,33 @@ pub fn modify_selection_config(cfg: &mut AppConfig) -> Result<()> {
 			.default(items.len() - 1)
 			.interact()?;
 
-		match sel {
-			0 => s.background_color = input_color("Background Color", s.background_color)?,
-			1 => s.border_color = input_color("Border Color", s.border_color)?,
-			2 => {
-				s.border_width = Input::with_theme(&theme)
-					.with_prompt("Border Width")
-					.default(s.border_width)
-					.interact_text()?
-			}
-			3 => {
-				s.toolbar_background_color =
-					input_color("Toolbar Background Color", s.toolbar_background_color)?
-			}
-			4 => {
-				s.toolbar_active_color =
-					input_color("Toolbar Active Color", s.toolbar_active_color)?
-			}
-			5 => s.toolbar_hover_color = input_color("Toolbar Hover Color", s.toolbar_hover_color)?,
-			6 => s.annotation_color = input_color("Annotation Color", s.annotation_color)?,
-			7 => {
-				s.annotation_line_width = Input::with_theme(&theme)
-					.with_prompt("Annotation Line Width")
-					.default(s.annotation_line_width)
-					.interact_text()?
-			}
-			8 => {
-				s.blur_radius = Input::with_theme(&theme)
-					.with_prompt("Blur Radius")
-					.default(s.blur_radius)
-					.interact_text()?
-			}
-			9 => {
-				s.pixelate_block_size = Input::with_theme(&theme)
-					.with_prompt("Pixelate Block Size")
-					.default(s.pixelate_block_size)
-					.interact_text()?
-			}
-			10 => {
-				s.toolbar_y = Input::with_theme(&theme)
-					.with_prompt("Toolbar Y")
-					.default(s.toolbar_y)
-					.interact_text()?
-			}
-			11 => {
-				s.toolbar_item_width = Input::with_theme(&theme)
-					.with_prompt("Toolbar Item Width")
-					.default(s.toolbar_item_width)
-					.interact_text()?
-			}
-			12 => {
-				s.toolbar_height = Input::with_theme(&theme)
-					.with_prompt("Toolbar Height")
-					.default(s.toolbar_height)
-					.interact_text()?
-			}
-			_ => break,
+		if sel >= fields.len() {
+			break;
 		}
+
+		fields[sel].1(&mut cfg.selection)?;
 	}
 
-	cfg.selection = s;
 	Ok(())
+}
+
+fn format_field_value(label: &str, s: &SelectionConfig) -> String {
+	match label {
+		"Background Color" => style_color(s.background_color),
+		"Border Color" => style_color(s.border_color),
+		"Border Width" => style(s.border_width).yellow().to_string(),
+		"Toolbar BG" => style_color(s.toolbar_background_color),
+		"Toolbar Active" => style_color(s.toolbar_active_color),
+		"Toolbar Hover" => style_color(s.toolbar_hover_color),
+		"Annotation Color" => style_color(s.annotation_color),
+		"Annotation Width" => style(s.annotation_line_width).yellow().to_string(),
+		"Blur Radius" => style(s.blur_radius).yellow().to_string(),
+		"Pixelate Block Size" => style(s.pixelate_block_size).yellow().to_string(),
+		"Toolbar Y" => style(s.toolbar_y).yellow().to_string(),
+		"Toolbar Item Width" => style(s.toolbar_item_width).yellow().to_string(),
+		"Toolbar Height" => style(s.toolbar_height).yellow().to_string(),
+		_ => String::new(),
+	}
 }
 
 fn style_color(c: Color) -> String {
@@ -946,92 +956,86 @@ fn input_color(prompt: &str, current: Color) -> Result<Color> {
 	Ok(Color::from_str(&input).unwrap())
 }
 
+fn text_input<T: std::str::FromStr + std::fmt::Display>(prompt: &str, current: T) -> Result<T>
+where
+	T::Err: std::fmt::Display,
+{
+	let theme = ColorfulTheme::default();
+	let val: String = Input::with_theme(&theme)
+		.with_prompt(prompt)
+		.default(current.to_string())
+		.interact_text()?;
+	val.parse()
+		.map_err(|e| anyhow::anyhow!("Invalid input: {}", e))
+}
+
 pub fn modify_recording_config(cfg: &mut AppConfig) -> Result<()> {
 	let theme = ColorfulTheme::default();
-	let mut r = cfg.recording;
 
-	loop {
-		println!("\n{}", style("Recording Settings").cyan().bold());
-		println!("{}", style("━━━━━━━━━━━━━━━━━━━━━━━━━━━").dim());
+	let tune_options = [
+		("zerolatency", H264Tune::Zerolatency),
+		("film", H264Tune::Film),
+		("animation", H264Tune::Animation),
+		("grain", H264Tune::Grain),
+		("stillimage", H264Tune::Stillimage),
+		("fastdecode", H264Tune::Fastdecode),
+	];
 
-		let items = [
-			format!(
-				"{:<25} {}",
-				style("Bitrate (kbps):").bold(),
-				style(r.bitrate).yellow()
-			),
-			format!(
-				"{:<25} {}",
-				style("Keyframe Interval:").bold(),
-				style(r.keyframe_interval).yellow()
-			),
-			format!(
-				"{:<25} {}",
-				style("Threads:").bold(),
-				style(
-					r.threads
-						.map(|t| t.to_string())
-						.unwrap_or_else(|| "Auto".to_string())
-				)
-				.yellow()
-			),
-			format!(
-				"{:<25} {}",
-				style("H.264 Tune:").bold(),
-				style(r.tune.as_str()).yellow()
-			),
-			format!(
-				"{:<25} {}",
-				style("H.264 Speed Preset:").bold(),
-				style(r.speed_preset.as_str()).yellow()
-			),
-			style("Back").dim().to_string(),
-		];
+	let preset_options = [
+		("ultrafast", H264SpeedPreset::Ultrafast),
+		("superfast", H264SpeedPreset::Superfast),
+		("veryfast", H264SpeedPreset::Veryfast),
+		("faster", H264SpeedPreset::Faster),
+		("fast", H264SpeedPreset::Fast),
+		("medium", H264SpeedPreset::Medium),
+		("slow", H264SpeedPreset::Slow),
+		("slower", H264SpeedPreset::Slower),
+		("veryslow", H264SpeedPreset::Veryslow),
+		("placebo", H264SpeedPreset::Placebo),
+	];
 
-		let sel = Select::with_theme(&theme)
-			.with_prompt("Edit Setting")
-			.items(&items)
-			.default(items.len() - 1)
-			.interact()?;
-
-		match sel {
-			0 => {
-				let bitrate_str: String = Input::with_theme(&theme)
-					.with_prompt("Bitrate (kbps)")
-					.default(r.bitrate.to_string())
-					.validate_with(|input: &String| -> Result<(), String> {
-						input
+	let fields: Vec<(&str, ConfigModifier<'_, RecordingConfig>)> = vec![
+		(
+			"Bitrate (kbps)",
+			Box::new(|r| {
+				let bitrate_str = validated_text_input("Bitrate (kbps)", r.bitrate, |input| {
+					let val = input
+						.parse::<u32>()
+						.map_err(|_| "Must be a valid number".to_string())?;
+					if val == 0 {
+						Err("Bitrate must be greater than 0".to_string())
+					} else {
+						Ok(val)
+					}
+				})?;
+				r.bitrate = bitrate_str;
+				Ok(())
+			}),
+		),
+		(
+			"Keyframe Interval",
+			Box::new(|r| {
+				let interval_str = validated_text_input(
+					"Keyframe Interval (frames)",
+					r.keyframe_interval,
+					|input| {
+						let val = input
 							.parse::<u32>()
-							.map(|v| (v > 0).then_some(()))
-							.map_err(|_| "Must be a valid number".to_string())
-							.and_then(|_| match input.parse::<u32>() {
-								Ok(0) => Err("Bitrate must be greater than 0".to_string()),
-								_ => Ok(()),
-							})
-					})
-					.interact_text()?;
-				r.bitrate = bitrate_str.parse().unwrap();
-			}
-			1 => {
-				let interval_str: String = Input::with_theme(&theme)
-					.with_prompt("Keyframe Interval (frames)")
-					.default(r.keyframe_interval.to_string())
-					.validate_with(|input: &String| -> Result<(), String> {
-						input
-							.parse::<u32>()
-							.map(|v| (v > 0).then_some(()))
-							.map_err(|_| "Must be a valid number".to_string())
-							.and_then(|_| match input.parse::<u32>() {
-								Ok(0) => {
-									Err("Keyframe interval must be greater than 0".to_string())
-								}
-								_ => Ok(()),
-							})
-					})
-					.interact_text()?;
-				r.keyframe_interval = interval_str.parse().unwrap();
-			}
-			2 => {
+							.map_err(|_| "Must be a valid number".to_string())?;
+						if val == 0 {
+							Err("Keyframe interval must be greater than 0".to_string())
+						} else {
+							Ok(val)
+						}
+					},
+				)?;
+				r.keyframe_interval = interval_str;
+				Ok(())
+			}),
+		),
+		(
+			"Threads",
+			Box::new(|r| {
 				let threads_str: String = Input::with_theme(&theme)
 					.with_prompt("Threads (0 for auto)")
 					.default(
@@ -1052,77 +1056,102 @@ pub fn modify_recording_config(cfg: &mut AppConfig) -> Result<()> {
 				} else {
 					Some(parsed_threads)
 				};
-			}
-			3 => {
-				let tune_options = [
-					"zerolatency",
-					"film",
-					"animation",
-					"grain",
-					"stillimage",
-					"fastdecode",
-				];
+				Ok(())
+			}),
+		),
+		(
+			"H.264 Tune",
+			Box::new(|r| {
 				let current_tune_idx = tune_options
 					.iter()
-					.position(|&t| t == r.tune.as_str())
+					.position(|(t, _)| *t == r.tune.as_str())
 					.unwrap_or(0);
 				let selection = Select::with_theme(&theme)
 					.with_prompt("Select H.264 Tune")
-					.items(tune_options)
+					.items(tune_options.iter().map(|(t, _)| *t).collect::<Vec<_>>())
 					.default(current_tune_idx)
 					.interact()?;
-
-				r.tune = match selection {
-					0 => H264Tune::Zerolatency,
-					1 => H264Tune::Film,
-					2 => H264Tune::Animation,
-					3 => H264Tune::Grain,
-					4 => H264Tune::Stillimage,
-					5 => H264Tune::Fastdecode,
-					_ => r.tune,
-				};
-			}
-			4 => {
-				let preset_options = [
-					"ultrafast",
-					"superfast",
-					"veryfast",
-					"faster",
-					"fast",
-					"medium",
-					"slow",
-					"slower",
-					"veryslow",
-					"placebo",
-				];
+				r.tune = tune_options[selection].1;
+				Ok(())
+			}),
+		),
+		(
+			"H.264 Speed Preset",
+			Box::new(|r| {
 				let current_preset_idx = preset_options
 					.iter()
-					.position(|&p| p == r.speed_preset.as_str())
+					.position(|(p, _)| *p == r.speed_preset.as_str())
 					.unwrap_or(0);
 				let selection = Select::with_theme(&theme)
 					.with_prompt("Select H.264 Speed Preset")
-					.items(preset_options)
+					.items(preset_options.iter().map(|(p, _)| *p).collect::<Vec<_>>())
 					.default(current_preset_idx)
 					.interact()?;
+				r.speed_preset = preset_options[selection].1;
+				Ok(())
+			}),
+		),
+	];
 
-				r.speed_preset = match selection {
-					0 => H264SpeedPreset::Ultrafast,
-					1 => H264SpeedPreset::Superfast,
-					2 => H264SpeedPreset::Veryfast,
-					3 => H264SpeedPreset::Faster,
-					4 => H264SpeedPreset::Fast,
-					5 => H264SpeedPreset::Medium,
-					6 => H264SpeedPreset::Slow,
-					7 => H264SpeedPreset::Slower,
-					8 => H264SpeedPreset::Veryslow,
-					9 => H264SpeedPreset::Placebo,
-					_ => r.speed_preset,
-				};
-			}
-			_ => break,
+	loop {
+		println!("\n{}", style("Recording Settings").cyan().bold());
+		println!("{}", style("━━━━━━━━━━━━━━━━━━━━━━━━━").dim());
+
+		let items: Vec<String> = fields
+			.iter()
+			.map(|(label, _)| {
+				format!(
+					"{:<25} {}",
+					style(*label).bold(),
+					format_recording_field_value(label, &cfg.recording)
+				)
+			})
+			.chain(std::iter::once(style("Back").dim().to_string()))
+			.collect();
+
+		let sel = Select::with_theme(&theme)
+			.with_prompt("Edit Setting")
+			.items(&items)
+			.default(items.len() - 1)
+			.interact()?;
+
+		if sel >= fields.len() {
+			break;
 		}
+
+		fields[sel].1(&mut cfg.recording)?;
 	}
 
-	cfg.recording = r;
 	Ok(())
+}
+
+fn format_recording_field_value(label: &str, r: &RecordingConfig) -> String {
+	match label {
+		"Bitrate (kbps)" => style(r.bitrate).yellow().to_string(),
+		"Keyframe Interval" => style(r.keyframe_interval).yellow().to_string(),
+		"Threads" => style(
+			r.threads
+				.map(|t: u32| t.to_string())
+				.unwrap_or_else(|| "Auto".to_string()),
+		)
+		.yellow()
+		.to_string(),
+		"H.264 Tune" => style(r.tune.as_str()).yellow().to_string(),
+		"H.264 Speed Preset" => style(r.speed_preset.as_str()).yellow().to_string(),
+		_ => String::new(),
+	}
+}
+
+fn validated_text_input<T, F>(prompt: &str, current: T, validator: F) -> Result<T>
+where
+	T: std::fmt::Display,
+	F: Fn(&str) -> Result<T, String> + Copy,
+{
+	let theme = ColorfulTheme::default();
+	let val: String = Input::with_theme(&theme)
+		.with_prompt(prompt)
+		.default(current.to_string())
+		.validate_with(|input: &String| -> Result<(), String> { validator(input).map(|_| ()) })
+		.interact_text()?;
+	validator(&val).map_err(|e| anyhow::anyhow!("Invalid input: {}", e))
 }

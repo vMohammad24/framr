@@ -1,3 +1,4 @@
+use super::types::{AppConfig, BodyType, ConfigEnum, UploadConfig};
 use anyhow::{Context, Result, bail};
 use base64::Engine as _;
 use console::style;
@@ -7,8 +8,6 @@ use std::{
 	fs,
 	path::{Path, PathBuf},
 };
-
-use super::types::{AppConfig, BodyType, ConfigEnum, UploadConfig};
 
 #[allow(non_snake_case)]
 #[derive(Debug, Deserialize)]
@@ -26,42 +25,6 @@ struct SxcuFile {
 	ErrorMessage: Option<String>,
 }
 
-impl From<SxcuFile> for UploadConfig {
-	fn from(sxcu: SxcuFile) -> Self {
-		Self {
-			name: sxcu.Name.unwrap_or_default(),
-			request_method: sxcu.RequestMethod.unwrap_or_else(|| "POST".into()),
-			request_url: sxcu.RequestURL.unwrap_or_default(),
-			parameters: sxcu
-				.Parameters
-				.map(|m| m.into_iter().map(|(k, v)| (k, v.to_string())).collect())
-				.unwrap_or_default(),
-			headers: sxcu
-				.Headers
-				.map(|m| m.into_iter().map(|(k, v)| (k, v.to_string())).collect())
-				.unwrap_or_default(),
-			body_type: sxcu
-				.Body
-				.and_then(|b| match b.as_str() {
-					"MultipartFormData" => Some(BodyType::FormData),
-					"FormURLEncoded" => Some(BodyType::URLEncoded),
-					"JSON" => Some(BodyType::Json),
-					"XML" => Some(BodyType::Xml),
-					"Binary" => Some(BodyType::Binary),
-					_ => None,
-				})
-				.unwrap_or_default(),
-			arguments: sxcu
-				.Arguments
-				.map(|m| m.into_iter().map(|(k, v)| (k, v.to_string())).collect())
-				.unwrap_or_default(),
-			file_form_name: sxcu.FileFormName,
-			output_url: sxcu.URL.unwrap_or_default(),
-			error_message: sxcu.ErrorMessage,
-		}
-	}
-}
-
 #[allow(non_snake_case)]
 #[derive(Debug, Deserialize)]
 struct IscuFile {
@@ -74,33 +37,63 @@ struct IscuFile {
 	responseURL: String,
 }
 
-impl From<IscuFile> for UploadConfig {
-	fn from(iscu: IscuFile) -> Self {
-		Self {
-			name: iscu.name,
-			request_method: "POST".into(),
-			request_url: iscu.requestURL,
-			parameters: Vec::new(),
-			error_message: None,
-			headers: iscu
-				.headers
-				.map(|m| m.into_iter().map(|(k, v)| (k, v.to_string())).collect())
-				.unwrap_or_default(),
-			body_type: iscu
-				.requestBodyType
-				.and_then(|b| match b.as_str() {
-					"multipartFormData" => Some(BodyType::FormData),
-					"binary" => Some(BodyType::Binary),
-					_ => None,
-				})
-				.unwrap_or_default(),
-			arguments: iscu
-				.formData
-				.map(|m| m.into_iter().map(|(k, v)| (k, v.to_string())).collect())
-				.unwrap_or_default(),
-			file_form_name: iscu.fileFormName,
-			output_url: iscu.responseURL,
-		}
+fn parse_body_type(s: &str) -> Option<BodyType> {
+	match s {
+		"MultipartFormData" | "multipartFormData" => Some(BodyType::FormData),
+		"FormURLEncoded" => Some(BodyType::URLEncoded),
+		"JSON" => Some(BodyType::Json),
+		"XML" => Some(BodyType::Xml),
+		"Binary" | "binary" => Some(BodyType::Binary),
+		_ => None,
+	}
+}
+
+fn parse_body_type_opt(s: &Option<String>) -> Option<BodyType> {
+	s.as_ref().and_then(|s| parse_body_type(s))
+}
+
+fn from_sxcu(sxcu: SxcuFile) -> UploadConfig {
+	UploadConfig {
+		name: sxcu.Name.unwrap_or_default(),
+		request_method: sxcu.RequestMethod.unwrap_or_else(|| "POST".into()),
+		request_url: sxcu.RequestURL.unwrap_or_default(),
+		parameters: sxcu
+			.Parameters
+			.map(|m| m.into_iter().map(|(k, v)| (k, v.to_string())).collect())
+			.unwrap_or_default(),
+		headers: sxcu
+			.Headers
+			.map(|m| m.into_iter().map(|(k, v)| (k, v.to_string())).collect())
+			.unwrap_or_default(),
+		body_type: parse_body_type_opt(&sxcu.Body).unwrap_or_default(),
+		arguments: sxcu
+			.Arguments
+			.map(|m| m.into_iter().map(|(k, v)| (k, v.to_string())).collect())
+			.unwrap_or_default(),
+		file_form_name: sxcu.FileFormName,
+		output_url: sxcu.URL.unwrap_or_default(),
+		error_message: sxcu.ErrorMessage,
+	}
+}
+
+fn from_iscu(iscu: IscuFile) -> UploadConfig {
+	UploadConfig {
+		name: iscu.name,
+		request_method: "POST".into(),
+		request_url: iscu.requestURL,
+		parameters: Vec::new(),
+		error_message: None,
+		headers: iscu
+			.headers
+			.map(|m| m.into_iter().map(|(k, v)| (k, v.to_string())).collect())
+			.unwrap_or_default(),
+		body_type: parse_body_type_opt(&iscu.requestBodyType).unwrap_or_default(),
+		arguments: iscu
+			.formData
+			.map(|m| m.into_iter().map(|(k, v)| (k, v.to_string())).collect())
+			.unwrap_or_default(),
+		file_form_name: iscu.fileFormName,
+		output_url: iscu.responseURL,
 	}
 }
 pub fn load_config() -> Result<AppConfig> {
@@ -544,9 +537,10 @@ pub(crate) fn create_uploader_interactive(cfg: &mut AppConfig) -> Result<()> {
 
 	let request_method = select_request_method(&theme, 0)?;
 
+	let variants = BodyType::variants();
 	let body_selection = Select::with_theme(&theme)
 		.with_prompt("Body type")
-		.items(BodyType::variants())
+		.items(&variants)
 		.default(1)
 		.interact()?;
 	let body_type = BodyType::from_index(body_selection).unwrap_or_default();
@@ -629,9 +623,10 @@ pub(crate) fn modify_uploader_at(cfg: &mut AppConfig, idx: usize) -> Result<()> 
 		.unwrap_or(0);
 	uploader.request_method = select_request_method(&theme, current_method_idx)?;
 
+	let variants = BodyType::variants();
 	let body_selection = Select::with_theme(&theme)
 		.with_prompt("Body type")
-		.items(BodyType::variants())
+		.items(&variants)
 		.default(uploader.body_type.to_index())
 		.interact()?;
 	uploader.body_type = BodyType::from_index(body_selection).unwrap_or_default();
@@ -672,12 +667,12 @@ fn parse_sxcu(contents: &str) -> Result<UploadConfig> {
 		bail!("Missing Type field in .sxcu file. Supported types: FileUploader, ImageUploader");
 	}
 
-	Ok(sxcu.into())
+	Ok(from_sxcu(sxcu))
 }
 
 fn parse_iscu(contents: &str) -> Result<UploadConfig> {
 	let iscu: IscuFile = serde_json::from_str(contents)?;
-	Ok(iscu.into())
+	Ok(from_iscu(iscu))
 }
 
 fn detect_and_parse(contents: &str) -> Result<UploadConfig> {

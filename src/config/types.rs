@@ -1,18 +1,44 @@
-use serde::de::{self, Visitor};
+use serde::de::Error as DeError;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::str::FromStr;
+use strum::{AsRefStr, Display, EnumIter, IntoEnumIterator, IntoStaticStr};
 
 pub use libframr::RecordingConfig;
 
-pub trait ConfigEnum: Sized + Copy + PartialEq {
-	fn variants() -> &'static [&'static str];
-	fn from_index(i: usize) -> Option<Self>;
-	fn to_index(self) -> usize;
+pub trait ConfigEnum:
+	Sized + Copy + PartialEq + AsRef<str> + std::fmt::Display + IntoEnumIterator + 'static
+{
+	fn from_index(i: usize) -> Option<Self> {
+		Self::iter().nth(i)
+	}
+
+	fn to_index(self) -> usize {
+		Self::iter().position(|e| e == self).unwrap_or(0)
+	}
+
 	fn label(self) -> &'static str;
+
+	fn variants() -> Vec<&'static str> {
+		Self::iter().map(|v| v.label()).collect()
+	}
 }
 
-#[derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq, Clone, Copy)]
+#[derive(
+	Debug,
+	Serialize,
+	Deserialize,
+	Default,
+	PartialEq,
+	Eq,
+	Clone,
+	Copy,
+	AsRefStr,
+	Display,
+	EnumIter,
+	IntoStaticStr,
+)]
+#[strum(serialize_all = "title_case")]
 pub enum DefaultAction {
 	#[default]
 	Save,
@@ -22,40 +48,26 @@ pub enum DefaultAction {
 }
 
 impl ConfigEnum for DefaultAction {
-	fn variants() -> &'static [&'static str] {
-		&[
-			"Save to file",
-			"Copy to clipboard",
-			"Upload",
-			"Upload and copy URL",
-		]
-	}
-
-	fn from_index(i: usize) -> Option<Self> {
-		match i {
-			0 => Some(Self::Save),
-			1 => Some(Self::Copy),
-			2 => Some(Self::Upload),
-			3 => Some(Self::UploadAndCopy),
-			_ => None,
-		}
-	}
-
-	fn to_index(self) -> usize {
-		self as usize
-	}
-
 	fn label(self) -> &'static str {
-		match self {
-			Self::Save => "Save to file",
-			Self::Copy => "Copy to clipboard",
-			Self::Upload => "Upload",
-			Self::UploadAndCopy => "Upload and copy URL",
-		}
+		self.into()
 	}
 }
 
-#[derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq, Clone, Copy)]
+#[derive(
+	Debug,
+	Serialize,
+	Deserialize,
+	Default,
+	PartialEq,
+	Eq,
+	Clone,
+	Copy,
+	AsRefStr,
+	Display,
+	EnumIter,
+	IntoStaticStr,
+)]
+#[strum(serialize_all = "title_case")]
 pub enum DefaultCaptureMethod {
 	#[default]
 	Full,
@@ -64,27 +76,6 @@ pub enum DefaultCaptureMethod {
 }
 
 impl ConfigEnum for DefaultCaptureMethod {
-	fn variants() -> &'static [&'static str] {
-		&[
-			"Full (all screens)",
-			"Area (select region)",
-			"Screen (specific screen)",
-		]
-	}
-
-	fn from_index(i: usize) -> Option<Self> {
-		match i {
-			0 => Some(Self::Full),
-			1 => Some(Self::Area),
-			2 => Some(Self::Screen),
-			_ => None,
-		}
-	}
-
-	fn to_index(self) -> usize {
-		self as usize
-	}
-
 	fn label(self) -> &'static str {
 		match self {
 			Self::Full => "Full (all screens)",
@@ -94,7 +85,20 @@ impl ConfigEnum for DefaultCaptureMethod {
 	}
 }
 
-#[derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq, Clone, Copy)]
+#[derive(
+	Debug,
+	Serialize,
+	Deserialize,
+	Default,
+	PartialEq,
+	Eq,
+	Clone,
+	Copy,
+	AsRefStr,
+	Display,
+	EnumIter,
+	IntoStaticStr,
+)]
 pub enum BodyType {
 	#[default]
 	Binary,
@@ -105,38 +109,11 @@ pub enum BodyType {
 }
 
 impl ConfigEnum for BodyType {
-	fn variants() -> &'static [&'static str] {
-		&[
-			"Binary",
-			"Form data (multipart)",
-			"Form URL encoded",
-			"JSON",
-			"XML",
-		]
-	}
-
-	fn from_index(i: usize) -> Option<Self> {
-		match i {
-			0 => Some(Self::Binary),
-			1 => Some(Self::FormData),
-			2 => Some(Self::URLEncoded),
-			3 => Some(Self::Json),
-			4 => Some(Self::Xml),
-			_ => None,
-		}
-	}
-
-	fn to_index(self) -> usize {
-		self as usize
-	}
-
 	fn label(self) -> &'static str {
 		match self {
-			Self::Binary => "Binary",
 			Self::FormData => "Form data (multipart)",
 			Self::URLEncoded => "Form URL encoded",
-			Self::Json => "JSON",
-			Self::Xml => "XML",
+			_ => self.into(),
 		}
 	}
 }
@@ -268,69 +245,6 @@ impl fmt::Display for Color {
 	}
 }
 
-#[derive(Debug)]
-pub enum ColorParseError {
-	NonAscii,
-	InvalidLength,
-	Utf8Error(std::str::Utf8Error),
-	ParseIntError(std::num::ParseIntError),
-}
-
-impl fmt::Display for ColorParseError {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		match self {
-			Self::NonAscii => write!(f, "hex color contains non-ASCII characters"),
-			Self::InvalidLength => write!(f, "invalid hex color length"),
-			Self::Utf8Error(e) => write!(f, "invalid utf8 in hex component: {}", e),
-			Self::ParseIntError(e) => write!(f, "invalid hex component: {}", e),
-		}
-	}
-}
-
-impl std::error::Error for ColorParseError {}
-
-impl FromStr for Color {
-	type Err = ColorParseError;
-
-	fn from_str(s: &str) -> Result<Self, Self::Err> {
-		let hex = s.trim_start_matches('#');
-		if !hex.is_ascii() {
-			return Err(ColorParseError::NonAscii);
-		}
-
-		if hex.len() != 6 && hex.len() != 8 {
-			return Err(ColorParseError::InvalidLength);
-		}
-
-		let components: Result<Vec<u8>, _> = hex
-			.as_bytes()
-			.chunks(2)
-			.map(|chunk| {
-				let s = std::str::from_utf8(chunk).map_err(ColorParseError::Utf8Error)?;
-				u8::from_str_radix(s, 16).map_err(ColorParseError::ParseIntError)
-			})
-			.collect();
-
-		let components = components?;
-
-		match components.len() {
-			3 => Ok(Self {
-				r: components[0],
-				g: components[1],
-				b: components[2],
-				a: u8::MAX,
-			}),
-			4 => Ok(Self {
-				r: components[0],
-				g: components[1],
-				b: components[2],
-				a: components[3],
-			}),
-			_ => Err(ColorParseError::InvalidLength),
-		}
-	}
-}
-
 impl Serialize for Color {
 	fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
 	where
@@ -345,23 +259,27 @@ impl<'de> Deserialize<'de> for Color {
 	where
 		D: Deserializer<'de>,
 	{
-		struct ColorVisitor;
+		let s = String::deserialize(deserializer)?;
+		let rgba = csscolorparser::parse(&s).map_err(|e| D::Error::custom(e.to_string()))?;
+		Ok(Self {
+			r: (rgba.r * 255.0).round() as u8,
+			g: (rgba.g * 255.0).round() as u8,
+			b: (rgba.b * 255.0).round() as u8,
+			a: (rgba.a * 255.0).round() as u8,
+		})
+	}
+}
 
-		impl<'de> Visitor<'de> for ColorVisitor {
-			type Value = Color;
+impl FromStr for Color {
+	type Err = String;
 
-			fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-				formatter.write_str("a hex color string (e.g. #RRGGBB or #RRGGBBAA)")
-			}
-
-			fn visit_str<E>(self, value: &str) -> Result<Color, E>
-			where
-				E: de::Error,
-			{
-				Color::from_str(value).map_err(de::Error::custom)
-			}
-		}
-
-		deserializer.deserialize_str(ColorVisitor)
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		let rgba = csscolorparser::parse(s).map_err(|e| e.to_string())?;
+		Ok(Self {
+			r: (rgba.r * 255.0).round() as u8,
+			g: (rgba.g * 255.0).round() as u8,
+			b: (rgba.b * 255.0).round() as u8,
+			a: (rgba.a * 255.0).round() as u8,
+		})
 	}
 }
