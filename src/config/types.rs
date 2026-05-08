@@ -120,16 +120,85 @@ impl ConfigEnum for BodyType {
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone, PartialEq, Eq)]
 pub struct UploadConfig {
+	#[serde(alias = "Name")]
 	pub name: String,
+	#[serde(alias = "RequestMethod", default = "default_method")]
 	pub request_method: String,
+	#[serde(alias = "RequestURL", alias = "requestURL")]
 	pub request_url: String,
+	#[serde(alias = "Parameters", default, deserialize_with = "deserialize_kv")]
 	pub parameters: Vec<(String, String)>,
+	#[serde(alias = "Headers", alias = "headers", default, deserialize_with = "deserialize_kv")]
 	pub headers: Vec<(String, String)>,
+	#[serde(
+		alias = "Body",
+		alias = "requestBodyType",
+		default,
+		deserialize_with = "deserialize_body_type"
+	)]
 	pub body_type: BodyType,
+	#[serde(alias = "Arguments", alias = "formData", default, deserialize_with = "deserialize_kv")]
 	pub arguments: Vec<(String, String)>,
+	#[serde(alias = "FileFormName", alias = "fileFormName")]
 	pub file_form_name: Option<String>,
+	#[serde(alias = "URL", alias = "responseURL")]
 	pub output_url: String,
+	#[serde(alias = "ErrorMessage")]
 	pub error_message: Option<String>,
+}
+
+fn default_method() -> String {
+	"POST".to_string()
+}
+
+fn deserialize_kv<'de, D>(deserializer: D) -> Result<Vec<(String, String)>, D::Error>
+where
+	D: Deserializer<'de>,
+{
+	#[derive(Deserialize)]
+	#[serde(untagged)]
+	enum RawKV {
+		Map(serde_json::Map<String, serde_json::Value>),
+		List(Vec<(String, String)>),
+	}
+
+	match RawKV::deserialize(deserializer)? {
+		RawKV::Map(map) => Ok(map
+			.into_iter()
+			.map(|(k, v)| {
+				let s = match v {
+					serde_json::Value::String(s) => s,
+					_ => v.to_string(),
+				};
+				(k, s)
+			})
+			.collect()),
+		RawKV::List(list) => Ok(list),
+	}
+}
+
+fn deserialize_body_type<'de, D>(deserializer: D) -> Result<BodyType, D::Error>
+where
+	D: Deserializer<'de>,
+{
+	#[derive(Deserialize)]
+	#[serde(untagged)]
+	enum RawBodyType {
+		Enum(BodyType),
+		String(String),
+	}
+
+	match RawBodyType::deserialize(deserializer)? {
+		RawBodyType::Enum(bt) => Ok(bt),
+		RawBodyType::String(s) => match s.as_str() {
+			"MultipartFormData" | "multipartFormData" => Ok(BodyType::FormData),
+			"FormURLEncoded" => Ok(BodyType::URLEncoded),
+			"JSON" => Ok(BodyType::Json),
+			"XML" => Ok(BodyType::Xml),
+			"Binary" | "binary" => Ok(BodyType::Binary),
+			_ => Ok(BodyType::Binary),
+		},
+	}
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone, PartialEq)]
@@ -228,6 +297,10 @@ impl Color {
 	}
 	pub fn a_f64(&self) -> f64 {
 		self.a as f64 / u8::MAX as f64
+	}
+
+	pub fn components(&self) -> (f64, f64, f64, f64) {
+		(self.r_f64(), self.g_f64(), self.b_f64(), self.a_f64())
 	}
 }
 

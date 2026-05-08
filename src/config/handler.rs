@@ -2,100 +2,13 @@ use super::types::{AppConfig, BodyType, ConfigEnum, UploadConfig};
 use anyhow::{Context, Result, bail};
 use base64::Engine as _;
 use console::style;
-use dialoguer::{Input, Select, theme::ColorfulTheme};
-use serde::Deserialize;
+use dialoguer::{Select, theme::ColorfulTheme};
 use std::{
 	fs,
 	path::{Path, PathBuf},
 };
 
-#[allow(non_snake_case)]
-#[derive(Debug, Deserialize)]
-struct SxcuFile {
-	Name: Option<String>,
-	DestinationType: Option<String>,
-	RequestMethod: Option<String>,
-	RequestURL: Option<String>,
-	Parameters: Option<serde_json::Map<String, serde_json::Value>>,
-	Headers: Option<serde_json::Map<String, serde_json::Value>>,
-	Body: Option<String>,
-	Arguments: Option<serde_json::Map<String, serde_json::Value>>,
-	FileFormName: Option<String>,
-	URL: Option<String>,
-	ErrorMessage: Option<String>,
-}
 
-#[allow(non_snake_case)]
-#[derive(Debug, Deserialize)]
-struct IscuFile {
-	name: String,
-	requestURL: String,
-	headers: Option<serde_json::Map<String, serde_json::Value>>,
-	formData: Option<serde_json::Map<String, serde_json::Value>>,
-	fileFormName: Option<String>,
-	requestBodyType: Option<String>,
-	responseURL: String,
-}
-
-fn parse_body_type(s: &str) -> Option<BodyType> {
-	match s {
-		"MultipartFormData" | "multipartFormData" => Some(BodyType::FormData),
-		"FormURLEncoded" => Some(BodyType::URLEncoded),
-		"JSON" => Some(BodyType::Json),
-		"XML" => Some(BodyType::Xml),
-		"Binary" | "binary" => Some(BodyType::Binary),
-		_ => None,
-	}
-}
-
-fn parse_body_type_opt(s: &Option<String>) -> Option<BodyType> {
-	s.as_ref().and_then(|s| parse_body_type(s))
-}
-
-fn from_sxcu(sxcu: SxcuFile) -> UploadConfig {
-	UploadConfig {
-		name: sxcu.Name.unwrap_or_default(),
-		request_method: sxcu.RequestMethod.unwrap_or_else(|| "POST".into()),
-		request_url: sxcu.RequestURL.unwrap_or_default(),
-		parameters: sxcu
-			.Parameters
-			.map(|m| m.into_iter().map(|(k, v)| (k, v.to_string())).collect())
-			.unwrap_or_default(),
-		headers: sxcu
-			.Headers
-			.map(|m| m.into_iter().map(|(k, v)| (k, v.to_string())).collect())
-			.unwrap_or_default(),
-		body_type: parse_body_type_opt(&sxcu.Body).unwrap_or_default(),
-		arguments: sxcu
-			.Arguments
-			.map(|m| m.into_iter().map(|(k, v)| (k, v.to_string())).collect())
-			.unwrap_or_default(),
-		file_form_name: sxcu.FileFormName,
-		output_url: sxcu.URL.unwrap_or_default(),
-		error_message: sxcu.ErrorMessage,
-	}
-}
-
-fn from_iscu(iscu: IscuFile) -> UploadConfig {
-	UploadConfig {
-		name: iscu.name,
-		request_method: "POST".into(),
-		request_url: iscu.requestURL,
-		parameters: Vec::new(),
-		error_message: None,
-		headers: iscu
-			.headers
-			.map(|m| m.into_iter().map(|(k, v)| (k, v.to_string())).collect())
-			.unwrap_or_default(),
-		body_type: parse_body_type_opt(&iscu.requestBodyType).unwrap_or_default(),
-		arguments: iscu
-			.formData
-			.map(|m| m.into_iter().map(|(k, v)| (k, v.to_string())).collect())
-			.unwrap_or_default(),
-		file_form_name: iscu.fileFormName,
-		output_url: iscu.responseURL,
-	}
-}
 pub fn load_config() -> Result<AppConfig> {
 	let app_name = env!("CARGO_PKG_NAME");
 	let mut cfg: AppConfig = confy::load(app_name, None)?;
@@ -385,7 +298,6 @@ pub(crate) fn ensure_unique_uploader_name(cfg: &AppConfig, name: String) -> Stri
 }
 
 pub(crate) fn select_uploader_index(cfg: &AppConfig, prompt: &str) -> Result<usize> {
-	let theme = ColorfulTheme::default();
 	let items: Vec<String> = cfg
 		.uploaders
 		.iter()
@@ -404,10 +316,8 @@ pub(crate) fn select_uploader_index(cfg: &AppConfig, prompt: &str) -> Result<usi
 			)
 		})
 		.collect();
-	Ok(Select::with_theme(&theme)
-		.with_prompt(prompt)
-		.items(&items)
-		.interact()?)
+
+	super::prompt_select(prompt, &items, 0)
 }
 
 pub(crate) fn resolve_uploader_index(
@@ -422,29 +332,7 @@ pub(crate) fn resolve_uploader_index(
 	}
 }
 
-fn optional_input(prompt: &str, current: Option<&str>) -> Result<Option<String>> {
-	let theme = ColorfulTheme::default();
-
-	let p = if let Some(c) = current {
-		format!("{} [{}] (leave empty to keep)", prompt, style(c).dim())
-	} else {
-		format!("{} (leave empty to skip)", prompt)
-	};
-
-	let val: String = Input::with_theme(&theme)
-		.with_prompt(&p)
-		.allow_empty(true)
-		.interact_text()?;
-
-	if val.trim().is_empty() {
-		Ok(current.map(String::from))
-	} else {
-		Ok(Some(val))
-	}
-}
-
 fn manage_kv_pairs(label: &str, pairs: &mut Vec<(String, String)>) -> Result<()> {
-	let theme = ColorfulTheme::default();
 	loop {
 		println!("\n  {}", style(format!("Current {}:", label)).cyan().bold());
 		if pairs.is_empty() {
@@ -461,20 +349,12 @@ fn manage_kv_pairs(label: &str, pairs: &mut Vec<(String, String)>) -> Result<()>
 		}
 
 		let actions = ["Add new", "Remove existing", "Clear all", "Done / Skip"];
-		let sel = Select::with_theme(&theme)
-			.with_prompt(format!("Manage {}", label))
-			.items(actions)
-			.default(3)
-			.interact()?;
+		let sel = super::prompt_select(&format!("Manage {}", label), &actions, 3)?;
 
 		match sel {
 			0 => {
-				let key: String = Input::with_theme(&theme)
-					.with_prompt(format!("{} Name", label))
-					.interact_text()?;
-				let val: String = Input::with_theme(&theme)
-					.with_prompt(format!("{} Value", label))
-					.interact_text()?;
+				let key: String = super::prompt_input(&format!("{} Name", label), None)?;
+				let val: String = super::prompt_input(&format!("{} Value", label), None)?;
 				pairs.push((key, val));
 			}
 			1 => {
@@ -485,10 +365,7 @@ fn manage_kv_pairs(label: &str, pairs: &mut Vec<(String, String)>) -> Result<()>
 					.iter()
 					.map(|(k, v)| format!("{} = {}", k, v))
 					.collect();
-				let r_sel = Select::with_theme(&theme)
-					.with_prompt("Select item to remove")
-					.items(&items)
-					.interact()?;
+				let r_sel = super::prompt_select("Select item to remove", &items, 0)?;
 				pairs.remove(r_sel);
 			}
 			2 => pairs.clear(),
@@ -498,24 +375,17 @@ fn manage_kv_pairs(label: &str, pairs: &mut Vec<(String, String)>) -> Result<()>
 	Ok(())
 }
 
-fn select_request_method(theme: &ColorfulTheme, default_idx: usize) -> Result<String> {
+fn select_request_method(default_idx: usize) -> Result<String> {
 	let methods = ["POST", "GET", "PUT", "PATCH", "DELETE"];
-	let sel = Select::with_theme(theme)
-		.with_prompt("Request method")
-		.items(methods)
-		.default(default_idx)
-		.interact()?;
+	let sel = super::prompt_select("Request method", &methods, default_idx)?;
 	Ok(methods[sel].to_string())
 }
 
 pub(crate) fn create_uploader_interactive(cfg: &mut AppConfig) -> Result<()> {
-	let theme = ColorfulTheme::default();
 	print!("{}", header("Create new uploader"));
 
 	let name: String = loop {
-		let input: String = Input::with_theme(&theme)
-			.with_prompt("Name")
-			.interact_text()?;
+		let input: String = super::prompt_input("Name", None)?;
 
 		if cfg
 			.uploaders
@@ -531,22 +401,15 @@ pub(crate) fn create_uploader_interactive(cfg: &mut AppConfig) -> Result<()> {
 		}
 	};
 
-	let request_url: String = Input::with_theme(&theme)
-		.with_prompt("Request URL")
-		.interact_text()?;
-
-	let request_method = select_request_method(&theme, 0)?;
+	let request_url: String = super::prompt_input("Request URL", None)?;
+	let request_method = select_request_method(0)?;
 
 	let variants = BodyType::variants();
-	let body_selection = Select::with_theme(&theme)
-		.with_prompt("Body type")
-		.items(&variants)
-		.default(1)
-		.interact()?;
+	let body_selection = super::prompt_select("Body type", &variants, 1)?;
 	let body_type = BodyType::from_index(body_selection).unwrap_or_default();
 
 	let file_form_name = if body_type == BodyType::FormData {
-		optional_input("File form name", Some("file"))?
+		super::prompt_optional_input("File form name", Some("file"))?
 	} else {
 		None
 	};
@@ -559,12 +422,8 @@ pub(crate) fn create_uploader_interactive(cfg: &mut AppConfig) -> Result<()> {
 	manage_kv_pairs("URL Parameters", &mut parameters)?;
 	manage_kv_pairs("Body Arguments", &mut arguments)?;
 
-	let output_url: String = Input::with_theme(&theme)
-		.with_prompt("Output URL parse schema (e.g. {json:data.url})")
-		.default("{json:url}".into())
-		.interact_text()?;
-
-	let error_message = optional_input("Error message schema (e.g. {json:error})", None)?;
+	let output_url: String = super::prompt_input("Output URL parse schema", Some("{json:url}".into()))?;
+	let error_message = super::prompt_optional_input("Error message schema", None)?;
 
 	let uploader = UploadConfig {
 		name,
@@ -591,7 +450,6 @@ pub(crate) fn create_uploader_interactive(cfg: &mut AppConfig) -> Result<()> {
 }
 
 pub(crate) fn modify_uploader_at(cfg: &mut AppConfig, idx: usize) -> Result<()> {
-	let theme = ColorfulTheme::default();
 	let uploader = &mut cfg.uploaders[idx];
 
 	if let Some(over) = load_overrides()
@@ -606,34 +464,23 @@ pub(crate) fn modify_uploader_at(cfg: &mut AppConfig, idx: usize) -> Result<()> 
 
 	print!("{}", header(&format!("Modifying {}", &uploader.name)));
 
-	uploader.name = Input::with_theme(&theme)
-		.with_prompt("Name")
-		.default(uploader.name.clone())
-		.interact_text()?;
-
-	uploader.request_url = Input::with_theme(&theme)
-		.with_prompt("Request URL")
-		.default(uploader.request_url.clone())
-		.interact_text()?;
+	uploader.name = super::prompt_input("Name", Some(uploader.name.clone()))?;
+	uploader.request_url = super::prompt_input("Request URL", Some(uploader.request_url.clone()))?;
 
 	let methods = ["POST", "GET", "PUT", "PATCH", "DELETE"];
 	let current_method_idx = methods
 		.iter()
 		.position(|&m| m == uploader.request_method)
 		.unwrap_or(0);
-	uploader.request_method = select_request_method(&theme, current_method_idx)?;
+	uploader.request_method = select_request_method(current_method_idx)?;
 
 	let variants = BodyType::variants();
-	let body_selection = Select::with_theme(&theme)
-		.with_prompt("Body type")
-		.items(&variants)
-		.default(uploader.body_type.to_index())
-		.interact()?;
+	let body_selection = super::prompt_select("Body type", &variants, uploader.body_type.to_index())?;
 	uploader.body_type = BodyType::from_index(body_selection).unwrap_or_default();
 
 	if uploader.body_type == BodyType::FormData {
 		uploader.file_form_name =
-			optional_input("File form name", uploader.file_form_name.as_deref())?;
+			super::prompt_optional_input("File form name", uploader.file_form_name.as_deref())?;
 	} else {
 		uploader.file_form_name = None;
 	}
@@ -642,37 +489,33 @@ pub(crate) fn modify_uploader_at(cfg: &mut AppConfig, idx: usize) -> Result<()> 
 	manage_kv_pairs("URL Parameters", &mut uploader.parameters)?;
 	manage_kv_pairs("Body Arguments", &mut uploader.arguments)?;
 
-	uploader.output_url = Input::with_theme(&theme)
-		.with_prompt("Output URL parse schema")
-		.default(uploader.output_url.clone())
-		.interact_text()?;
-
+	uploader.output_url = super::prompt_input("Output URL parse schema", Some(uploader.output_url.clone()))?;
 	uploader.error_message =
-		optional_input("Error message schema", uploader.error_message.as_deref())?;
+		super::prompt_optional_input("Error message schema", uploader.error_message.as_deref())?;
 
 	Ok(())
 }
 
 fn parse_sxcu(contents: &str) -> Result<UploadConfig> {
-	let sxcu: SxcuFile = serde_json::from_str(contents)?;
+	let uploader: UploadConfig = serde_json::from_str(contents)?;
 
-	if let Some(ref uploader_type) = sxcu.DestinationType {
-		if !uploader_type.contains("FileUploader") && !uploader_type.contains("ImageUploader") {
+	let raw: serde_json::Value = serde_json::from_str(contents)?;
+	if let Some(dest_type) = raw.get("DestinationType").and_then(|v| v.as_str()) {
+		if !dest_type.contains("FileUploader") && !dest_type.contains("ImageUploader") {
 			bail!(
 				"Invalid uploader type: {}. Supported types: FileUploader, ImageUploader",
-				uploader_type
+				dest_type
 			);
 		}
-	} else {
-		bail!("Missing Type field in .sxcu file. Supported types: FileUploader, ImageUploader");
+	} else if raw.get("Name").is_none() || raw.get("RequestURL").is_none() {
+		bail!("Missing Name or RequestURL field in .sxcu file.");
 	}
 
-	Ok(from_sxcu(sxcu))
+	Ok(uploader)
 }
 
 fn parse_iscu(contents: &str) -> Result<UploadConfig> {
-	let iscu: IscuFile = serde_json::from_str(contents)?;
-	Ok(from_iscu(iscu))
+	Ok(serde_json::from_str(contents)?)
 }
 
 fn detect_and_parse(contents: &str) -> Result<UploadConfig> {
