@@ -535,7 +535,12 @@ fn main() -> Result<()> {
 			.map(|r| (r.position.x as f64, r.position.y as f64))
 			.unwrap_or((0.0, 0.0));
 		let active_window = get_window_at_pos(pos, &windows);
-		let mut filename = resolve_output(&cli, "{window}_%Y-%m-%d_%H-%M-%S.png", "png")
+		let default = if active_window.is_some() {
+			"{window}_%Y-%m-%d_%H-%M-%S.png"
+		} else {
+			"screenshot_%Y-%m-%d_%H-%M-%S.png"
+		};
+		let mut filename = resolve_output(&cli, default, "png")
 			.to_string_lossy()
 			.to_string();
 
