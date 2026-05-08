@@ -33,11 +33,8 @@ use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::
 	Shape, WpCursorShapeDeviceV1,
 };
 
-use crate::selection::{
-	graphics,
-	state::{Annotation, SelectionState, Tool},
-};
-use crate::{config::SelectionConfig, selection::window::get_window_at_pos};
+use crate::selection::{graphics, state::{SelectionState, Tool}};
+use crate::config::SelectionConfig;
 
 pub struct SurfaceData {
 	pub output: OutputInfo,
@@ -188,8 +185,7 @@ impl AppState {
 				}
 			}
 
-			let bg = state.config.background_color;
-			cr.set_source_rgba(bg.r_f64(), bg.g_f64(), bg.b_f64(), bg.a_f64());
+			graphics::set_source_color(&cr, state.config.background_color);
 			cr.rectangle(0.0, 0.0, width as f64, height as f64);
 
 			if let Some(start) = state.start {
@@ -218,8 +214,7 @@ impl AppState {
 					}
 					cr.set_fill_rule(cairo::FillRule::Winding);
 
-					let bc = state.config.border_color;
-					cr.set_source_rgb(bc.r_f64(), bc.g_f64(), bc.b_f64());
+					graphics::set_source_color(&cr, state.config.border_color);
 					cr.set_line_width(state.config.border_width);
 					cr.rectangle(x, y, w, h);
 					if let Err(e) = cr.stroke() {
@@ -254,8 +249,7 @@ impl AppState {
 				}
 				cr.set_fill_rule(cairo::FillRule::Winding);
 
-				let bc = state.config.border_color;
-				cr.set_source_rgb(bc.r_f64(), bc.g_f64(), bc.b_f64());
+				graphics::set_source_color(&cr, state.config.border_color);
 				cr.set_line_width(state.config.border_width);
 				cr.rectangle(win_x, win_y, win_w, win_h);
 				if let Err(e) = cr.stroke() {
@@ -321,8 +315,7 @@ impl AppState {
 		let mouse_x = mouse_global.0 - offset.x as f64;
 		let mouse_y = mouse_global.1 - offset.y as f64;
 
-		let tbg = config.toolbar_background_color;
-		cr.set_source_rgba(tbg.r_f64(), tbg.g_f64(), tbg.b_f64(), tbg.a_f64());
+		graphics::set_source_color(cr, config.toolbar_background_color);
 		cr.rectangle(x, y, total_w, h);
 		cr.fill().ok();
 
@@ -335,13 +328,11 @@ impl AppState {
 				mouse_x >= tx && mouse_x <= tx + item_w && mouse_y >= y && mouse_y <= y + h;
 
 			if *tool == active {
-				let tac = config.toolbar_active_color;
-				cr.set_source_rgba(tac.r_f64(), tac.g_f64(), tac.b_f64(), tac.a_f64());
+				graphics::set_source_color(cr, config.toolbar_active_color);
 				cr.rectangle(tx, y, item_w, h);
 				cr.fill().ok();
 			} else if is_hovered {
-				let thc = config.toolbar_hover_color;
-				cr.set_source_rgba(thc.r_f64(), thc.g_f64(), thc.b_f64(), thc.a_f64());
+				graphics::set_source_color(cr, config.toolbar_hover_color);
 				cr.rectangle(tx, y, item_w, h);
 				cr.fill().ok();
 			}
@@ -495,214 +486,29 @@ impl PointerHandler for AppState {
 
             if let PointerEventKind::Enter { .. } = event.kind &&
                 let Some(sd) = self.surfaces.iter().find(|s| s.wl_surface == event.surface) {
-                state.last_surface_width = sd.dimensions.0 as f64;
-                state.current_offset = (
+                state.handle_pointer_enter(sd.dimensions.0 as f64, (
                     sd.output.logical_position.x as f64,
                     sd.output.logical_position.y as f64,
-                );
+                ));
             }
 
             let global_pos = (
                 event.position.0 + state.current_offset.0,
                 event.position.1 + state.current_offset.1,
             );
-            state.current = global_pos;
 
             match event.kind {
                 PointerEventKind::Press { button, .. } => {
-                    if button == 0x110 {
-                        // lclick
-                        let ty = state.config.toolbar_y;
-                        let th = state.config.toolbar_height;
-                        if event.position.1 >= ty && event.position.1 <= ty + th {
-                            let item_w = state.config.toolbar_item_width;
-                            let total_w = item_w * Tool::all().len() as f64;
-                            let x_start = (state.last_surface_width - total_w) / 2.0;
-
-                            for i in 0..Tool::all().len() {
-                                let tx = x_start + i as f64 * item_w;
-                                if event.position.0 >= tx && event.position.0 <= tx + item_w {
-                                    state.active_tool = Tool::from_index(i);
-                                    state.selected_annotation = None;
-                                    state.dirty = true;
-                                    return;
-                                }
-                            }
-                        }
-                        if state.active_tool == Tool::Select {
-                            let hovered_win = get_window_at_pos(global_pos, &state.windows);
-
-                            if hovered_win.is_some() {
-                                state.start = Some(global_pos);
-                                state.move_start_point = Some(global_pos);
-                                state.end = Some(global_pos);
-                                state.is_dragging = true;
-                            } else {
-                                let mut hit_idx = None;
-                                for (idx, ann) in state.annotations.iter().enumerate().rev() {
-                                    if graphics::hit_test(ann, global_pos, 5.0) {
-                                        hit_idx = Some(idx);
-                                        break;
-                                    }
-                                }
-
-                                if let Some(idx) = hit_idx {
-                                    state.push_undo();
-                                    state.selected_annotation = Some(idx);
-                                    state.is_moving_annotation = true;
-                                    state.move_start_point = Some(global_pos);
-                                    state.original_points = Some(state.annotations[idx].points.clone());
-                                } else {
-                                    state.selected_annotation = None;
-                                    state.start = Some(global_pos);
-                                    state.move_start_point = Some(global_pos);
-                                    state.end = None;
-                                    state.is_dragging = true;
-                                }
-                            }
-                        } else if self.modifiers.ctrl {
-                            let mut hit_idx = None;
-                            for (idx, ann) in state.annotations.iter().enumerate().rev() {
-                                if graphics::hit_test(ann, global_pos, 5.0) {
-                                    hit_idx = Some(idx);
-                                    break;
-                                }
-                            }
-
-                            if let Some(idx) = hit_idx {
-                                state.push_undo();
-                                state.selected_annotation = Some(idx);
-                                state.is_moving_annotation = true;
-                                state.move_start_point = Some(global_pos);
-                                state.original_points = Some(state.annotations[idx].points.clone());
-                            }
-                        } else {
-                            state.push_undo();
-                            let tool = state.active_tool;
-                            let color = state.config.annotation_color;
-                            state.annotations.push(Annotation {
-                                tool,
-                                points: vec![global_pos],
-                                text: if tool == Tool::Text {
-                                    Some(String::new())
-                                } else {
-                                    None
-                                },
-                                color,
-                            });
-
-                            if tool == Tool::Text {
-                                state.editing_text_idx = Some(state.annotations.len() - 1);
-                                state.selected_annotation = Some(state.annotations.len() - 1);
-                            } else {
-                                state.editing_text_idx = None;
-                                state.is_dragging = true;
-                            }
-                        }
-                    } else if button == 0x111 {
-                        // rclick
-                        if state.is_dragging {
-                            state.is_dragging = false;
-                            if state.active_tool == Tool::Select {
-                                state.start = None;
-                                state.end = None;
-                            } else {
-                                state.annotations.pop();
-                            }
-                        } else {
-                            state.cancelled = true;
-                        }
-                    }
+                    state.handle_pointer_press(global_pos, event.position, button, self.modifiers.ctrl);
                 }
                 PointerEventKind::Release { button, .. } => {
-                    if button == 0x110 {
-                        if state.is_moving_annotation {
-                            state.is_moving_annotation = false;
-                            state.move_start_point = None;
-                            state.original_points = None;
-                        }
-                        if state.is_dragging {
-                            state.is_dragging = false;
-                                if state.active_tool == Tool::Select {
-                                    if let Some(start) = state.start {
-                                        let dx = (start.0 - global_pos.0).abs();
-                                        let dy = (start.1 - global_pos.1).abs();
-
-                                        if dx <= 5.0 && dy <= 5.0 {
-                                            if let Some(hovered_idx) = state.hovered_window {
-                                                if let Some(win) = state.windows.get(hovered_idx).cloned() {
-                                                    let win_x = win.x as f64;
-                                                    let win_y = win.y as f64;
-                                                    let win_w = win.width as f64;
-                                                    let win_h = win.height as f64;
-                                                    state.start = Some((win_x, win_y));
-                                                    state.end = Some((win_x + win_w, win_y + win_h));
-                                                }
-                                            } else {
-                                                state.start = None;
-                                                state.end = None;
-                                            }
-                                        } else {
-                                            state.end = Some(global_pos);
-                                        }
-                                    }
-
-                                    state.finished = true;
-                                    state.move_start_point = None;
-                                }
-                        }
-                    }
+                    state.handle_pointer_release(global_pos, button);
                 }
                 PointerEventKind::Motion { .. } => {
-                    if state.active_tool == Tool::Select && !state.is_dragging {
-                        state.hovered_window = get_window_at_pos(global_pos, &state.windows);
-                    }
-
-                    if state.is_moving_annotation {
-                        let move_info = if let (Some(start), Some(orig), Some(idx)) =
-                            (state.move_start_point, &state.original_points, state.selected_annotation)
-                        {
-                            Some((start, orig.clone(), idx))
-                        } else {
-                            None
-                        };
-
-                        if let Some((start, orig, idx)) = move_info {
-                            let mut dx = global_pos.0 - start.0;
-                            let mut dy = global_pos.1 - start.1;
-
-                            if self.modifiers.shift {
-                                if dx.abs() > dy.abs() {
-                                    dy = 0.0;
-                                } else {
-                                    dx = 0.0;
-                                }
-                            }
-
-                            for (i, p) in state.annotations[idx].points.iter_mut().enumerate() {
-                                p.0 = orig[i].0 + dx;
-                                p.1 = orig[i].1 + dy;
-                            }
-                        }
-                    } else if state.is_dragging {
-                        if state.active_tool == Tool::Select {
-                            state.end = Some(global_pos);
-                        } else if let Some(ann) = state.annotations.last_mut() {
-                            if ann.tool == Tool::Annotate {
-                                ann.points.push(global_pos);
-                            } else {
-                                if ann.points.len() > 1 {
-                                    ann.points[1] = global_pos;
-                                } else {
-                                    ann.points.push(global_pos);
-                                }
-                            }
-                        }
-                    }
+                    state.handle_pointer_motion(global_pos, self.modifiers.shift);
                 }
                 _ => {}
             }
-            state.dirty = true;
         }
     }
 }

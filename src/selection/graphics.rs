@@ -243,18 +243,18 @@ fn dist_to_segment(p: (f64, f64), a: (f64, f64), b: (f64, f64)) -> f64 {
 	(dpx * dpx + dpy * dpy).sqrt()
 }
 
+pub fn set_source_color(cr: &Context, color: crate::config::Color) {
+	let (r, g, b, a) = color.components();
+	cr.set_source_rgba(r, g, b, a);
+}
+
 pub fn draw_annotation(
 	cr: &Context,
 	ann: &Annotation,
 	output: &OutputInfo,
 	config: &SelectionConfig,
 ) {
-	cr.set_source_rgba(
-		ann.color.r_f64(),
-		ann.color.g_f64(),
-		ann.color.b_f64(),
-		ann.color.a_f64(),
-	);
+	set_source_color(cr, ann.color);
 	cr.set_line_width(config.annotation_line_width);
 	cr.set_antialias(Antialias::Best);
 	cr.set_line_cap(LineCap::Round);
