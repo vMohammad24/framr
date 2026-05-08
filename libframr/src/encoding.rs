@@ -28,6 +28,42 @@ pub fn wait_for_gstreamer_eos(pipeline: &gstreamer::Pipeline) -> Result<()> {
 	Ok(())
 }
 
+fn apply_encoder_config(encoder: &gstreamer::Element, config: &RecordingConfig) {
+	if config.tune.is_psy_tune() {
+		encoder.set_property("psy-tune", config.tune.to_gst_value());
+	} else {
+		encoder.set_property("tune", config.tune.to_gst_value());
+	}
+	encoder.set_property("speed-preset", config.speed_preset.to_gst_value());
+	encoder.set_property("bitrate", config.bitrate);
+	encoder.set_property("key-int-max", config.keyframe_interval);
+	encoder.set_property("threads", config.threads.unwrap_or(0));
+}
+
+fn push_buffer(appsrc: &AppSrc, mmap: &[u8], pts: u64, previous_pts: Option<u64>) -> Result<()> {
+	let mut buffer = gstreamer::Buffer::with_size(mmap.len())
+		.map_err(|_| anyhow::anyhow!("Failed to create buffer"))?;
+
+	{
+		let buffer_mut = buffer.get_mut().unwrap();
+		buffer_mut.set_pts(gstreamer::ClockTime::from_nseconds(pts));
+
+		if let Some(prev) = previous_pts {
+			if pts > prev {
+				let duration = gstreamer::ClockTime::from_nseconds(pts - prev);
+				buffer_mut.set_duration(Some(duration));
+			}
+		}
+
+		buffer_mut
+			.copy_from_slice(0, mmap)
+			.map_err(|e| anyhow::anyhow!("copy_from_slice failed: {e}"))?;
+	}
+
+	appsrc.push_buffer(buffer)?;
+	Ok(())
+}
+
 pub fn run_single_encoding_pipeline(
 	transform: Transform,
 	output_path: std::path::PathBuf,
@@ -82,7 +118,7 @@ pub fn run_single_encoding_pipeline(
 
 	pipeline.set_state(gstreamer::State::Ready)?;
 
-	let (mmap, buffer_idx, pts, format) = frame_receiver.recv()?;
+	let (_, _, _, format) = frame_receiver.recv()?;
 
 	let gst_format = match format.format {
 		PixelFormat::Argb8888 => gstreamer_video::VideoFormat::Bgra,
@@ -108,46 +144,12 @@ pub fn run_single_encoding_pipeline(
 
 	pipeline.set_state(gstreamer::State::Playing)?;
 
-	let mut buffer = gstreamer::Buffer::with_size(mmap.len())
-		.map_err(|_| anyhow::anyhow!("Failed to create buffer"))?;
-
-	{
-		let buffer_mut = buffer.get_mut().unwrap();
-		buffer_mut.set_pts(gstreamer::ClockTime::from_nseconds(pts));
-		buffer_mut
-			.copy_from_slice(0, &mmap)
-			.map_err(|_| anyhow::anyhow!("Failed to copy to buffer"))?;
-	}
-
-	appsrc.push_buffer(buffer)?;
-
-	let _ = return_sender.send(buffer_idx);
-
-	let mut previous_pts = pts;
+	let mut previous_pts = None;
 
 	while let Ok((mmap, buffer_idx, pts, _format)) = frame_receiver.recv() {
-		let mut buffer = gstreamer::Buffer::with_size(mmap.len())
-			.map_err(|_| anyhow::anyhow!("Failed to create buffer"))?;
-
-		{
-			let buffer_mut = buffer.get_mut().unwrap();
-			buffer_mut.set_pts(gstreamer::ClockTime::from_nseconds(pts));
-
-			if pts > previous_pts {
-				let duration = gstreamer::ClockTime::from_nseconds(pts - previous_pts);
-				buffer_mut.set_duration(Some(duration));
-			}
-
-			buffer_mut
-				.copy_from_slice(0, &mmap)
-				.map_err(|_| anyhow::anyhow!("Failed to copy to buffer"))?;
-		}
-
-		appsrc.push_buffer(buffer)?;
-
+		push_buffer(&appsrc, &mmap, pts, previous_pts)?;
 		let _ = return_sender.send(buffer_idx);
-
-		previous_pts = pts;
+		previous_pts = Some(pts);
 	}
 
 	appsrc.end_of_stream()?;
@@ -189,15 +191,7 @@ pub fn run_composite_encoding_pipeline(
 		.build()
 		.map_err(|e| anyhow::anyhow!("Failed to create x264enc element. Ensure gst-plugins-bad is installed and x264enc element is available.\nError: {}", e))?;
 
-	if recording_config.tune.is_psy_tune() {
-		encoder.set_property("psy-tune", recording_config.tune.to_gst_value());
-	} else {
-		encoder.set_property("tune", recording_config.tune.to_gst_value());
-	}
-	encoder.set_property("speed-preset", recording_config.speed_preset.to_gst_value());
-	encoder.set_property("bitrate", recording_config.bitrate);
-	encoder.set_property("key-int-max", recording_config.keyframe_interval);
-	encoder.set_property("threads", recording_config.threads.unwrap_or(0u32));
+	apply_encoder_config(&encoder, &recording_config);
 
 	let muxer = gstreamer::ElementFactory::make("mp4mux")
 		.build()
@@ -306,30 +300,12 @@ pub fn run_composite_encoding_pipeline(
 
 				let relative_pts = pts.saturating_sub(start_pts.unwrap());
 
-				let mut buffer = gstreamer::Buffer::with_size(mmap.len())
-					.map_err(|_| anyhow::anyhow!("Failed to create buffer"))?;
-
-				{
-					let buffer_mut = buffer.get_mut().unwrap();
-					buffer_mut.set_pts(gstreamer::ClockTime::from_nseconds(relative_pts));
-
-					if let Some(prev) = previous_pts_vec[i] {
-						if relative_pts > prev {
-							let duration = gstreamer::ClockTime::from_nseconds(relative_pts - prev);
-							buffer_mut.set_duration(Some(duration));
-						}
-					}
-
-					buffer_mut
-						.copy_from_slice(0, &*mmap)
-						.map_err(|e| anyhow::anyhow!("copy_from_slice failed: {e}"))?;
-				}
-
-				let appsrc_ref = appsrc.clone();
-				appsrc_ref
+				let appsrc_downcast = appsrc
+					.clone()
 					.downcast::<AppSrc>()
-					.map_err(|_| anyhow::anyhow!("Failed to cast to AppSrc"))?
-					.push_buffer(buffer)?;
+					.map_err(|_| anyhow::anyhow!("Failed to cast to AppSrc"))?;
+
+				push_buffer(&appsrc_downcast, &mmap, relative_pts, previous_pts_vec[i])?;
 
 				let _ = return_senders[i].send(buffer_idx);
 

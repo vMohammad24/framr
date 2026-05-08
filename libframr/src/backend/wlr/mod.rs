@@ -187,6 +187,64 @@ impl WlrBackend {
 			})
 			.collect();
 	}
+
+	fn capture_output_raw(
+		&self,
+		wl_output: &WlOutput,
+		region: Option<(i32, i32, i32, i32)>,
+		include_cursor: bool,
+	) -> Result<(memmap2::Mmap, FrameFormat)> {
+		let mut state = CaptureState::default();
+		let mut event_queue = self.conn.new_event_queue::<CaptureState>();
+		let qh = event_queue.handle();
+
+		let screencopy_mgr: ZwlrScreencopyManagerV1 = self
+			.globals
+			.bind(&qh, 3..=3, ())
+			.map_err(|_| FramrError::ProtocolNotSupported("wlr-screencopy".into()))?;
+
+		let cursor_val = if include_cursor { 1 } else { 0 };
+
+		let frame = WlFrameGuard(if let Some((x, y, w, h)) = region {
+			screencopy_mgr.capture_output_region(cursor_val, wl_output, x, y, w, h, &qh, ())
+		} else {
+			screencopy_mgr.capture_output(cursor_val, wl_output, &qh, ())
+		});
+
+		while !state.buffer_done {
+			event_queue.blocking_dispatch(&mut state)?;
+		}
+
+		let frame_format = state
+			.formats
+			.first()
+			.ok_or(FramrError::NoSupportedBufferFormat)?
+			.clone();
+
+		let shm: WlShm = self.globals.bind(&qh, 1..=1, ())?;
+		let wl_fmt = pixel_format_to_wl_shm(frame_format.format);
+		let (buffer, _file, mmap) = allocate_shm_buffer(
+			&shm,
+			&qh,
+			frame_format.width,
+			frame_format.height,
+			frame_format.stride,
+			wl_fmt,
+		)?;
+
+		let buffer = WlBufferGuard(buffer);
+		frame.copy(&buffer);
+
+		while state.frame_state == FrameState::Pending {
+			event_queue.blocking_dispatch(&mut state)?;
+		}
+
+		if state.frame_state == FrameState::Failed {
+			return Err(FramrError::FrameCaptureFailed.into());
+		}
+
+		Ok((mmap, frame_format))
+	}
 }
 
 impl CaptureBackend for WlrBackend {
@@ -205,87 +263,18 @@ impl CaptureBackend for WlrBackend {
 			.get(output.id)
 			.ok_or_else(|| anyhow::anyhow!("WlOutput not found for id {}", output.id))?;
 
-		let mut state = CaptureState::default();
-		let mut event_queue = self.conn.new_event_queue::<CaptureState>();
-		let qh = event_queue.handle();
-
-		let screencopy_mgr: ZwlrScreencopyManagerV1 = self
-			.globals
-			.bind(&qh, 3..=3, ())
-			.map_err(|_| FramrError::ProtocolNotSupported("wlr-screencopy".into()))?;
-
-		let cursor_val = if include_cursor { 1 } else { 0 };
-
-		let frame = WlFrameGuard(if let Some(region) = region {
-			let local_x = region.position.x - output.logical_position.x;
-			let local_y = region.position.y - output.logical_position.y;
-			screencopy_mgr.capture_output_region(
-				cursor_val,
-				wl_output,
-				local_x,
-				local_y,
-				region.size.width as i32,
-				region.size.height as i32,
-				&qh,
-				(),
-			)
-		} else {
-			screencopy_mgr.capture_output_region(
-				cursor_val,
-				wl_output,
-				0,
-				0,
-				output.logical_size.width as i32,
-				output.logical_size.height as i32,
-				&qh,
-				(),
+		let region_raw = region.map(|r| {
+			(
+				r.position.x - output.logical_position.x,
+				r.position.y - output.logical_position.y,
+				r.size.width as i32,
+				r.size.height as i32,
 			)
 		});
 
-		while !state.buffer_done {
-			event_queue.blocking_dispatch(&mut state)?;
-		}
+		let (mmap, frame_format) = self.capture_output_raw(wl_output, region_raw, include_cursor)?;
 
-		let frame_format = state
-			.formats
-			.first()
-			.ok_or(FramrError::NoSupportedBufferFormat)?
-			.clone();
-
-		let byte_size = frame_format.byte_size();
-		let fd = create_shm_fd()?;
-
-		let file = std::fs::File::from(fd);
-		file.set_len(byte_size as u64)?;
-
-		let shm: WlShm = self.globals.bind(&qh, 1..=1, ())?;
-		let pool = shm.create_pool(file.as_fd(), byte_size as i32, &qh, ());
-
-		let wl_fmt = pixel_format_to_wl_shm(frame_format.format);
-
-		let buffer = WlBufferGuard(pool.create_buffer(
-			0,
-			frame_format.width,
-			frame_format.height,
-			frame_format.stride,
-			wl_fmt,
-			&qh,
-			(),
-		));
-		pool.destroy();
-
-		frame.copy(&buffer);
-
-		while state.frame_state == FrameState::Pending {
-			event_queue.blocking_dispatch(&mut state)?;
-		}
-
-		if state.frame_state == FrameState::Failed {
-			return Err(FramrError::FrameCaptureFailed.into());
-		}
-
-		let mmap = unsafe { memmap2::Mmap::map(&file)? };
-		let mut raw = mmap.to_vec();
+		let mut raw: Vec<u8> = mmap.to_vec();
 
 		convert_to_rgba(&mut raw, frame_format.format)
 			.ok_or_else(|| anyhow::anyhow!("unsupported pixel format"))?;
