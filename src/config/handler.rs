@@ -8,7 +8,6 @@ use std::{
 	path::{Path, PathBuf},
 };
 
-
 pub fn load_config() -> Result<AppConfig> {
 	let app_name = env!("CARGO_PKG_NAME");
 	let mut cfg: AppConfig = confy::load(app_name, None)?;
@@ -422,7 +421,8 @@ pub(crate) fn create_uploader_interactive(cfg: &mut AppConfig) -> Result<()> {
 	manage_kv_pairs("URL Parameters", &mut parameters)?;
 	manage_kv_pairs("Body Arguments", &mut arguments)?;
 
-	let output_url: String = super::prompt_input("Output URL parse schema", Some("{json:url}".into()))?;
+	let output_url: String =
+		super::prompt_input("Output URL parse schema", Some("{json:url}".into()))?;
 	let error_message = super::prompt_optional_input("Error message schema", None)?;
 
 	let uploader = UploadConfig {
@@ -475,7 +475,8 @@ pub(crate) fn modify_uploader_at(cfg: &mut AppConfig, idx: usize) -> Result<()> 
 	uploader.request_method = select_request_method(current_method_idx)?;
 
 	let variants = BodyType::variants();
-	let body_selection = super::prompt_select("Body type", &variants, uploader.body_type.to_index())?;
+	let body_selection =
+		super::prompt_select("Body type", &variants, uploader.body_type.to_index())?;
 	uploader.body_type = BodyType::from_index(body_selection).unwrap_or_default();
 
 	if uploader.body_type == BodyType::FormData {
@@ -489,7 +490,8 @@ pub(crate) fn modify_uploader_at(cfg: &mut AppConfig, idx: usize) -> Result<()> 
 	manage_kv_pairs("URL Parameters", &mut uploader.parameters)?;
 	manage_kv_pairs("Body Arguments", &mut uploader.arguments)?;
 
-	uploader.output_url = super::prompt_input("Output URL parse schema", Some(uploader.output_url.clone()))?;
+	uploader.output_url =
+		super::prompt_input("Output URL parse schema", Some(uploader.output_url.clone()))?;
 	uploader.error_message =
 		super::prompt_optional_input("Error message schema", uploader.error_message.as_deref())?;
 

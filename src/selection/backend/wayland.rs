@@ -33,8 +33,11 @@ use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::
 	Shape, WpCursorShapeDeviceV1,
 };
 
-use crate::selection::{graphics, state::{SelectionState, Tool}};
 use crate::config::SelectionConfig;
+use crate::selection::{
+	graphics,
+	state::{SelectionState, Tool},
+};
 
 pub struct SurfaceData {
 	pub output: OutputInfo,

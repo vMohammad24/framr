@@ -262,9 +262,11 @@ impl SelectionState {
 		}
 
 		if self.is_moving_annotation {
-			if let (Some(start), Some(orig), Some(idx)) =
-				(self.move_start_point, &self.original_points, self.selected_annotation)
-			{
+			if let (Some(start), Some(orig), Some(idx)) = (
+				self.move_start_point,
+				&self.original_points,
+				self.selected_annotation,
+			) {
 				let mut dx = global_pos.0 - start.0;
 				let mut dy = global_pos.1 - start.1;
 

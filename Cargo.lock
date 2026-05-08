@@ -632,6 +632,7 @@ dependencies = [
  "dialoguer",
  "dirs",
  "fastblur",
+ "gstreamer",
  "hyprland",
  "image",
  "infer",

@@ -175,6 +175,12 @@ pub fn list_uploaders() -> Result<()> {
 		);
 	}
 
+	println!(
+		"  {} {}",
+		style("Default Sound:").bold(),
+		style(&cfg.upload_sound).yellow().bold()
+	);
+
 	println!();
 	println!("{}", style("Recording Settings:").cyan().bold());
 	println!(
@@ -445,7 +451,6 @@ pub fn set_default_capture(name_or_index: Option<&str>) -> Result<()> {
 			},
 		)?;
 
-
 		cfg.default_screen = Some(selection);
 		println!(
 			"  {} {}",
@@ -464,6 +469,20 @@ pub fn set_default_capture(name_or_index: Option<&str>) -> Result<()> {
 		"Default capture method set to \"{}\".",
 		method.label()
 	));
+	Ok(())
+}
+
+pub fn set_default_sound(path: Option<&str>) -> Result<()> {
+	let mut cfg = load_config()?;
+
+	let path = match path {
+		Some(p) => p.to_string(),
+		None => prompt_input("Default upload sound path", Some(cfg.upload_sound.clone()))?,
+	};
+
+	cfg.upload_sound = path;
+	save_config(&cfg)?;
+	display_success("Default upload sound updated.");
 	Ok(())
 }
 
@@ -613,6 +632,11 @@ pub fn run_config_wizard() -> Result<()> {
 				.map(|_| style(&capture_label).yellow().bold().to_string())
 				.unwrap_or_else(|| style("(none)").dim().to_string())
 		);
+		println!(
+			"  {} {}\n",
+			style("Default Sound:").bold(),
+			style(&cfg.upload_sound).yellow().bold()
+		);
 
 		println!();
 		println!("{}", style("Recording Settings:").cyan().bold());
@@ -734,9 +758,10 @@ pub fn run_config_wizard() -> Result<()> {
 						"Set default uploader",
 						"Set default action",
 						"Set default capture method",
+						"Set default sound",
 						"Back",
 					],
-					3,
+					4,
 				)?;
 
 				match defaults_selection {
@@ -764,7 +789,8 @@ pub fn run_config_wizard() -> Result<()> {
 					2 => {
 						let default_idx = cfg.default_capture.map(|m| m.to_index()).unwrap_or(0);
 						let variants = DefaultCaptureMethod::variants();
-						let sel = prompt_select("Select default capture method", &variants, default_idx)?;
+						let sel =
+							prompt_select("Select default capture method", &variants, default_idx)?;
 						let method = DefaultCaptureMethod::from_index(sel).unwrap();
 						if method == DefaultCaptureMethod::Screen {
 							let conn = FramrConnection::new()?;
@@ -804,6 +830,14 @@ pub fn run_config_wizard() -> Result<()> {
 						));
 						thread::sleep(Duration::from_secs(1));
 					}
+					3 => {
+						let sound: String =
+							prompt_input("Default upload sound path", Some(cfg.upload_sound.clone()))?;
+						cfg.upload_sound = sound;
+						save_config(&cfg)?;
+						display_success("Default upload sound updated.");
+						thread::sleep(Duration::from_secs(1));
+					}
 					_ => continue,
 				}
 			}
@@ -835,19 +869,71 @@ pub fn modify_selection_config(cfg: &mut AppConfig) -> Result<()> {
 
 		let s = &mut cfg.selection;
 		let items = [
-			format!("{:<25} {}", style("Background Color").bold(), style_color(s.background_color)),
-			format!("{:<25} {}", style("Border Color").bold(), style_color(s.border_color)),
-			format!("{:<25} {}", style("Border Width").bold(), style(s.border_width).yellow()),
-			format!("{:<25} {}", style("Toolbar BG").bold(), style_color(s.toolbar_background_color)),
-			format!("{:<25} {}", style("Toolbar Active").bold(), style_color(s.toolbar_active_color)),
-			format!("{:<25} {}", style("Toolbar Hover").bold(), style_color(s.toolbar_hover_color)),
-			format!("{:<25} {}", style("Annotation Color").bold(), style_color(s.annotation_color)),
-			format!("{:<25} {}", style("Annotation Width").bold(), style(s.annotation_line_width).yellow()),
-			format!("{:<25} {}", style("Blur Radius").bold(), style(s.blur_radius).yellow()),
-			format!("{:<25} {}", style("Pixelate Block Size").bold(), style(s.pixelate_block_size).yellow()),
-			format!("{:<25} {}", style("Toolbar Y").bold(), style(s.toolbar_y).yellow()),
-			format!("{:<25} {}", style("Toolbar Item Width").bold(), style(s.toolbar_item_width).yellow()),
-			format!("{:<25} {}", style("Toolbar Height").bold(), style(s.toolbar_height).yellow()),
+			format!(
+				"{:<25} {}",
+				style("Background Color").bold(),
+				style_color(s.background_color)
+			),
+			format!(
+				"{:<25} {}",
+				style("Border Color").bold(),
+				style_color(s.border_color)
+			),
+			format!(
+				"{:<25} {}",
+				style("Border Width").bold(),
+				style(s.border_width).yellow()
+			),
+			format!(
+				"{:<25} {}",
+				style("Toolbar BG").bold(),
+				style_color(s.toolbar_background_color)
+			),
+			format!(
+				"{:<25} {}",
+				style("Toolbar Active").bold(),
+				style_color(s.toolbar_active_color)
+			),
+			format!(
+				"{:<25} {}",
+				style("Toolbar Hover").bold(),
+				style_color(s.toolbar_hover_color)
+			),
+			format!(
+				"{:<25} {}",
+				style("Annotation Color").bold(),
+				style_color(s.annotation_color)
+			),
+			format!(
+				"{:<25} {}",
+				style("Annotation Width").bold(),
+				style(s.annotation_line_width).yellow()
+			),
+			format!(
+				"{:<25} {}",
+				style("Blur Radius").bold(),
+				style(s.blur_radius).yellow()
+			),
+			format!(
+				"{:<25} {}",
+				style("Pixelate Block Size").bold(),
+				style(s.pixelate_block_size).yellow()
+			),
+			format!(
+				"{:<25} {}",
+				style("Toolbar Y").bold(),
+				style(s.toolbar_y).yellow()
+			),
+			format!(
+				"{:<25} {}",
+				style("Toolbar Item Width").bold(),
+				style(s.toolbar_item_width).yellow()
+			),
+			format!(
+				"{:<25} {}",
+				style("Toolbar Height").bold(),
+				style(s.toolbar_height).yellow()
+			),
 			style("Back").dim().to_string(),
 		];
 
@@ -857,15 +943,32 @@ pub fn modify_selection_config(cfg: &mut AppConfig) -> Result<()> {
 			0 => s.background_color = prompt_color("Background Color", s.background_color)?,
 			1 => s.border_color = prompt_color("Border Color", s.border_color)?,
 			2 => s.border_width = prompt_input("Border Width", Some(s.border_width))?,
-			3 => s.toolbar_background_color = prompt_color("Toolbar Background Color", s.toolbar_background_color)?,
-			4 => s.toolbar_active_color = prompt_color("Toolbar Active Color", s.toolbar_active_color)?,
-			5 => s.toolbar_hover_color = prompt_color("Toolbar Hover Color", s.toolbar_hover_color)?,
+			3 => {
+				s.toolbar_background_color =
+					prompt_color("Toolbar Background Color", s.toolbar_background_color)?
+			}
+			4 => {
+				s.toolbar_active_color =
+					prompt_color("Toolbar Active Color", s.toolbar_active_color)?
+			}
+			5 => {
+				s.toolbar_hover_color = prompt_color("Toolbar Hover Color", s.toolbar_hover_color)?
+			}
 			6 => s.annotation_color = prompt_color("Annotation Color", s.annotation_color)?,
-			7 => s.annotation_line_width = prompt_input("Annotation Line Width", Some(s.annotation_line_width))?,
+			7 => {
+				s.annotation_line_width =
+					prompt_input("Annotation Line Width", Some(s.annotation_line_width))?
+			}
 			8 => s.blur_radius = prompt_input("Blur Radius", Some(s.blur_radius))?,
-			9 => s.pixelate_block_size = prompt_input("Pixelate Block Size", Some(s.pixelate_block_size))?,
+			9 => {
+				s.pixelate_block_size =
+					prompt_input("Pixelate Block Size", Some(s.pixelate_block_size))?
+			}
 			10 => s.toolbar_y = prompt_input("Toolbar Y", Some(s.toolbar_y))?,
-			11 => s.toolbar_item_width = prompt_input("Toolbar Item Width", Some(s.toolbar_item_width))?,
+			11 => {
+				s.toolbar_item_width =
+					prompt_input("Toolbar Item Width", Some(s.toolbar_item_width))?
+			}
 			12 => s.toolbar_height = prompt_input("Toolbar Height", Some(s.toolbar_height))?,
 			_ => break,
 		}
@@ -909,8 +1012,16 @@ pub fn modify_recording_config(cfg: &mut AppConfig) -> Result<()> {
 
 		let r = &mut cfg.recording;
 		let items = [
-			format!("{:<25} {}", style("Bitrate (kbps)").bold(), style(r.bitrate).yellow()),
-			format!("{:<25} {}", style("Keyframe Interval").bold(), style(r.keyframe_interval).yellow()),
+			format!(
+				"{:<25} {}",
+				style("Bitrate (kbps)").bold(),
+				style(r.bitrate).yellow()
+			),
+			format!(
+				"{:<25} {}",
+				style("Keyframe Interval").bold(),
+				style(r.keyframe_interval).yellow()
+			),
 			format!(
 				"{:<25} {}",
 				style("Threads").bold(),
@@ -921,8 +1032,16 @@ pub fn modify_recording_config(cfg: &mut AppConfig) -> Result<()> {
 				)
 				.yellow()
 			),
-			format!("{:<25} {}", style("H.264 Tune").bold(), style(r.tune.as_str()).yellow()),
-			format!("{:<25} {}", style("H.264 Speed Preset").bold(), style(r.speed_preset.as_str()).yellow()),
+			format!(
+				"{:<25} {}",
+				style("H.264 Tune").bold(),
+				style(r.tune.as_str()).yellow()
+			),
+			format!(
+				"{:<25} {}",
+				style("H.264 Speed Preset").bold(),
+				style(r.speed_preset.as_str()).yellow()
+			),
 			style("Back").dim().to_string(),
 		];
 
@@ -942,8 +1061,10 @@ pub fn modify_recording_config(cfg: &mut AppConfig) -> Result<()> {
 				})?;
 			}
 			1 => {
-				r.keyframe_interval =
-					validated_text_input("Keyframe Interval (frames)", r.keyframe_interval, |input| {
+				r.keyframe_interval = validated_text_input(
+					"Keyframe Interval (frames)",
+					r.keyframe_interval,
+					|input| {
 						let val = input
 							.parse::<u32>()
 							.map_err(|_| "Must be a valid number".to_string())?;
@@ -952,7 +1073,8 @@ pub fn modify_recording_config(cfg: &mut AppConfig) -> Result<()> {
 						} else {
 							Ok(())
 						}
-					})?;
+					},
+				)?;
 			}
 			2 => {
 				let val: u32 = validated_text_input(
@@ -995,7 +1117,10 @@ pub fn modify_recording_config(cfg: &mut AppConfig) -> Result<()> {
 					H264SpeedPreset::Placebo,
 				];
 				let names: Vec<_> = options.iter().map(|o| o.as_str()).collect();
-				let current = options.iter().position(|o| *o == r.speed_preset).unwrap_or(0);
+				let current = options
+					.iter()
+					.position(|o| *o == r.speed_preset)
+					.unwrap_or(0);
 				let selection = prompt_select("Select H.264 Speed Preset", &names, current)?;
 				r.speed_preset = options[selection];
 			}

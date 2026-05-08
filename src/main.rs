@@ -15,6 +15,7 @@ use crate::selection::window::{get_window_at_pos, get_windows};
 
 mod config;
 mod selection;
+mod sound;
 mod upload;
 
 #[derive(Parser)]
@@ -162,6 +163,11 @@ enum ConfigAction {
 	Capture {
 		/// Name of the method (omitting prompts for selection)
 		method: Option<String>,
+	},
+	/// Set the default upload sound path
+	Sound {
+		/// Path to the sound file (omitting prompts for selection)
+		path: Option<String>,
 	},
 	/// Register the framr:// protocol handler
 	Protocol,
@@ -314,12 +320,11 @@ fn handle_upload(
 		} else {
 			None
 		};
-		send_notification(
-			"Upload Successful",
-			&url,
-			image_data.as_deref(),
-			cli.silent,
-		)?;
+		send_notification("Upload Successful", &url, image_data.as_deref(), cli.silent)?;
+	}
+
+	if let Ok(cfg) = config::load_config() {
+		let _ = sound::play_sound(&cfg.upload_sound);
 	}
 
 	if cli.copy {
@@ -342,19 +347,22 @@ fn send_notification(
 	n.summary(title).body(body).appname("framr");
 
 	if let Some(bytes) = image_data
-		&& let Ok(img) = image::load_from_memory(bytes) {
-			let (width, height) = img.dimensions();
-			let pixels = img.to_rgba8().into_raw();
-			if let Ok(icon) = notify_rust::Image::from_rgba(width as i32, height as i32, pixels) {
-				n.image_data(icon);
-			}
+		&& let Ok(img) = image::load_from_memory(bytes)
+	{
+		let (width, height) = img.dimensions();
+		let pixels = img.to_rgba8().into_raw();
+		if let Ok(icon) = notify_rust::Image::from_rgba(width as i32, height as i32, pixels) {
+			n.image_data(icon);
 		}
+	}
 
 	let _ = n.show();
 	Ok(())
 }
 
 fn main() -> Result<()> {
+	sound::init_sound();
+
 	let cli = Cli::parse();
 
 	if let Some(ref uri) = cli.uri {
@@ -388,6 +396,7 @@ fn main() -> Result<()> {
 				Some(ConfigAction::Capture { method }) => {
 					config::set_default_capture(method.as_deref())
 				}
+				Some(ConfigAction::Sound { path }) => config::set_default_sound(path.as_deref()),
 				Some(ConfigAction::Protocol) => config::register_protocol_handler(),
 				None => config::run_config_wizard(),
 			};
@@ -561,6 +570,10 @@ fn main() -> Result<()> {
 				copy_to_clipboard(url.as_bytes().to_vec(), "text/plain;charset=utf-8")?;
 			}
 
+			if let Some(cfg) = &cfg {
+				let _ = sound::play_sound(&cfg.upload_sound);
+			}
+
 			if !is_image && cli.output.is_none() {
 				let _ = std::fs::remove_file(&path);
 			}
@@ -569,12 +582,22 @@ fn main() -> Result<()> {
 			if is_image {
 				if let Some(ref bytes) = bytes_opt {
 					copy_to_clipboard(bytes.clone(), "image/png")?;
-					send_notification("Copied to Clipboard", "Screenshot copied to clipboard", Some(bytes), cli.silent)?;
+					send_notification(
+						"Copied to Clipboard",
+						"Screenshot copied to clipboard",
+						Some(bytes),
+						cli.silent,
+					)?;
 				}
 			} else {
 				let p_str = path.to_string_lossy();
 				copy_to_clipboard(p_str.as_bytes().to_vec(), "text/plain;charset=utf-8")?;
-				send_notification("Video Path Copied", "The path to the recording was copied to your clipboard", None, cli.silent)?;
+				send_notification(
+					"Video Path Copied",
+					"The path to the recording was copied to your clipboard",
+					None,
+					cli.silent,
+				)?;
 			}
 		}
 		DefaultAction::Save => {
@@ -587,8 +610,17 @@ fn main() -> Result<()> {
 
 			println!("{}", path.display());
 
-			let title = if is_image { "Screenshot Saved" } else { "Recording Saved" };
-			send_notification(title, &path.to_string_lossy(), bytes_opt.as_deref(), cli.silent)?;
+			let title = if is_image {
+				"Screenshot Saved"
+			} else {
+				"Recording Saved"
+			};
+			send_notification(
+				title,
+				&path.to_string_lossy(),
+				bytes_opt.as_deref(),
+				cli.silent,
+			)?;
 		}
 	}
 

@@ -128,7 +128,12 @@ pub struct UploadConfig {
 	pub request_url: String,
 	#[serde(alias = "Parameters", default, deserialize_with = "deserialize_kv")]
 	pub parameters: Vec<(String, String)>,
-	#[serde(alias = "Headers", alias = "headers", default, deserialize_with = "deserialize_kv")]
+	#[serde(
+		alias = "Headers",
+		alias = "headers",
+		default,
+		deserialize_with = "deserialize_kv"
+	)]
 	pub headers: Vec<(String, String)>,
 	#[serde(
 		alias = "Body",
@@ -137,7 +142,12 @@ pub struct UploadConfig {
 		deserialize_with = "deserialize_body_type"
 	)]
 	pub body_type: BodyType,
-	#[serde(alias = "Arguments", alias = "formData", default, deserialize_with = "deserialize_kv")]
+	#[serde(
+		alias = "Arguments",
+		alias = "formData",
+		default,
+		deserialize_with = "deserialize_kv"
+	)]
 	pub arguments: Vec<(String, String)>,
 	#[serde(alias = "FileFormName", alias = "fileFormName")]
 	pub file_form_name: Option<String>,
@@ -219,6 +229,17 @@ pub struct AppConfig {
 	pub selection: SelectionConfig,
 	#[serde(default)]
 	pub recording: RecordingConfig,
+	#[serde(default = "default_upload_sound")]
+	pub upload_sound: String,
+}
+
+fn default_upload_sound() -> String {
+	dirs::config_local_dir()
+		.unwrap_or_else(|| std::path::PathBuf::from("."))
+		.join(env!("CARGO_PKG_NAME"))
+		.join("sound.wav")
+		.to_string_lossy()
+		.to_string()
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]
