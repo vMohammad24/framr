@@ -52,6 +52,7 @@
           nativeBuildInputs = with pkgs; [
             pkg-config
             rustPlatform.bindgenHook
+            makeWrapper
             gst_all_1.gstreamer.dev
             gst_all_1.gst-plugins-base.dev
           ];
@@ -65,6 +66,9 @@
             postInstall = ''
               ls -lha assets
               install -Dm644 assets/framr-handler.desktop -t $out/share/applications
+
+              wrapProgram $out/bin/framr \
+                --prefix GST_PLUGIN_SYSTEM_PATH_1_0 : "$GST_PLUGIN_SYSTEM_PATH_1_0"
             '';
           });
       in {
