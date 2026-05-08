@@ -178,32 +178,15 @@ fn resolve_output(cli: &Cli, default_pattern: &str, default_ext: &str) -> PathBu
 	path
 }
 
-fn copy_to_clipboard_image(png_bytes: Vec<u8>) -> Result<()> {
+fn copy_to_clipboard(data: Vec<u8>, mime_type: &str) -> Result<()> {
 	match unsafe { libc::fork() } {
 		-1 => anyhow::bail!("fork failed"),
 		0 => {
 			let mut clipboard_opts = ClipboardOptions::new();
 			clipboard_opts.foreground(true).seat(Seat::All);
 			let _ = clipboard_opts.copy(
-				Source::Bytes(png_bytes.into()),
-				MimeType::Specific("image/png".into()),
-			);
-			std::process::exit(0);
-		}
-		_ => {}
-	}
-	Ok(())
-}
-
-fn copy_to_clipboard_text(text: &str) -> Result<()> {
-	match unsafe { libc::fork() } {
-		-1 => anyhow::bail!("fork failed"),
-		0 => {
-			let mut clipboard_opts = ClipboardOptions::new();
-			clipboard_opts.foreground(true).seat(Seat::All);
-			let _ = clipboard_opts.copy(
-				Source::Bytes(text.as_bytes().to_vec().into()),
-				MimeType::Specific("text/plain;charset=utf-8".into()),
+				Source::Bytes(data.into()),
+				MimeType::Specific(mime_type.to_string()),
 			);
 			std::process::exit(0);
 		}
@@ -323,50 +306,51 @@ fn handle_upload(
 	println!("{}", url);
 
 	if !cli.silent {
-		if is_image {
-			let image_data = match file {
-				Some(p) => std::fs::read(p)?,
-				None => stdin_bytes.clone(),
-			};
-			notify("Upload Successful", &url, &image_data, cli.silent)?;
+		let image_data = if is_image {
+			match file {
+				Some(p) => Some(std::fs::read(p)?),
+				None => Some(stdin_bytes.clone()),
+			}
 		} else {
-			let _ = Notification::new()
-				.summary("Upload Successful")
-				.body(&url)
-				.appname("framr")
-				.show();
-		}
+			None
+		};
+		send_notification(
+			"Upload Successful",
+			&url,
+			image_data.as_deref(),
+			cli.silent,
+		)?;
 	}
 
 	if cli.copy {
-		copy_to_clipboard_text(&url)?;
+		copy_to_clipboard(url.as_bytes().to_vec(), "text/plain;charset=utf-8")?;
 	}
 	Ok(())
 }
 
-fn notify(title: &str, body: &str, bytes: &[u8], silent: bool) -> Result<()> {
+fn send_notification(
+	title: &str,
+	body: &str,
+	image_data: Option<&[u8]>,
+	silent: bool,
+) -> Result<()> {
 	if silent {
 		return Ok(());
 	}
 
-	let _ = (|| -> Result<()> {
-		let img = image::load_from_memory(bytes)?;
-		let (width, height) = img.dimensions();
-		let pixels = img.to_rgba8().into_raw();
+	let mut n = Notification::new();
+	n.summary(title).body(body).appname("framr");
 
-		Notification::new()
-			.summary(title)
-			.body(body)
-			.appname("framr")
-			.image_data(notify_rust::Image::from_rgba(
-				width as i32,
-				height as i32,
-				pixels,
-			)?)
-			.show()?;
-		Ok(())
-	})();
+	if let Some(bytes) = image_data
+		&& let Ok(img) = image::load_from_memory(bytes) {
+			let (width, height) = img.dimensions();
+			let pixels = img.to_rgba8().into_raw();
+			if let Ok(icon) = notify_rust::Image::from_rgba(width as i32, height as i32, pixels) {
+				n.image_data(icon);
+			}
+		}
 
+	let _ = n.show();
 	Ok(())
 }
 
@@ -571,30 +555,10 @@ fn main() -> Result<()> {
 			let url = upload::upload(payload, uploader_name, &filename)?;
 			println!("{}", url);
 
-			if is_image {
-				if let Some(ref b) = bytes_opt {
-					notify("Upload Successful", &url, b, cli.silent)?;
-				} else {
-					if !cli.silent {
-						let _ = Notification::new()
-							.summary("Upload Successful")
-							.body(&url)
-							.appname("framr")
-							.show();
-					}
-				}
-			} else {
-				if !cli.silent {
-					let _ = Notification::new()
-						.summary("Upload Successful")
-						.body(&url)
-						.appname("framr")
-						.show();
-				}
-			}
+			send_notification("Upload Successful", &url, bytes_opt.as_deref(), cli.silent)?;
 
 			if action == DefaultAction::UploadAndCopy {
-				copy_to_clipboard_text(&url)?;
+				copy_to_clipboard(url.as_bytes().to_vec(), "text/plain;charset=utf-8")?;
 			}
 
 			if !is_image && cli.output.is_none() {
@@ -604,25 +568,13 @@ fn main() -> Result<()> {
 		DefaultAction::Copy => {
 			if is_image {
 				if let Some(ref bytes) = bytes_opt {
-					copy_to_clipboard_image(bytes.clone())?;
-				}
-				if let Some(ref b) = bytes_opt {
-					notify(
-						"Copied to Clipboard",
-						"Screenshot copied to clipboard",
-						b,
-						cli.silent,
-					)?;
+					copy_to_clipboard(bytes.clone(), "image/png")?;
+					send_notification("Copied to Clipboard", "Screenshot copied to clipboard", Some(bytes), cli.silent)?;
 				}
 			} else {
-				copy_to_clipboard_text(&path.to_string_lossy())?;
-				if !cli.silent {
-					let _ = Notification::new()
-						.summary("Video Path Copied")
-						.body("The path to the recording was copied to your clipboard")
-						.appname("framr")
-						.show();
-				}
+				let p_str = path.to_string_lossy();
+				copy_to_clipboard(p_str.as_bytes().to_vec(), "text/plain;charset=utf-8")?;
+				send_notification("Video Path Copied", "The path to the recording was copied to your clipboard", None, cli.silent)?;
 			}
 		}
 		DefaultAction::Save => {
@@ -635,27 +587,8 @@ fn main() -> Result<()> {
 
 			println!("{}", path.display());
 
-			if is_image {
-				if let Some(ref b) = bytes_opt {
-					notify("Screenshot Saved", &path.to_string_lossy(), b, cli.silent)?;
-				} else {
-					if !cli.silent {
-						let _ = Notification::new()
-							.summary("Recording Saved")
-							.body(&path.to_string_lossy())
-							.appname("framr")
-							.show();
-					}
-				}
-			} else {
-				if !cli.silent {
-					let _ = Notification::new()
-						.summary("Recording Saved")
-						.body(&path.to_string_lossy())
-						.appname("framr")
-						.show();
-				}
-			}
+			let title = if is_image { "Screenshot Saved" } else { "Recording Saved" };
+			send_notification(title, &path.to_string_lossy(), bytes_opt.as_deref(), cli.silent)?;
 		}
 	}
 
