@@ -1,9 +1,10 @@
-mod handler;
-mod types;
+pub mod cli_ui;
+pub mod core;
+pub mod import;
+pub mod types;
 
-pub(crate) use handler::find_uploader_index;
-pub use handler::load_config;
-pub use handler::load_uploader_config;
+pub use cli_ui::find_uploader_index;
+pub use core::{load_config, load_uploader_config, save_config};
 pub(crate) use types::{AppConfig, BodyType, Color, SelectionConfig, UploadConfig};
 pub use types::{ConfigEnum, DefaultAction, DefaultCaptureMethod};
 
@@ -15,7 +16,8 @@ use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
 
-use crate::config::handler::*;
+use crate::config::cli_ui::*;
+use crate::config::import::*;
 
 pub fn prompt_input<T>(prompt: &str, default: Option<T>) -> Result<T>
 where
@@ -92,7 +94,7 @@ pub fn prompt_color(prompt: &str, current: Color) -> Result<Color> {
 pub fn import_uploader(source: &str) -> Result<()> {
 	let mut cfg = load_config()?;
 
-	println!("{}", display_header("Import Uploader"));
+	println!("{}", header("Import Uploader"));
 	println!("  {} {}", style("Source:").bold(), style(source).blue());
 
 	let mut uploader = import_from_source(source, false)?;
@@ -115,11 +117,11 @@ pub fn import_uploader(source: &str) -> Result<()> {
 		style(&uploader.name).green().bold(),
 		style(&uploader.request_url).blue()
 	);
-	display_uploader_full_details(&uploader);
+	display_uploader_details(&uploader);
 
 	cfg.uploaders.push(uploader);
 	save_config(&cfg)?;
-	display_success("Configuration saved.");
+	print_success("Configuration saved.");
 	Ok(())
 }
 
@@ -141,7 +143,7 @@ pub fn list_uploaders() -> Result<()> {
 
 	for (i, u) in cfg.uploaders.iter().enumerate() {
 		let is_default = cfg.default_uploader.as_deref() == Some(&u.name);
-		println!("{}", display_uploader_list_entry(i, u, is_default));
+		println!("{}", uploader_list_entry(i, u, is_default));
 	}
 
 	if let Some(ref default) = cfg.default_uploader {
@@ -231,9 +233,9 @@ pub fn show_uploader(name_or_index: &str) -> Result<()> {
 
 	println!(
 		"{}",
-		display_header(&format!("Uploader: {}", &cfg.uploaders[idx].name))
+		header(&format!("Uploader: {}", &cfg.uploaders[idx].name))
 	);
-	display_uploader_full_details(&cfg.uploaders[idx]);
+	display_uploader_details(&cfg.uploaders[idx]);
 	Ok(())
 }
 
@@ -241,7 +243,7 @@ pub fn create_uploader() -> Result<()> {
 	let mut cfg = load_config()?;
 	create_uploader_interactive(&mut cfg)?;
 	save_config(&cfg)?;
-	display_success("Configuration saved.");
+	print_success("Configuration saved.");
 	Ok(())
 }
 
@@ -256,7 +258,7 @@ pub fn edit_uploader(name_or_index: Option<&str>) -> Result<()> {
 	let idx = resolve_uploader_index(&cfg, name_or_index, "Select uploader to edit")?;
 	modify_uploader_at(&mut cfg, idx)?;
 	save_config(&cfg)?;
-	display_success("Configuration saved.");
+	print_success("Configuration saved.");
 	Ok(())
 }
 
@@ -283,7 +285,7 @@ pub fn delete_uploader(name_or_index: Option<&str>) -> Result<()> {
 			cfg.default_uploader = None;
 		}
 		save_config(&cfg)?;
-		display_error(&format!("Deleted \"{}\"", uploader_name));
+		print_error(&format!("Deleted \"{}\"", uploader_name));
 	} else {
 		println!("  {}", style("Cancelled.").dim());
 	}
@@ -325,7 +327,7 @@ pub fn set_default_uploader(name_or_index: Option<&str>) -> Result<()> {
 
 	cfg.default_uploader = Some(name.clone());
 	save_config(&cfg)?;
-	display_success(&format!("Default uploader set to \"{}\".", name));
+	print_success(&format!("Default uploader set to \"{}\".", name));
 	Ok(())
 }
 
@@ -412,7 +414,7 @@ pub fn set_default_action(name_or_index: Option<&str>) -> Result<()> {
 
 	cfg.default_action = Some(action);
 	save_config(&cfg)?;
-	display_success(&format!("Default action set to \"{}\".", action.label()));
+	print_success(&format!("Default action set to \"{}\".", action.label()));
 	Ok(())
 }
 
@@ -465,7 +467,7 @@ pub fn set_default_capture(name_or_index: Option<&str>) -> Result<()> {
 
 	cfg.default_capture = Some(method);
 	save_config(&cfg)?;
-	display_success(&format!(
+	print_success(&format!(
 		"Default capture method set to \"{}\".",
 		method.label()
 	));
@@ -482,7 +484,7 @@ pub fn set_default_sound(path: Option<&str>) -> Result<()> {
 
 	cfg.upload_sound = path;
 	save_config(&cfg)?;
-	display_success("Default upload sound updated.");
+	print_success("Default upload sound updated.");
 	Ok(())
 }
 
@@ -592,7 +594,7 @@ pub fn run_config_wizard() -> Result<()> {
 		} else {
 			for (i, u) in cfg.uploaders.iter().enumerate() {
 				let is_default = cfg.default_uploader.as_deref() == Some(&u.name);
-				println!("{}", display_uploader_list_entry(i, u, is_default));
+				println!("{}", uploader_list_entry(i, u, is_default));
 			}
 			println!();
 		}
@@ -709,13 +711,13 @@ pub fn run_config_wizard() -> Result<()> {
 
 				cfg.uploaders.push(uploader);
 				save_config(&cfg)?;
-				display_success("Uploader imported and saved successfully.");
+				print_success("Uploader imported and saved successfully.");
 				thread::sleep(Duration::from_secs(1));
 			}
 			1 => {
 				create_uploader_interactive(&mut cfg)?;
 				save_config(&cfg)?;
-				display_success("Uploader created and saved successfully.");
+				print_success("Uploader created and saved successfully.");
 				thread::sleep(Duration::from_secs(1));
 			}
 			2 => {
@@ -726,7 +728,7 @@ pub fn run_config_wizard() -> Result<()> {
 				let _ = term.clear_screen();
 				modify_uploader_at(&mut cfg, sel)?;
 				save_config(&cfg)?;
-				display_success("Uploader modified and saved successfully.");
+				print_success("Uploader modified and saved successfully.");
 				thread::sleep(Duration::from_secs(1));
 			}
 			3 => {
@@ -747,7 +749,7 @@ pub fn run_config_wizard() -> Result<()> {
 						cfg.default_uploader = None;
 					}
 					save_config(&cfg)?;
-					display_error(&format!("Deleted \"{}\"", removed.name));
+					print_error(&format!("Deleted \"{}\"", removed.name));
 					thread::sleep(Duration::from_secs(1));
 				}
 			}
@@ -773,7 +775,7 @@ pub fn run_config_wizard() -> Result<()> {
 						let name = cfg.uploaders[sel].name.clone();
 						cfg.default_uploader = Some(name.clone());
 						save_config(&cfg)?;
-						display_success(&format!("Default uploader set to \"{}\".", name));
+						print_success(&format!("Default uploader set to \"{}\".", name));
 						thread::sleep(Duration::from_secs(1));
 					}
 					1 => {
@@ -783,7 +785,7 @@ pub fn run_config_wizard() -> Result<()> {
 						let action = DefaultAction::from_index(sel).unwrap();
 						cfg.default_action = Some(action);
 						save_config(&cfg)?;
-						display_success(&format!("Default action set to \"{}\".", action.label()));
+						print_success(&format!("Default action set to \"{}\".", action.label()));
 						thread::sleep(Duration::from_secs(1));
 					}
 					2 => {
@@ -796,7 +798,7 @@ pub fn run_config_wizard() -> Result<()> {
 							let conn = FramrConnection::new()?;
 							let outputs = conn.get_all_outputs()?;
 							if outputs.is_empty() {
-								display_error("No monitors detected.");
+								print_error("No monitors detected.");
 							} else {
 								let items: Vec<String> = outputs
 									.iter()
@@ -816,7 +818,7 @@ pub fn run_config_wizard() -> Result<()> {
 								)?;
 
 								cfg.default_screen = Some(selection);
-								display_success(&format!(
+								print_success(&format!(
 									"Default monitor set to \"{}\".",
 									items[selection]
 								));
@@ -824,18 +826,20 @@ pub fn run_config_wizard() -> Result<()> {
 						}
 						cfg.default_capture = Some(method);
 						save_config(&cfg)?;
-						display_success(&format!(
+						print_success(&format!(
 							"Default capture method set to \"{}\".",
 							method.label()
 						));
 						thread::sleep(Duration::from_secs(1));
 					}
 					3 => {
-						let sound: String =
-							prompt_input("Default upload sound path", Some(cfg.upload_sound.clone()))?;
+						let sound: String = prompt_input(
+							"Default upload sound path",
+							Some(cfg.upload_sound.clone()),
+						)?;
 						cfg.upload_sound = sound;
 						save_config(&cfg)?;
-						display_success("Default upload sound updated.");
+						print_success("Default upload sound updated.");
 						thread::sleep(Duration::from_secs(1));
 					}
 					_ => continue,
@@ -844,18 +848,18 @@ pub fn run_config_wizard() -> Result<()> {
 			5 => {
 				modify_selection_config(&mut cfg)?;
 				save_config(&cfg)?;
-				display_success("Selection UI settings updated and saved.");
+				print_success("Selection UI settings updated and saved.");
 				thread::sleep(Duration::from_secs(1));
 			}
 			6 => {
 				modify_recording_config(&mut cfg)?;
 				save_config(&cfg)?;
-				display_success("Recording settings updated and saved.");
+				print_success("Recording settings updated and saved.");
 				thread::sleep(Duration::from_secs(1));
 			}
 			_ => {
 				save_config(&cfg)?;
-				display_success("Configuration saved. Exiting...");
+				print_success("Configuration saved. Exiting...");
 				return Ok(());
 			}
 		}
