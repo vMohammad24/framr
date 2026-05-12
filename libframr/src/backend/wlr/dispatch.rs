@@ -14,7 +14,7 @@ use wayland_protocols_wlr::screencopy::v1::client::zwlr_screencopy_manager_v1::Z
 
 use crate::output::{FrameFormat, PixelFormat, Position, Size, Transform};
 
-pub struct RegistryState;
+pub(crate) struct RegistryState;
 
 impl Dispatch<WlRegistry, GlobalListContents> for RegistryState {
 	fn event(
@@ -30,19 +30,19 @@ impl Dispatch<WlRegistry, GlobalListContents> for RegistryState {
 
 wayland_client::delegate_noop!(OutputEnumState: ignore ZxdgOutputManagerV1);
 
-pub struct OutputEnumState {
-	pub outputs: Vec<PartialOutput>,
+pub(crate) struct OutputEnumState {
+	pub(crate) outputs: Vec<PartialOutput>,
 }
 
-pub struct PartialOutput {
-	pub wl_output: WlOutput,
-	pub name: String,
-	pub description: String,
-	pub physical_size: Size,
-	pub transform: WlTransform,
-	pub scale: i32,
-	pub logical_position: Position,
-	pub logical_size: Size,
+pub(crate) struct PartialOutput {
+	pub(crate) wl_output: WlOutput,
+	pub(crate) name: String,
+	pub(crate) description: String,
+	pub(crate) physical_size: Size,
+	pub(crate) transform: WlTransform,
+	pub(crate) scale: i32,
+	pub(crate) logical_position: Position,
+	pub(crate) logical_size: Size,
 }
 
 impl Default for OutputEnumState {
@@ -162,7 +162,7 @@ impl Dispatch<ZxdgOutputV1, usize> for OutputEnumState {
 	}
 }
 
-pub fn convert_transform(t: WlTransform) -> Transform {
+pub(crate) fn convert_transform(t: WlTransform) -> Transform {
 	match t {
 		WlTransform::Normal => Transform::Normal,
 		WlTransform::_90 => Transform::_90,
@@ -176,7 +176,7 @@ pub fn convert_transform(t: WlTransform) -> Transform {
 	}
 }
 
-pub fn convert_format(f: WlFormat) -> Option<PixelFormat> {
+pub(crate) fn convert_format(f: WlFormat) -> Option<PixelFormat> {
 	match f {
 		WlFormat::Argb8888 => Some(PixelFormat::Argb8888),
 		WlFormat::Xrgb8888 => Some(PixelFormat::Xrgb8888),
@@ -189,19 +189,19 @@ pub fn convert_format(f: WlFormat) -> Option<PixelFormat> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FrameState {
+pub(crate) enum FrameState {
 	Pending,
 	Finished,
 	Failed,
 }
 
-pub struct CaptureState {
-	pub formats: Vec<FrameFormat>,
-	pub buffer_done: bool,
-	pub frame_state: FrameState,
-	pub tv_sec_hi: u32,
-	pub tv_sec_lo: u32,
-	pub tv_nsec: u32,
+pub(crate) struct CaptureState {
+	pub(crate) formats: Vec<FrameFormat>,
+	pub(crate) buffer_done: bool,
+	pub(crate) frame_state: FrameState,
+	pub(crate) tv_sec_hi: u32,
+	pub(crate) tv_sec_lo: u32,
+	pub(crate) tv_nsec: u32,
 }
 
 impl Default for CaptureState {
@@ -285,10 +285,10 @@ impl Dispatch<ZwlrScreencopyFrameV1, ()> for CaptureState {
 	}
 }
 
-pub struct CaptureSlot {
-	pub formats: Vec<FrameFormat>,
-	pub buffer_done: bool,
-	pub frame_state: FrameState,
+pub(crate) struct CaptureSlot {
+	pub(crate) formats: Vec<FrameFormat>,
+	pub(crate) buffer_done: bool,
+	pub(crate) frame_state: FrameState,
 }
 
 impl CaptureSlot {
@@ -301,22 +301,22 @@ impl CaptureSlot {
 	}
 }
 
-pub struct MultiCaptureState {
-	pub slots: Vec<CaptureSlot>,
+pub(crate) struct MultiCaptureState {
+	pub(crate) slots: Vec<CaptureSlot>,
 }
 
 impl MultiCaptureState {
-	pub fn new(count: usize) -> Self {
+	pub(crate) fn new(count: usize) -> Self {
 		Self {
 			slots: (0..count).map(|_| CaptureSlot::new()).collect(),
 		}
 	}
 
-	pub fn all_buffer_done(&self) -> bool {
+	pub(crate) fn all_buffer_done(&self) -> bool {
 		self.slots.iter().all(|s| s.buffer_done)
 	}
 
-	pub fn all_finished(&self) -> bool {
+	pub(crate) fn all_finished(&self) -> bool {
 		self.slots
 			.iter()
 			.all(|s| s.frame_state != FrameState::Pending)

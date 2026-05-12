@@ -116,5 +116,5 @@ pub trait CaptureBackend: Send + Sync {
 	}
 }
 
-pub mod kde;
-pub mod wlr;
+pub(crate) mod kde;
+pub(crate) mod wlr;

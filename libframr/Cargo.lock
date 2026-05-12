@@ -46,9 +46,9 @@ checksum = "8f1fe948ff07f4bd06c30984e69f5b4899c516a3ef74f34df92a2df2ab535495"
 
 [[package]]
 name = "cc"
-version = "1.2.61"
+version = "1.2.62"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d16d90359e986641506914ba71350897565610e87ce0ad9e6f28569db3dd5c6d"
+checksum = "a1dce859f0832a7d088c4f1119888ab94ef4b5d6795d1ce05afb7fe159d79f98"
 dependencies = [
  "find-msvc-tools",
  "shlex",
@@ -295,9 +295,9 @@ dependencies = [
 
 [[package]]
 name = "gstreamer"
-version = "0.25.1"
+version = "0.25.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad8d6d77fae07708536f86a34ac15fc36c7e958ef7930b75119dba0242936f08"
+checksum = "28ca0c594cac4e86f5444aaa767c7bb810340c0710667a6467d3ead248e35e84"
 dependencies = [
  "cfg-if",
  "futures-channel",
@@ -320,9 +320,9 @@ dependencies = [
 
 [[package]]
 name = "gstreamer-app"
-version = "0.25.0"
+version = "0.25.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "714874829f75e805192ddc2bd130b9d7669ebc3ed0e8b106039dd3416cb82916"
+checksum = "97f8ae9238c2352398dcc084de28df3f7099af216ac6c160b52318d23f25c010"
 dependencies = [
  "futures-core",
  "futures-sink",
@@ -348,9 +348,9 @@ dependencies = [
 
 [[package]]
 name = "gstreamer-base"
-version = "0.25.0"
+version = "0.25.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c08353a8a382be9a49b15fb9c46b3abd6f8a6e6439e1eaedc87d08f1abdcfad1"
+checksum = "c279df2918be97fb9570e589a32ade33598f643b0c4f0c92c17f06be6940574e"
 dependencies = [
  "atomic_refcell",
  "cfg-if",
@@ -375,9 +375,9 @@ dependencies = [
 
 [[package]]
 name = "gstreamer-sys"
-version = "0.25.0"
+version = "0.25.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85d09343b4c23d64b3ef35f1f644598860cc9a4617e7ccded141de97cd528608"
+checksum = "533fa8d28fc830eafccbcfcfddb390563ea5d3a351af2c3aab99e197e5f5b1ba"
 dependencies = [
  "cfg-if",
  "glib-sys",
@@ -388,9 +388,9 @@ dependencies = [
 
 [[package]]
 name = "gstreamer-video"
-version = "0.25.0"
+version = "0.25.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "51809937ed7f6fa3974b2730a39623d59fd7415ede882d08d5ecef5de39d758d"
+checksum = "2bf728cb21499561ea0d6ce584e550bf2b98b279cc7741067ee42f41f98b486e"
 dependencies = [
  "cfg-if",
  "futures-channel",
@@ -404,9 +404,9 @@ dependencies = [
 
 [[package]]
 name = "gstreamer-video-sys"
-version = "0.25.0"
+version = "0.25.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "458f82631a5063057c10583a57ba0fbce689e67122cfdb5eddbeaa43eb812e75"
+checksum = "109c2c997a90a5806a8d7fcb416755e3047d6bab8f580d2ededc9ab7ad553caf"
 dependencies = [
  "glib-sys",
  "gobject-sys",
@@ -418,9 +418,9 @@ dependencies = [
 
 [[package]]
 name = "hashbrown"
-version = "0.17.0"
+version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4f467dd6dccf739c208452f8014c75c18bb8301b050ad1cfb27153803edb0f51"
+checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 
 [[package]]
 name = "heck"
@@ -486,7 +486,7 @@ dependencies = [
 
 [[package]]
 name = "libframr"
-version = "0.2.0"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
@@ -498,6 +498,8 @@ dependencies = [
  "image",
  "memmap2",
  "rustix",
+ "serde",
+ "thiserror",
  "wayland-client",
  "wayland-protocols",
  "wayland-protocols-wlr",
@@ -635,9 +637,9 @@ checksum = "e0c5ccf5294c6ccd63a74f1565028353830a9c2f5eb0c682c355c471726a6e3f"
 
 [[package]]
 name = "quick-xml"
-version = "0.39.3"
+version = "0.39.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "721da970c312655cde9b4ffe0547f20a8494866a4af5ff51f18b7c633d0c870b"
+checksum = "cdcc8dd4e2f670d309a5f0e83fe36dfdc05af317008fea29144da1a2ac858e5e"
 dependencies = [
  "memchr",
 ]
@@ -662,6 +664,16 @@ dependencies = [
  "libc",
  "linux-raw-sys",
  "windows-sys",
+]
+
+[[package]]
+name = "serde"
+version = "1.0.228"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9a8e94ea7f378bd32cbbd37198a4a91436180c5bb472411e48b5ec2e2124ae9e"
+dependencies = [
+ "serde_core",
+ "serde_derive",
 ]
 
 [[package]]
