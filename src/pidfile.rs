@@ -20,7 +20,7 @@ pub fn try_acquire_lock() -> Result<()> {
 		.read(true)
 		.write(true)
 		.create(true)
-		.truncate(true)
+		.truncate(false)
 		.open(&pid_path)
 		.with_context(|| format!("Failed to open PID file: {}", pid_path.display()))?;
 
