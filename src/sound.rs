@@ -84,7 +84,7 @@ pub fn play_sound(sound_path: &str) -> Result<()> {
 				pipeline.set_state(gst::State::Null)?;
 				anyhow::bail!(
 					"GStreamer error: {} ({})",
-					err.error().to_string(),
+					err.error(),
 					err.debug().map(|s| s.to_string()).unwrap_or_default()
 				);
 			}
