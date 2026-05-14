@@ -80,11 +80,7 @@ pub fn get_capture_path(
 
 	if let Some(i) = active_window {
 		let window = &windows[i];
-		let title = if cli.upload.is_some() {
-			&window.title.replace(" ", "_")
-		} else {
-			&window.title.replace("/", "_")
-		};
+		let title = &window.title.replace("/", "_");
 		filename = filename.replace("{window}", title);
 	}
 	let path = match &cli.output {
