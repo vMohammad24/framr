@@ -129,6 +129,9 @@ pub fn load_uploader_config() -> Result<AppConfig> {
 		if let Some(error_msg) = &mut u.error_message {
 			*error_msg = resolve_string(error_msg, &allowed_bases)?;
 		}
+		if let Some(deletion_url) = &mut u.deletion_url {
+			*deletion_url = resolve_string(deletion_url, &allowed_bases)?;
+		}
 
 		for vec in [&mut u.parameters, &mut u.headers, &mut u.arguments] {
 			for (_, val) in vec {

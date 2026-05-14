@@ -155,10 +155,22 @@ pub struct UploadConfig {
 	pub output_url: String,
 	#[serde(alias = "ErrorMessage")]
 	pub error_message: Option<String>,
+	#[serde(alias = "DeletionURL", alias = "deletionURL", default)]
+	pub deletion_url: Option<String>,
+	#[serde(
+		alias = "DeleteRequestType",
+		alias = "deleteRequestType",
+		default = "default_delete_method"
+	)]
+	pub deletion_request_type: String,
 }
 
 fn default_method() -> String {
 	"POST".to_string()
+}
+
+fn default_delete_method() -> String {
+	"DELETE".to_string()
 }
 
 fn deserialize_kv<'de, D>(deserializer: D) -> Result<Vec<(String, String)>, D::Error>

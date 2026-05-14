@@ -251,6 +251,7 @@ pub fn create_uploader_interactive(cfg: &mut AppConfig) -> Result<()> {
 	let output_url: String =
 		super::prompt_input("Output URL parse schema", Some("{json:url}".into()))?;
 	let error_message = super::prompt_optional_input("Error message schema", None)?;
+	let deletion_url = super::prompt_optional_input("Deletion URL", None)?;
 
 	let uploader = UploadConfig {
 		name,
@@ -263,6 +264,8 @@ pub fn create_uploader_interactive(cfg: &mut AppConfig) -> Result<()> {
 		file_form_name,
 		output_url,
 		error_message,
+		deletion_url,
+		deletion_request_type: String::new(),
 	};
 
 	println!(
