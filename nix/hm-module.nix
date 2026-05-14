@@ -33,7 +33,7 @@ in {
         }
       '';
       description = ''
-        Configuration written to {file}`$XDG_CONFIG_HOME/framr/default-config.toml`.
+        Generates config overrides for framr.
         See the project's documentation for more information on the available options.
       '';
     };
