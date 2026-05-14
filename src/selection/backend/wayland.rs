@@ -271,14 +271,16 @@ impl AppState {
 				}
 			}
 
-			Self::draw_toolbar(
-				&cr,
-				width as f64,
-				state.active_tool,
-				state.current,
-				surface_data.output.logical_position,
-				&state.config,
-			);
+			if state.config.show_toolbar {
+				Self::draw_toolbar(
+					&cr,
+					width as f64,
+					state.active_tool,
+					state.current,
+					surface_data.output.logical_position,
+					&state.config,
+				);
+			}
 		}
 
 		cairo_surface.flush();
