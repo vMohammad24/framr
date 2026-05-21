@@ -67,7 +67,7 @@ fn get_system_secret_dirs() -> Vec<PathBuf> {
 	if let Ok(xdg_runtime) = std::env::var("XDG_RUNTIME_DIR") {
 		allowed.push(PathBuf::from(xdg_runtime));
 	}
-	allowed.push(PathBuf::from("/run/secrets"));
+	allowed.push(PathBuf::from("/run"));
 	allowed.push(PathBuf::from("/var/run/secrets"));
 
 	allowed
