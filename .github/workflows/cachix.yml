@@ -12,12 +12,22 @@ jobs:
         os: [ubuntu-latest, ubuntu-24.04-arm]
     steps:
       - uses: actions/checkout@v6
+
       - uses: cachix/install-nix-action@v31
+
+      - name: Cache Nix Evaluation
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/nix
+          key: nix-eval-${{ hashFiles('flake.lock') }}
+
       - uses: cachix/cachix-action@v17
         with:
           name: framr
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+
       - name: Build Flake
-        run: nix build -L
+        run: cachix watch-exec framr -- nix build -L
+
       - name: Run Test Shell
-        run: nix develop --command echo OK
+        run: cachix watch-exec framr -- nix develop --command echo OK
