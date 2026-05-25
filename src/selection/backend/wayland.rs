@@ -105,7 +105,10 @@ impl AppState {
 			}
 
 			for (idx, ann) in state.annotations.iter().enumerate() {
-				if ann.tool == Tool::Blur || ann.tool == Tool::Pixelate {
+				if ann.tool == Tool::Blur
+					|| ann.tool == Tool::Pixelate
+					|| ann.tool == Tool::Highlight
+				{
 					if ann.points.len() >= 2 {
 						let offset_x = surface_data.output.logical_position.x as f64;
 						let offset_y = surface_data.output.logical_position.y as f64;
@@ -126,7 +129,7 @@ impl AppState {
 								{
 									eprintln!("failed to set blurred source surface: {}", e);
 								}
-							} else {
+							} else if ann.tool == Tool::Pixelate {
 								if let Err(e) = cr.set_source_surface(
 									&surface_data.cached_pixelated_bg,
 									0.0,
@@ -134,6 +137,8 @@ impl AppState {
 								) {
 									eprintln!("failed to set pixelated source surface: {}", e);
 								}
+							} else {
+								graphics::set_source_color(&cr, state.config.highlight_color);
 							}
 							cr.rectangle(x, y, w, h);
 							if let Err(e) = cr.fill() {

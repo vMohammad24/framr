@@ -11,6 +11,7 @@ pub enum Tool {
 	Checkmark,
 	Blur,
 	Pixelate,
+	Highlight,
 	Text,
 	Annotate,
 }
@@ -24,6 +25,7 @@ impl Tool {
 			(Tool::Checkmark, "", "Checkmark"),
 			(Tool::Blur, "󰂵", "Blur Area"),
 			(Tool::Pixelate, "󰋁", "Pixelate Area"),
+			(Tool::Highlight, "󰸱", "Highlight Area"),
 			(Tool::Text, "󰊄", "Add Text"),
 			(Tool::Annotate, "󰏫", "Free Draw"),
 		]
@@ -37,8 +39,9 @@ impl Tool {
 			3 => Tool::Checkmark,
 			4 => Tool::Blur,
 			5 => Tool::Pixelate,
-			6 => Tool::Text,
-			7 => Tool::Annotate,
+			6 => Tool::Highlight,
+			7 => Tool::Text,
+			8 => Tool::Annotate,
 			_ => Tool::Select,
 		}
 	}
@@ -51,8 +54,9 @@ impl Tool {
 			Tool::Checkmark => vec![Keysym::_4, Keysym::k, Keysym::K],
 			Tool::Blur => vec![Keysym::_5, Keysym::b, Keysym::B],
 			Tool::Pixelate => vec![Keysym::_6, Keysym::p, Keysym::P],
-			Tool::Text => vec![Keysym::_7, Keysym::t, Keysym::T],
-			Tool::Annotate => vec![Keysym::_8, Keysym::d, Keysym::D],
+			Tool::Highlight => vec![Keysym::_7, Keysym::h, Keysym::H],
+			Tool::Text => vec![Keysym::_8, Keysym::t, Keysym::T],
+			Tool::Annotate => vec![Keysym::_9, Keysym::d, Keysym::D],
 		}
 	}
 }

@@ -3,7 +3,7 @@ use image::{Rgba, RgbaImage};
 use libframr::OutputInfo;
 use pangocairo::functions::{create_layout, show_layout};
 
-use crate::config::SelectionConfig;
+use crate::config::{Color, SelectionConfig};
 use crate::selection::state::{Annotation, Tool};
 
 pub fn apply_annotations(
@@ -13,7 +13,9 @@ pub fn apply_annotations(
 	config: &SelectionConfig,
 ) {
 	for ann in annotations {
-		if (ann.tool == Tool::Blur || ann.tool == Tool::Pixelate) && ann.points.len() >= 2 {
+		if (ann.tool == Tool::Blur || ann.tool == Tool::Pixelate || ann.tool == Tool::Highlight)
+			&& ann.points.len() >= 2
+		{
 			let (x1, y1) = (
 				ann.points[0].0 - output.logical_position.x as f64,
 				ann.points[0].1 - output.logical_position.y as f64,
@@ -29,8 +31,10 @@ pub fn apply_annotations(
 			if bw > 0 && bh > 0 {
 				if ann.tool == Tool::Blur {
 					apply_blur(img, bx, by, bw, bh, config.blur_radius);
-				} else {
+				} else if ann.tool == Tool::Pixelate {
 					apply_pixelate(img, bx, by, bw, bh, config.pixelate_block_size);
+				} else {
+					apply_highlight(img, bx, by, bw, bh, config.highlight_color);
 				}
 			}
 		}
@@ -65,7 +69,7 @@ pub fn apply_annotations(
 			eprintln!("failed to paint: {}", e);
 		}
 		for ann in annotations {
-			if ann.tool != Tool::Blur && ann.tool != Tool::Pixelate {
+			if ann.tool != Tool::Blur && ann.tool != Tool::Pixelate && ann.tool != Tool::Highlight {
 				draw_annotation(&cr, ann, output, config);
 			}
 		}
@@ -145,6 +149,25 @@ pub fn apply_pixelate(img: &mut RgbaImage, x: u32, y: u32, w: u32, h: u32, block
 	}
 }
 
+pub fn apply_highlight(img: &mut RgbaImage, x: u32, y: u32, w: u32, h: u32, color: Color) {
+	let alpha = color.a as u16;
+	let a_inv = 255 - alpha;
+
+	let r_blend = color.r as u16 * alpha;
+	let g_blend = color.g as u16 * alpha;
+	let b_blend = color.b as u16 * alpha;
+
+	for py in y..y + h {
+		for px in x..x + w {
+			let pixel = img.get_pixel_mut(px, py);
+
+			pixel[0] = ((r_blend + pixel[0] as u16 * a_inv) / 255) as u8;
+			pixel[1] = ((g_blend + pixel[1] as u16 * a_inv) / 255) as u8;
+			pixel[2] = ((b_blend + pixel[2] as u16 * a_inv) / 255) as u8;
+		}
+	}
+}
+
 pub fn get_text_size(text: &str) -> (f64, f64) {
 	let surface = ImageSurface::create(Format::ARgb32, 1, 1).expect("failed to create surface");
 	let cr = Context::new(&surface).expect("failed to create context");
@@ -209,7 +232,7 @@ pub fn hit_test(ann: &Annotation, point: (f64, f64), threshold: f64) -> bool {
 				false
 			}
 		}
-		Tool::Blur | Tool::Pixelate => {
+		Tool::Blur | Tool::Pixelate | Tool::Highlight => {
 			if ann.points.len() >= 2 {
 				let (x1, y1) = ann.points[0];
 				let (x2, y2) = ann.points[1];
