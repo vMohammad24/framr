@@ -306,12 +306,7 @@ pub struct Color {
 
 impl Color {
 	pub fn rgb(r: f64, g: f64, b: f64) -> Self {
-		Self {
-			r: (r.clamp(0.0, 1.0) * u8::MAX as f64).round() as u8,
-			g: (g.clamp(0.0, 1.0) * u8::MAX as f64).round() as u8,
-			b: (b.clamp(0.0, 1.0) * u8::MAX as f64).round() as u8,
-			a: u8::MAX,
-		}
+		Self::rgba(r, g, b, 1.0)
 	}
 
 	pub fn rgba(r: f64, g: f64, b: f64, a: f64) -> Self {
@@ -323,21 +318,14 @@ impl Color {
 		}
 	}
 
-	pub fn r_f64(&self) -> f64 {
-		self.r as f64 / u8::MAX as f64
-	}
-	pub fn g_f64(&self) -> f64 {
-		self.g as f64 / u8::MAX as f64
-	}
-	pub fn b_f64(&self) -> f64 {
-		self.b as f64 / u8::MAX as f64
-	}
-	pub fn a_f64(&self) -> f64 {
-		self.a as f64 / u8::MAX as f64
+	fn from_parsed(color: csscolorparser::Color) -> Self {
+		let [r, g, b, a] = color.to_rgba8();
+		Self { r, g, b, a }
 	}
 
 	pub fn components(&self) -> (f64, f64, f64, f64) {
-		(self.r_f64(), self.g_f64(), self.b_f64(), self.a_f64())
+		let [r, g, b, a] = [self.r, self.g, self.b, self.a].map(|v| v as f64 / 255.0);
+		(r, g, b, a)
 	}
 }
 
@@ -370,13 +358,9 @@ impl<'de> Deserialize<'de> for Color {
 		D: Deserializer<'de>,
 	{
 		let s = String::deserialize(deserializer)?;
-		let rgba = csscolorparser::parse(&s).map_err(|e| D::Error::custom(e.to_string()))?;
-		Ok(Self {
-			r: (rgba.r * 255.0).round() as u8,
-			g: (rgba.g * 255.0).round() as u8,
-			b: (rgba.b * 255.0).round() as u8,
-			a: (rgba.a * 255.0).round() as u8,
-		})
+		csscolorparser::parse(&s)
+			.map(Self::from_parsed)
+			.map_err(|e| D::Error::custom(e.to_string()))
 	}
 }
 
@@ -384,12 +368,8 @@ impl FromStr for Color {
 	type Err = String;
 
 	fn from_str(s: &str) -> Result<Self, Self::Err> {
-		let rgba = csscolorparser::parse(s).map_err(|e| e.to_string())?;
-		Ok(Self {
-			r: (rgba.r * 255.0).round() as u8,
-			g: (rgba.g * 255.0).round() as u8,
-			b: (rgba.b * 255.0).round() as u8,
-			a: (rgba.a * 255.0).round() as u8,
-		})
+		csscolorparser::parse(s)
+			.map(Self::from_parsed)
+			.map_err(|e| e.to_string())
 	}
 }

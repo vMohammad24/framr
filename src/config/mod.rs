@@ -75,20 +75,10 @@ pub fn prompt_confirm(prompt: &str, default: bool) -> Result<bool> {
 }
 
 pub fn prompt_color(prompt: &str, current: Color) -> Result<Color> {
-	let theme = ColorfulTheme::default();
-	let input: String = Input::with_theme(&theme)
+	Ok(Input::<Color>::new()
 		.with_prompt(prompt)
-		.default(current.to_string())
-		.validate_with(|input: &String| -> Result<(), String> {
-			use std::str::FromStr;
-			Color::from_str(input)
-				.map(|_| ())
-				.map_err(|e| e.to_string())
-		})
-		.interact_text()?;
-
-	use std::str::FromStr;
-	Ok(Color::from_str(&input).unwrap())
+		.default(current)
+		.interact_text()?)
 }
 
 pub fn import_uploader(source: &str) -> Result<()> {
@@ -162,14 +152,7 @@ pub fn list_uploaders() -> Result<()> {
 		);
 	}
 
-	if let Some(method) = cfg.default_capture {
-		let label = if method == DefaultCaptureMethod::Screen
-			&& let Some(screen) = cfg.default_screen
-		{
-			format!("{} (screen {})", method.label(), screen)
-		} else {
-			method.label().to_string()
-		};
+	if let Some(label) = format_capture_label(&cfg) {
 		println!(
 			"  {} {}",
 			style("Default Method:").bold(),
@@ -183,39 +166,7 @@ pub fn list_uploaders() -> Result<()> {
 		style(&cfg.upload_sound).yellow().bold()
 	);
 
-	println!();
-	println!("{}", style("Recording Settings:").cyan().bold());
-	println!(
-		"  {} {}",
-		style("Bitrate:").bold(),
-		style(cfg.recording.bitrate).yellow()
-	);
-	println!(
-		"  {} {}",
-		style("Keyframe Interval:").bold(),
-		style(cfg.recording.keyframe_interval).yellow()
-	);
-	println!(
-		"  {} {}",
-		style("Threads:").bold(),
-		style(
-			cfg.recording
-				.threads
-				.map(|t| t.to_string())
-				.unwrap_or_else(|| "Auto".to_string())
-		)
-		.yellow()
-	);
-	println!(
-		"  {} {}",
-		style("H.264 Tune:").bold(),
-		style(cfg.recording.tune.as_str()).yellow()
-	);
-	println!(
-		"  {} {}",
-		style("H.264 Speed Preset:").bold(),
-		style(cfg.recording.speed_preset.as_str()).yellow()
-	);
+	display_recording_settings(&cfg);
 
 	println!(
 		"\n  {} {}",
@@ -615,64 +566,17 @@ pub fn run_config_wizard() -> Result<()> {
 				.unwrap_or_else(|| style("(none)").dim().to_string())
 		);
 
-		let capture_label = cfg
-			.default_capture
-			.map(|m| {
-				if m == DefaultCaptureMethod::Screen
-					&& let Some(screen) = cfg.default_screen
-				{
-					format!("{} (screen {})", m.label(), screen)
-				} else {
-					m.label().to_string()
-				}
-			})
+		let method_label = format_capture_label(&cfg)
+			.map(|l| style(l).yellow().bold().to_string())
 			.unwrap_or_else(|| style("(none)").dim().to_string());
-		println!(
-			"  {} {}\n",
-			style("Default Method:").bold(),
-			cfg.default_capture
-				.map(|_| style(&capture_label).yellow().bold().to_string())
-				.unwrap_or_else(|| style("(none)").dim().to_string())
-		);
+		println!("  {} {}\n", style("Default Method:").bold(), method_label);
 		println!(
 			"  {} {}\n",
 			style("Default Sound:").bold(),
 			style(&cfg.upload_sound).yellow().bold()
 		);
 
-		println!();
-		println!("{}", style("Recording Settings:").cyan().bold());
-		println!(
-			"  {} {}",
-			style("Bitrate:").bold(),
-			style(cfg.recording.bitrate).yellow()
-		);
-		println!(
-			"  {} {}",
-			style("Keyframe Interval:").bold(),
-			style(cfg.recording.keyframe_interval).yellow()
-		);
-		println!(
-			"  {} {}",
-			style("Threads:").bold(),
-			style(
-				cfg.recording
-					.threads
-					.map(|t| t.to_string())
-					.unwrap_or_else(|| "Auto".to_string())
-			)
-			.yellow()
-		);
-		println!(
-			"  {} {}",
-			style("H.264 Tune:").bold(),
-			style(cfg.recording.tune.as_str()).yellow()
-		);
-		println!(
-			"  {} {}",
-			style("H.264 Speed Preset:").bold(),
-			style(cfg.recording.speed_preset.as_str()).yellow()
-		);
+		display_recording_settings(&cfg);
 		println!();
 
 		let selection = prompt_select(
@@ -866,121 +770,65 @@ pub fn run_config_wizard() -> Result<()> {
 	}
 }
 
+fn setting_entry(label: &str, value: impl std::fmt::Display) -> String {
+	format!("{:<25} {}", style(label).bold(), style(value).yellow())
+}
+
+macro_rules! settings_menu {
+	($s:ident, [
+		$($field:ident : $label:expr => $kind:ident),* $(,)?
+	]) => {{
+		let items = [
+			$(settings_menu!(@item $s, $field, $label, $kind)),*,
+			style("Back").dim().to_string(),
+		];
+		let sel = prompt_select("Edit Setting", &items, items.len() - 1)?;
+		let mut idx = 0;
+		$(
+			if sel == idx {
+				settings_menu!(@edit $s, $field, $label, $kind);
+			}
+			idx += 1;
+		)*
+		sel < idx
+	}};
+	(@item $s:ident, $field:ident, $label:expr, color) => {
+		format!("{:<25} {}", style($label).bold(), style_color($s.$field))
+	};
+	(@item $s:ident, $field:ident, $label:expr, num) => {
+		setting_entry($label, $s.$field)
+	};
+	(@edit $s:ident, $field:ident, $label:expr, color) => {
+		$s.$field = prompt_color($label, $s.$field)?
+	};
+	(@edit $s:ident, $field:ident, $label:expr, num) => {
+		$s.$field = prompt_input($label, Some($s.$field))?
+	};
+}
+
 pub fn modify_selection_config(cfg: &mut AppConfig) -> Result<()> {
 	loop {
 		println!("\n{}", style("Selection UI Settings").cyan().bold());
 		println!("{}", style("━━━━━━━━━━━━━━━━━━━━━━━━━━━").dim());
 
 		let s = &mut cfg.selection;
-		let items = [
-			format!(
-				"{:<25} {}",
-				style("Background Color").bold(),
-				style_color(s.background_color)
-			),
-			format!(
-				"{:<25} {}",
-				style("Border Color").bold(),
-				style_color(s.border_color)
-			),
-			format!(
-				"{:<25} {}",
-				style("Border Width").bold(),
-				style(s.border_width).yellow()
-			),
-			format!(
-				"{:<25} {}",
-				style("Toolbar BG").bold(),
-				style_color(s.toolbar_background_color)
-			),
-			format!(
-				"{:<25} {}",
-				style("Toolbar Active").bold(),
-				style_color(s.toolbar_active_color)
-			),
-			format!(
-				"{:<25} {}",
-				style("Toolbar Hover").bold(),
-				style_color(s.toolbar_hover_color)
-			),
-			format!(
-				"{:<25} {}",
-				style("Highlight Color").bold(),
-				style_color(s.highlight_color)
-			),
-			format!(
-				"{:<25} {}",
-				style("Annotation Color").bold(),
-				style_color(s.annotation_color)
-			),
-			format!(
-				"{:<25} {}",
-				style("Annotation Width").bold(),
-				style(s.annotation_line_width).yellow()
-			),
-			format!(
-				"{:<25} {}",
-				style("Blur Radius").bold(),
-				style(s.blur_radius).yellow()
-			),
-			format!(
-				"{:<25} {}",
-				style("Pixelate Block Size").bold(),
-				style(s.pixelate_block_size).yellow()
-			),
-			format!(
-				"{:<25} {}",
-				style("Toolbar Y").bold(),
-				style(s.toolbar_y).yellow()
-			),
-			format!(
-				"{:<25} {}",
-				style("Toolbar Item Width").bold(),
-				style(s.toolbar_item_width).yellow()
-			),
-			format!(
-				"{:<25} {}",
-				style("Toolbar Height").bold(),
-				style(s.toolbar_height).yellow()
-			),
-			style("Back").dim().to_string(),
-		];
-
-		let sel = prompt_select("Edit Setting", &items, items.len() - 1)?;
-
-		match sel {
-			0 => s.background_color = prompt_color("Background Color", s.background_color)?,
-			1 => s.border_color = prompt_color("Border Color", s.border_color)?,
-			2 => s.border_width = prompt_input("Border Width", Some(s.border_width))?,
-			3 => {
-				s.toolbar_background_color =
-					prompt_color("Toolbar Background Color", s.toolbar_background_color)?
-			}
-			4 => {
-				s.toolbar_active_color =
-					prompt_color("Toolbar Active Color", s.toolbar_active_color)?
-			}
-			5 => {
-				s.toolbar_hover_color = prompt_color("Toolbar Hover Color", s.toolbar_hover_color)?
-			}
-			6 => s.highlight_color = prompt_color("Highlight Color", s.highlight_color)?,
-			7 => s.annotation_color = prompt_color("Annotation Color", s.annotation_color)?,
-			8 => {
-				s.annotation_line_width =
-					prompt_input("Annotation Line Width", Some(s.annotation_line_width))?
-			}
-			9 => s.blur_radius = prompt_input("Blur Radius", Some(s.blur_radius))?,
-			10 => {
-				s.pixelate_block_size =
-					prompt_input("Pixelate Block Size", Some(s.pixelate_block_size))?
-			}
-			11 => s.toolbar_y = prompt_input("Toolbar Y", Some(s.toolbar_y))?,
-			12 => {
-				s.toolbar_item_width =
-					prompt_input("Toolbar Item Width", Some(s.toolbar_item_width))?
-			}
-			13 => s.toolbar_height = prompt_input("Toolbar Height", Some(s.toolbar_height))?,
-			_ => break,
+		if !settings_menu!(s, [
+			background_color: "Background Color" => color,
+			border_color: "Border Color" => color,
+			border_width: "Border Width" => num,
+			toolbar_background_color: "Toolbar BG" => color,
+			toolbar_active_color: "Toolbar Active" => color,
+			toolbar_hover_color: "Toolbar Hover" => color,
+			highlight_color: "Highlight Color" => color,
+			annotation_color: "Annotation Color" => color,
+			annotation_line_width: "Annotation Width" => num,
+			blur_radius: "Blur Radius" => num,
+			pixelate_block_size: "Pixelate Block Size" => num,
+			toolbar_y: "Toolbar Y" => num,
+			toolbar_item_width: "Toolbar Item Width" => num,
+			toolbar_height: "Toolbar Height" => num,
+		]) {
+			break;
 		}
 	}
 	Ok(())
@@ -1022,36 +870,16 @@ pub fn modify_recording_config(cfg: &mut AppConfig) -> Result<()> {
 
 		let r = &mut cfg.recording;
 		let items = [
-			format!(
-				"{:<25} {}",
-				style("Bitrate (kbps)").bold(),
-				style(r.bitrate).yellow()
+			setting_entry("Bitrate (kbps)", r.bitrate),
+			setting_entry("Keyframe Interval", r.keyframe_interval),
+			setting_entry(
+				"Threads",
+				r.threads
+					.map(|t| t.to_string())
+					.unwrap_or_else(|| "Auto".to_string()),
 			),
-			format!(
-				"{:<25} {}",
-				style("Keyframe Interval").bold(),
-				style(r.keyframe_interval).yellow()
-			),
-			format!(
-				"{:<25} {}",
-				style("Threads").bold(),
-				style(
-					r.threads
-						.map(|t| t.to_string())
-						.unwrap_or_else(|| "Auto".to_string())
-				)
-				.yellow()
-			),
-			format!(
-				"{:<25} {}",
-				style("H.264 Tune").bold(),
-				style(r.tune.as_str()).yellow()
-			),
-			format!(
-				"{:<25} {}",
-				style("H.264 Speed Preset").bold(),
-				style(r.speed_preset.as_str()).yellow()
-			),
+			setting_entry("H.264 Tune", r.tune.as_str()),
+			setting_entry("H.264 Speed Preset", r.speed_preset.as_str()),
 			style("Back").dim().to_string(),
 		];
 

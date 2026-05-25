@@ -1,5 +1,5 @@
 use crate::config::core::load_overrides;
-use crate::config::types::{AppConfig, BodyType, ConfigEnum, UploadConfig};
+use crate::config::types::{AppConfig, BodyType, ConfigEnum, DefaultCaptureMethod, UploadConfig};
 use anyhow::Result;
 use console::style;
 
@@ -16,6 +16,14 @@ pub fn print_success(text: &str) {
 
 pub fn print_error(text: &str) {
 	println!("{} {}", style("✖").red().bold(), style(text).red());
+}
+
+fn detail(label: &str, value: impl std::fmt::Display) {
+	println!("  {:<18} {}", style(label).bold(), value);
+}
+
+fn print_setting(label: &str, value: impl std::fmt::Display) {
+	println!("  {} {}", style(label).bold(), style(value).yellow());
 }
 
 pub fn uploader_list_entry(index: usize, uploader: &UploadConfig, is_default: bool) -> String {
@@ -35,51 +43,27 @@ pub fn uploader_list_entry(index: usize, uploader: &UploadConfig, is_default: bo
 }
 
 pub fn display_uploader_details(uploader: &UploadConfig) {
-	println!(
-		"  {:<18} {}",
-		style("Name:").bold(),
-		style(&uploader.name).green().bold()
+	detail("Name:", style(&uploader.name).green().bold());
+	detail(
+		"Request Method:",
+		style(&uploader.request_method).magenta().bold(),
 	);
-	println!(
-		"  {:<18} {}",
-		style("Request Method:").bold(),
-		style(&uploader.request_method).magenta().bold()
-	);
-	println!(
-		"  {:<18} {}",
-		style("Request URL:").bold(),
-		style(&uploader.request_url).blue()
-	);
-	println!(
-		"  {:<18} {}",
-		style("Body Type:").bold(),
-		style(uploader.body_type.label()).magenta()
-	);
+	detail("Request URL:", style(&uploader.request_url).blue());
+	detail("Body Type:", style(uploader.body_type.label()).magenta());
 
 	if let Some(ref form_name) = uploader.file_form_name {
-		println!(
-			"  {:<18} {}",
-			style("File Form Name:").bold(),
-			style(form_name).cyan()
-		);
+		detail("File Form Name:", style(form_name).cyan());
 	}
 
 	display_kv_pairs("Headers", &uploader.headers);
 	display_kv_pairs("URL Parameters", &uploader.parameters);
 	display_kv_pairs("Body Arguments", &uploader.arguments);
 
-	println!(
-		"\n  {:<18} {}",
-		style("Output URL:").bold(),
-		style(&uploader.output_url).green()
-	);
+	println!();
+	detail("Output URL:", style(&uploader.output_url).green());
 
 	if let Some(ref err_msg) = uploader.error_message {
-		println!(
-			"  {:<18} {}",
-			style("Error Message:").bold(),
-			style(err_msg).red()
-		);
+		detail("Error Message:", style(err_msg).red());
 	}
 	println!();
 }
@@ -326,4 +310,29 @@ pub fn modify_uploader_at(cfg: &mut AppConfig, idx: usize) -> Result<()> {
 		super::prompt_optional_input("Error message schema", uploader.error_message.as_deref())?;
 
 	Ok(())
+}
+
+pub fn format_capture_label(cfg: &AppConfig) -> Option<String> {
+	cfg.default_capture.map(|m| match (m, cfg.default_screen) {
+		(DefaultCaptureMethod::Screen, Some(screen)) => {
+			format!("{} (screen {})", m.label(), screen)
+		}
+		_ => m.label().to_string(),
+	})
+}
+
+pub fn display_recording_settings(cfg: &AppConfig) {
+	println!();
+	println!("{}", style("Recording Settings:").cyan().bold());
+	print_setting("Bitrate:", cfg.recording.bitrate);
+	print_setting("Keyframe Interval:", cfg.recording.keyframe_interval);
+	print_setting(
+		"Threads:",
+		cfg.recording
+			.threads
+			.map(|t| t.to_string())
+			.unwrap_or_else(|| "Auto".to_string()),
+	);
+	print_setting("H.264 Tune:", cfg.recording.tune.as_str());
+	print_setting("H.264 Speed Preset:", cfg.recording.speed_preset.as_str());
 }

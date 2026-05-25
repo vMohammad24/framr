@@ -123,14 +123,15 @@ pub fn load_uploader_config() -> Result<AppConfig> {
 		u.request_url = resolve_string(&u.request_url, &allowed_bases)?;
 		u.output_url = resolve_string(&u.output_url, &allowed_bases)?;
 
-		if let Some(form_name) = &mut u.file_form_name {
-			*form_name = resolve_string(form_name, &allowed_bases)?;
-		}
-		if let Some(error_msg) = &mut u.error_message {
-			*error_msg = resolve_string(error_msg, &allowed_bases)?;
-		}
-		if let Some(deletion_url) = &mut u.deletion_url {
-			*deletion_url = resolve_string(deletion_url, &allowed_bases)?;
+		for field in [
+			&mut u.file_form_name,
+			&mut u.error_message,
+			&mut u.deletion_url,
+		]
+		.into_iter()
+		.flatten()
+		{
+			*field = resolve_string(&*field, &allowed_bases)?;
 		}
 
 		for vec in [&mut u.parameters, &mut u.headers, &mut u.arguments] {
