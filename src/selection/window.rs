@@ -24,31 +24,29 @@ pub fn get_windows() -> Result<Vec<Window>> {
 }
 
 pub fn get_window_at_pos(pos: (f64, f64), windows: &[Window]) -> Option<usize> {
-	for (idx, win) in windows.iter().enumerate() {
+	windows.iter().position(|win| {
 		let left = win.x as f64;
-		let right = win.x as f64 + win.width as f64;
+		let right = left + win.width as f64;
 		let top = win.y as f64;
-		let bottom = win.y as f64 + win.height as f64;
+		let bottom = top + win.height as f64;
 
-		if pos.0 >= left && pos.0 <= right && pos.1 >= top && pos.1 <= bottom {
-			return Some(idx);
-		}
-	}
-	None
+		pos.0 >= left && pos.0 <= right && pos.1 >= top && pos.1 <= bottom
+	})
 }
 
 pub fn get_hypr_windows() -> Result<Vec<Window>> {
 	let monitors = Monitors::get()?;
-
-	let active_workspaces: Vec<i32> = monitors.iter().map(|m| m.active_workspace.id).collect();
-
 	let clients = Clients::get()?;
 
 	let windows = clients
-		.iter()
-		.filter(|c| active_workspaces.contains(&c.workspace.id))
+		.into_iter()
+		.filter(|c| {
+			monitors
+				.iter()
+				.any(|m| m.active_workspace.id == c.workspace.id)
+		})
 		.map(|c| Window {
-			title: c.title.clone(),
+			title: c.title,
 			x: c.at.0,
 			y: c.at.1,
 			width: c.size.0,
