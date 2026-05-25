@@ -905,6 +905,11 @@ pub fn modify_selection_config(cfg: &mut AppConfig) -> Result<()> {
 			),
 			format!(
 				"{:<25} {}",
+				style("Highlight Color").bold(),
+				style_color(s.highlight_color)
+			),
+			format!(
+				"{:<25} {}",
 				style("Annotation Color").bold(),
 				style_color(s.annotation_color)
 			),
@@ -958,22 +963,23 @@ pub fn modify_selection_config(cfg: &mut AppConfig) -> Result<()> {
 			5 => {
 				s.toolbar_hover_color = prompt_color("Toolbar Hover Color", s.toolbar_hover_color)?
 			}
-			6 => s.annotation_color = prompt_color("Annotation Color", s.annotation_color)?,
-			7 => {
+			6 => s.highlight_color = prompt_color("Highlight Color", s.highlight_color)?,
+			7 => s.annotation_color = prompt_color("Annotation Color", s.annotation_color)?,
+			8 => {
 				s.annotation_line_width =
 					prompt_input("Annotation Line Width", Some(s.annotation_line_width))?
 			}
-			8 => s.blur_radius = prompt_input("Blur Radius", Some(s.blur_radius))?,
-			9 => {
+			9 => s.blur_radius = prompt_input("Blur Radius", Some(s.blur_radius))?,
+			10 => {
 				s.pixelate_block_size =
 					prompt_input("Pixelate Block Size", Some(s.pixelate_block_size))?
 			}
-			10 => s.toolbar_y = prompt_input("Toolbar Y", Some(s.toolbar_y))?,
-			11 => {
+			11 => s.toolbar_y = prompt_input("Toolbar Y", Some(s.toolbar_y))?,
+			12 => {
 				s.toolbar_item_width =
 					prompt_input("Toolbar Item Width", Some(s.toolbar_item_width))?
 			}
-			12 => s.toolbar_height = prompt_input("Toolbar Height", Some(s.toolbar_height))?,
+			13 => s.toolbar_height = prompt_input("Toolbar Height", Some(s.toolbar_height))?,
 			_ => break,
 		}
 	}
