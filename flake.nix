@@ -23,17 +23,14 @@
         pkgs = import nixpkgs {inherit system;};
         craneLib = crane.mkLib pkgs;
 
+        cargoSrc = pkgs.lib.cleanSourceWith {
+          src = ./.;
+          filter = craneLib.filterCargoSources;
+          name = "framr-cargo-source";
+        };
+
         commonArgs = {
-          src = let
-            cargoFilter = craneLib.filterCargoSources;
-            assetsFilter = path: type:
-              (builtins.match ".*/assets/.*" path != null) || (cargoFilter path type);
-          in
-            pkgs.lib.cleanSourceWith {
-              src = ./.;
-              filter = assetsFilter;
-              name = "framr-source";
-            };
+          src = cargoSrc;
           strictDeps = true;
 
           buildInputs = with pkgs; [
@@ -63,6 +60,14 @@
         framr = craneLib.buildPackage (commonArgs
           // {
             inherit cargoArtifacts;
+
+            src = pkgs.lib.cleanSourceWith {
+              src = ./.;
+              filter = path: type:
+                (builtins.match ".*/assets/.*" path != null) || (craneLib.filterCargoSources path type);
+              name = "framr-full-source";
+            };
+
             postInstall = ''
               ls -lha assets
               install -Dm644 assets/framr-handler.desktop -t $out/share/applications
