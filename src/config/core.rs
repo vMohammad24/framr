@@ -41,6 +41,9 @@ fn merge_configs(base: &mut AppConfig, over: AppConfig) {
 		base.default_screen = Some(screen);
 	}
 
+	base.selection = over.selection;
+	base.recording = over.recording;
+
 	for dir in over.allowed_directories {
 		if !base.allowed_directories.contains(&dir) {
 			base.allowed_directories.push(dir);
