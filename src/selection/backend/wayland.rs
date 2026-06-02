@@ -48,6 +48,7 @@ pub struct SurfaceData {
 	pub wl_surface: WlSurface,
 	pub dimensions: (u32, u32),
 	pub slot: Option<Buffer>,
+	pub waiting_for_frame: bool,
 }
 
 pub struct AppState {
@@ -75,7 +76,7 @@ impl AppState {
 		&mut self,
 		surface_index: usize,
 		state: &SelectionState,
-		_: &QueueHandle<Self>,
+		qh: &QueueHandle<Self>,
 	) -> Result<()> {
 		let surface_data = &mut self.surfaces[surface_index];
 		let (width, height) = surface_data.dimensions;
@@ -300,6 +301,11 @@ impl AppState {
 		surface_data
 			.wl_surface
 			.damage(0, 0, width as i32, height as i32);
+
+		surface_data
+			.wl_surface
+			.frame(qh, surface_data.wl_surface.clone());
+
 		surface_data.wl_surface.commit();
 
 		surface_data.slot = Some(buffer);
@@ -632,6 +638,10 @@ impl smithay_client_toolkit::compositor::CompositorHandler for AppState {
     fn scale_factor_changed(&mut self,_: &Connection,_: &QueueHandle<Self>,_: &wl_surface::WlSurface,_: i32,) {}
     fn surface_enter(&mut self,_: &Connection,_: &QueueHandle<Self>,_: &wl_surface::WlSurface,_: &wl_output::WlOutput,) {}
     fn surface_leave(&mut self,_: &Connection,_: &QueueHandle<Self>,_: &wl_surface::WlSurface,_: &wl_output::WlOutput,) {}
-    fn frame(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: u32) {}
+    fn frame(&mut self, _: &Connection, _: &QueueHandle<Self>, surface: &wl_surface::WlSurface, _: u32) {
+        if let Some(sd) = self.surfaces.iter_mut().find(|s| &s.wl_surface == surface) {
+            sd.waiting_for_frame = false;
+        }
+    }
     fn transform_changed(&mut self,_: &Connection,_: &QueueHandle<Self>,_: &WlSurface,_: wayland_client::protocol::wl_output::Transform) {}
 }

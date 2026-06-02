@@ -177,6 +177,7 @@ impl SelectionUI {
 				wl_surface,
 				dimensions: (w, h),
 				slot: None,
+				waiting_for_frame: false,
 			});
 
 			let info = info.clone();
@@ -232,12 +233,22 @@ impl SelectionUI {
 			}
 
 			if state.dirty {
+				let mut needs_redraw = false;
+
 				for i in 0..app.surfaces.len() {
-					if let Err(e) = app.draw(i, &state, &qh) {
-						eprintln!("Draw error: {}", e);
+					if !app.surfaces[i].waiting_for_frame {
+						if let Err(e) = app.draw(i, &state, &qh) {
+							eprintln!("Draw error: {}", e);
+						}
+						app.surfaces[i].waiting_for_frame = true;
+					} else {
+						needs_redraw = true;
 					}
 				}
-				state.dirty = false;
+
+				if !needs_redraw {
+					state.dirty = false;
+				}
 			}
 		}
 
