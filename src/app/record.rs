@@ -56,7 +56,8 @@ pub fn record(
 		let output = conn.get_output(screen_num)?;
 		conn.start_recording(&output, None, cli.cursor, path.clone(), recording_config)?
 	} else {
-		let selection_cfg = cfg.map(|c| c.selection).unwrap_or_default();
+		let mut selection_cfg = cfg.map(|c| c.selection).unwrap_or_default();
+		selection_cfg.show_toolbar = false;
 		let ui = selection::SelectionUI::new(selection_cfg)?;
 		let (region, _) = ui
 			.run(false)?
