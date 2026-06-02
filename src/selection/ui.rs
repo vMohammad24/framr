@@ -1,5 +1,5 @@
 use anyhow::Result;
-use image::{GenericImageView, RgbaImage};
+use image::{GenericImageView, RgbaImage, imageops::FilterType};
 use libframr::{FramrConnection, LogicalRegion, Position, Size};
 use smithay_client_toolkit::{
 	compositor::CompositorState,
@@ -58,7 +58,14 @@ impl SelectionUI {
 		let mut outputs = Vec::new();
 
 		for info in outputs_info {
-			let img = conn.screenshot_output(&info, true)?;
+			let mut img = conn.screenshot_output(&info, true)?;
+
+			let logical_w = info.logical_size.width;
+			let logical_h = info.logical_size.height;
+			if img.width() != logical_w || img.height() != logical_h {
+				img = image::imageops::resize(&img, logical_w, logical_h, FilterType::CatmullRom);
+			}
+
 			outputs.push((info, img));
 		}
 
