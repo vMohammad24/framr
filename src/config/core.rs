@@ -40,6 +40,12 @@ fn merge_configs(base: &mut AppConfig, over: AppConfig) {
 	if let Some(screen) = over.default_screen {
 		base.default_screen = Some(screen);
 	}
+	if let Some(format) = over.image_format {
+		base.image_format = Some(format);
+	}
+	if let Some(quality) = over.image_quality {
+		base.image_quality = Some(quality);
+	}
 
 	base.selection = over.selection;
 	base.recording = over.recording;
@@ -163,6 +169,12 @@ pub fn save_config(cfg: &AppConfig) -> Result<()> {
 		}
 		if to_save.default_screen == over.default_screen {
 			to_save.default_screen = None;
+		}
+		if to_save.image_format == over.image_format {
+			to_save.image_format = None;
+		}
+		if to_save.image_quality == over.image_quality {
+			to_save.image_quality = None;
 		}
 
 		to_save

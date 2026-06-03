@@ -154,6 +154,16 @@ pub enum ConfigAction {
 		/// Path to the sound file (omitting prompts for selection)
 		path: Option<String>,
 	},
+	/// Set the default screenshot image format (png, jpeg, webp)
+	Format {
+		/// Image format name (omitting prompts for selection)
+		format: Option<String>,
+	},
+	/// Set the default screenshot image quality (1-100, only for jpeg)
+	Quality {
+		/// Image quality (1-100)
+		quality: Option<u8>,
+	},
 	/// Register the framr:// protocol handler
 	Protocol,
 }

@@ -1,6 +1,5 @@
 use anyhow::Result;
-use image::ImageFormat;
-use libframr::{FramrConnection, LogicalRegion};
+use libframr::{FramrConnection, LogicalRegion, OutputImageFormat};
 use std::io::Cursor;
 use std::path::PathBuf;
 
@@ -20,8 +19,13 @@ pub fn resolve_output(cli: &Cli, default_pattern: &str, default_ext: &str) -> Pa
 	path
 }
 
-pub fn capture(cli: &Cli, cfg: Option<&AppConfig>) -> Result<(Vec<u8>, Option<LogicalRegion>)> {
+pub fn capture(
+	cli: &Cli,
+	cfg: Option<&AppConfig>,
+) -> Result<(Vec<u8>, Option<LogicalRegion>, OutputImageFormat)> {
 	let conn = FramrConnection::new()?;
+
+	let image_format = cfg.and_then(|c| c.image_format).unwrap_or_default();
 
 	let (method, screen) = if cli.area {
 		(Some(DefaultCaptureMethod::Area), None)
@@ -55,26 +59,57 @@ pub fn capture(cli: &Cli, cfg: Option<&AppConfig>) -> Result<(Vec<u8>, Option<Lo
 	};
 
 	let mut buf = Cursor::new(Vec::new());
-	image.write_to(&mut buf, ImageFormat::Png)?;
-	Ok((buf.into_inner(), region))
+	let quality = cfg.and_then(|c| c.image_quality).unwrap_or(90);
+
+	use image::ImageEncoder;
+	match image_format {
+		OutputImageFormat::Png => {
+			image::codecs::png::PngEncoder::new(&mut buf).write_image(
+				image.as_raw(),
+				image.width(),
+				image.height(),
+				image::ColorType::Rgba8.into(),
+			)?;
+		}
+		OutputImageFormat::Jpeg => {
+			let rgb_image = image::DynamicImage::ImageRgba8(image).to_rgb8();
+			image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, quality).write_image(
+				&rgb_image,
+				rgb_image.width(),
+				rgb_image.height(),
+				image::ColorType::Rgb8.into(),
+			)?;
+		}
+		OutputImageFormat::WebP => {
+			image::codecs::webp::WebPEncoder::new_lossless(&mut buf).write_image(
+				image.as_raw(),
+				image.width(),
+				image.height(),
+				image::ColorType::Rgba8.into(),
+			)?;
+		}
+	}
+	Ok((buf.into_inner(), region, image_format))
 }
 
 pub fn get_capture_path(
 	cli: &Cli,
 	_cfg: Option<&AppConfig>,
 	region: Option<LogicalRegion>,
+	image_format: OutputImageFormat,
 ) -> Result<(PathBuf, String)> {
+	let ext = image_format.extension();
 	let windows = get_windows()?;
 	let pos = region
 		.map(|r| (r.position.x as f64, r.position.y as f64))
 		.unwrap_or((0.0, 0.0));
 	let active_window = get_window_at_pos(pos, &windows);
 	let default = if active_window.is_some() {
-		"{window}_%Y-%m-%d_%H-%M-%S.png"
+		format!("{{window}}_%Y-%m-%d_%H-%M-%S.{}", ext)
 	} else {
-		"screenshot_%Y-%m-%d_%H-%M-%S.png"
+		format!("screenshot_%Y-%m-%d_%H-%M-%S.{}", ext)
 	};
-	let mut filename = resolve_output(cli, default, "png")
+	let mut filename = resolve_output(cli, &default, ext)
 		.to_string_lossy()
 		.to_string();
 

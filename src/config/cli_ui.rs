@@ -335,4 +335,8 @@ pub fn display_recording_settings(cfg: &AppConfig) {
 	);
 	print_setting("H.264 Tune:", cfg.recording.tune.as_str());
 	print_setting("H.264 Speed Preset:", cfg.recording.speed_preset.as_str());
+	println!();
+	println!("{}", style("Image Settings:").cyan().bold());
+	print_setting("Format:", cfg.image_format.unwrap_or_default().as_str());
+	print_setting("Quality:", format!("{}%", cfg.image_quality.unwrap_or(90)));
 }

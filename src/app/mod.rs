@@ -46,7 +46,13 @@ pub fn handle_upload(
 			anyhow::bail!("No file specified. Provide a file path or pipe data to stdin.");
 		}
 		io::stdin().read_to_end(&mut stdin_bytes)?;
-		payload = upload::UploadPayload::Bytes(&stdin_bytes);
+		let mime_type = infer::get(&stdin_bytes)
+			.map(|m| m.mime_type())
+			.unwrap_or("application/octet-stream");
+		payload = upload::UploadPayload::Bytes {
+			bytes: &stdin_bytes,
+			mime_type,
+		};
 
 		is_image = infer::get(&stdin_bytes)
 			.map(|m| m.matcher_type() == infer::MatcherType::Image)

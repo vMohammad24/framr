@@ -8,10 +8,12 @@ pub use core::{load_config, load_uploader_config, save_config};
 pub(crate) use types::{AppConfig, BodyType, Color, SelectionConfig, UploadConfig};
 pub use types::{ConfigEnum, DefaultAction, DefaultCaptureMethod};
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use console::{Term, style};
 use dialoguer::{Confirm, Input, Select, theme::ColorfulTheme};
-use libframr::{FramrConnection, H264SpeedPreset, H264Tune};
+use libframr::{
+	FramrConnection, H264SpeedPreset, H264Tune, OutputImageFormat as LibOutputImageFormat,
+};
 use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
@@ -160,6 +162,13 @@ pub fn list_uploaders() -> Result<()> {
 		);
 	}
 
+	println!(
+		"  {} {}",
+		style("Image Format:").bold(),
+		style(cfg.image_format.unwrap_or_default().as_str())
+			.yellow()
+			.bold()
+	);
 	println!(
 		"  {} {}",
 		style("Default Sound:").bold(),
@@ -439,6 +448,97 @@ pub fn set_default_sound(path: Option<&str>) -> Result<()> {
 	Ok(())
 }
 
+pub fn set_default_format(name: Option<&str>) -> Result<()> {
+	let mut cfg = load_config()?;
+
+	let format = match name {
+		Some(n) => n
+			.parse::<LibOutputImageFormat>()
+			.map_err(|e| anyhow::anyhow!("{}", e))?,
+		None => {
+			let formats = LibOutputImageFormat::all_formats();
+			let names: Vec<_> = formats.iter().map(|f| f.as_str()).collect();
+			let current = formats
+				.iter()
+				.position(|f| Some(*f) == cfg.image_format)
+				.unwrap_or(0);
+			let sel = prompt_select("Select default image format", &names, current)?;
+			formats[sel]
+		}
+	};
+
+	if cfg.image_format == Some(format) {
+		println!(
+			"  {}",
+			style(&format!(
+				"\"{}\" is already the default image format.",
+				format.as_str()
+			))
+			.dim()
+		);
+		return Ok(());
+	}
+
+	println!(
+		"  {} {} → {}",
+		style("Image Format:").bold(),
+		style(cfg.image_format.unwrap_or_default().as_str()).red(),
+		style(format.as_str()).green().bold()
+	);
+
+	cfg.image_format = Some(format);
+	save_config(&cfg)?;
+	print_success(&format!(
+		"Default image format set to \"{}\".",
+		format.as_str()
+	));
+	Ok(())
+}
+
+pub fn set_image_quality(quality: Option<u8>) -> Result<()> {
+	let mut cfg = load_config()?;
+
+	let quality = match quality {
+		Some(q) => {
+			if q == 0 || q > 100 {
+				bail!("Quality must be between 1 and 100.");
+			}
+			q
+		}
+		None => Input::with_theme(&ColorfulTheme::default())
+			.with_prompt("Image quality (1-100)")
+			.default(cfg.image_quality.unwrap_or(90))
+			.validate_with(|input: &u8| {
+				if *input == 0 || *input > 100 {
+					Err("Quality must be between 1 and 100.")
+				} else {
+					Ok(())
+				}
+			})
+			.interact_text()?,
+	};
+
+	if cfg.image_quality == Some(quality) {
+		println!(
+			"  {}",
+			style(&format!("Image quality is already {}%.", quality)).dim()
+		);
+		return Ok(());
+	}
+
+	println!(
+		"  {} {}% → {}%",
+		style("Image Quality:").bold(),
+		style(cfg.image_quality.unwrap_or(90).to_string()).red(),
+		style(quality.to_string()).green().bold()
+	);
+
+	cfg.image_quality = Some(quality);
+	save_config(&cfg)?;
+	print_success(&format!("Image quality set to {}%.", quality));
+	Ok(())
+}
+
 pub fn register_protocol_handler() -> Result<()> {
 	let xdg_data_home = std::env::var("XDG_DATA_HOME")
 		.map(PathBuf::from)
@@ -571,6 +671,20 @@ pub fn run_config_wizard() -> Result<()> {
 			.unwrap_or_else(|| style("(none)").dim().to_string());
 		println!("  {} {}\n", style("Default Method:").bold(), method_label);
 		println!(
+			"  {} {}",
+			style("Image Format:").bold(),
+			style(cfg.image_format.unwrap_or_default().as_str())
+				.yellow()
+				.bold()
+		);
+		println!(
+			"  {} {}%",
+			style("Image Quality:").bold(),
+			style(cfg.image_quality.unwrap_or(90).to_string())
+				.yellow()
+				.bold()
+		);
+		println!(
 			"  {} {}\n",
 			style("Default Sound:").bold(),
 			style(&cfg.upload_sound).yellow().bold()
@@ -664,10 +778,12 @@ pub fn run_config_wizard() -> Result<()> {
 						"Set default uploader",
 						"Set default action",
 						"Set default capture method",
+						"Set default image format",
+						"Set default image quality",
 						"Set default sound",
 						"Back",
 					],
-					4,
+					6,
 				)?;
 
 				match defaults_selection {
@@ -737,6 +853,30 @@ pub fn run_config_wizard() -> Result<()> {
 						thread::sleep(Duration::from_secs(1));
 					}
 					3 => {
+						let formats = LibOutputImageFormat::all_formats();
+						let names: Vec<_> = formats.iter().map(|f| f.as_str()).collect();
+						let current = formats
+							.iter()
+							.position(|f| Some(*f) == cfg.image_format)
+							.unwrap_or(0);
+						let sel = prompt_select(
+							"Select default image format (NOTE: You can not copy webp (and jpeg) images alone, although this is fine if uploaded)",
+							&names,
+							current,
+						)?;
+						cfg.image_format = Some(formats[sel]);
+						save_config(&cfg)?;
+						print_success(&format!(
+							"Default image format set to \"{}\".",
+							cfg.image_format.unwrap().as_str()
+						));
+						thread::sleep(Duration::from_secs(1));
+					}
+					4 => {
+						set_image_quality(None)?;
+						thread::sleep(Duration::from_secs(1));
+					}
+					5 => {
 						let sound: String = prompt_input(
 							"Default upload sound path",
 							Some(cfg.upload_sound.clone()),

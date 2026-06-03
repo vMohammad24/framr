@@ -156,6 +156,73 @@ impl FromStr for H264SpeedPreset {
 	}
 }
 
+#[derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq, Clone, Copy)]
+pub enum OutputImageFormat {
+	#[default]
+	Png,
+	Jpeg,
+	WebP,
+}
+
+impl OutputImageFormat {
+	pub fn all_formats() -> &'static [Self] {
+		&[Self::Png, Self::Jpeg, Self::WebP]
+	}
+	pub fn to_image_format(self) -> image::ImageFormat {
+		match self {
+			Self::Png => image::ImageFormat::Png,
+			Self::Jpeg => image::ImageFormat::Jpeg,
+			Self::WebP => image::ImageFormat::WebP,
+		}
+	}
+
+	pub fn extension(self) -> &'static str {
+		match self {
+			Self::Png => "png",
+			Self::Jpeg => "jpg",
+			Self::WebP => "webp",
+		}
+	}
+
+	pub fn mime_type(self) -> &'static str {
+		match self {
+			Self::Png => "image/png",
+			Self::Jpeg => "image/jpeg",
+			Self::WebP => "image/webp",
+		}
+	}
+
+	pub fn as_str(self) -> &'static str {
+		match self {
+			Self::Png => "PNG",
+			Self::Jpeg => "JPEG",
+			Self::WebP => "WebP",
+		}
+	}
+}
+
+impl std::fmt::Display for OutputImageFormat {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		f.write_str(self.as_str())
+	}
+}
+
+impl FromStr for OutputImageFormat {
+	type Err = String;
+
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		match s.to_lowercase().as_str() {
+			"png" => Ok(Self::Png),
+			"jpeg" | "jpg" => Ok(Self::Jpeg),
+			"webp" => Ok(Self::WebP),
+			_ => Err(format!(
+				"Invalid image format: {}. Valid options: png, jpeg, webp",
+				s
+			)),
+		}
+	}
+}
+
 pub use connection::FramrConnection;
 pub use error::FramrError;
 pub use output::{FrameFormat, LogicalRegion, OutputInfo, PixelFormat, Position, Size, Transform};

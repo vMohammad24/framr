@@ -8,7 +8,10 @@ use ureq::unversioned::multipart::{Form, Part};
 use crate::config::{AppConfig, BodyType, UploadConfig, find_uploader_index, load_uploader_config};
 
 pub enum UploadPayload<'a> {
-	Bytes(&'a [u8]),
+	Bytes {
+		bytes: &'a [u8],
+		mime_type: &'static str,
+	},
 	File(&'a Path),
 }
 
@@ -98,7 +101,7 @@ fn send_request(payload: UploadPayload, filename: &str, uploader: &UploadConfig)
 
 	let response = match uploader.body_type {
 		BodyType::Binary => match payload {
-			UploadPayload::Bytes(bytes) => {
+			UploadPayload::Bytes { bytes, .. } => {
 				request.send(bytes).map_err(|e| anyhow::anyhow!("{e}"))?
 			}
 			UploadPayload::File(path) => {
@@ -171,9 +174,9 @@ fn build_multipart_form<'a>(
 	}
 	let form_name = uploader.file_form_name.as_deref().unwrap_or("file");
 	let part = match payload {
-		UploadPayload::Bytes(bytes) => Part::bytes(bytes)
+		UploadPayload::Bytes { bytes, mime_type } => Part::bytes(bytes)
 			.file_name(filename)
-			.mime_str("image/png")
+			.mime_str(mime_type)
 			.map_err(|e| anyhow::anyhow!("{e}"))?,
 		UploadPayload::File(path) => {
 			let mime_type = infer_mime_type(path);

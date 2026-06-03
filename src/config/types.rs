@@ -4,6 +4,7 @@ use std::fmt;
 use std::str::FromStr;
 use strum::{AsRefStr, Display, EnumIter, IntoEnumIterator, IntoStaticStr};
 
+pub use libframr::OutputImageFormat;
 pub use libframr::RecordingConfig;
 
 pub trait ConfigEnum:
@@ -241,6 +242,10 @@ pub struct AppConfig {
 	pub selection: SelectionConfig,
 	#[serde(default)]
 	pub recording: RecordingConfig,
+	#[serde(default)]
+	pub image_format: Option<OutputImageFormat>,
+	#[serde(default)]
+	pub image_quality: Option<u8>,
 	#[serde(default = "default_upload_sound")]
 	pub upload_sound: String,
 }

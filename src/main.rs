@@ -55,6 +55,10 @@ fn main() -> Result<()> {
 					config::set_default_capture(method.as_deref())
 				}
 				Some(ConfigAction::Sound { path }) => config::set_default_sound(path.as_deref()),
+				Some(ConfigAction::Format { format }) => {
+					config::set_default_format(format.as_deref())
+				}
+				Some(ConfigAction::Quality { quality }) => config::set_image_quality(quality),
 				Some(ConfigAction::Protocol) => config::register_protocol_handler(),
 				None => config::run_config_wizard(),
 			};
@@ -86,19 +90,28 @@ fn main() -> Result<()> {
 	let is_upload_action =
 		action == DefaultAction::Upload || action == DefaultAction::UploadAndCopy;
 
-	let (bytes_opt, path, filename, is_image) = if cli.record {
+	let (bytes_opt, path, filename, is_image, mime_type) = if cli.record {
 		let Some((path, filename)) = record(&cli, cfg.as_ref(), is_upload_action)? else {
 			return Ok(());
 		};
-		(None, path, filename, false)
+		(None, path, filename, false, "application/octet-stream")
 	} else {
-		let (png_bytes, region) = capture(&cli, cfg.as_ref())?;
-		let (path, filename) = get_capture_path(&cli, cfg.as_ref(), region)?;
-		(Some(png_bytes), path, filename, true)
+		let (img_bytes, region, img_format) = capture(&cli, cfg.as_ref())?;
+		let (path, filename) = get_capture_path(&cli, cfg.as_ref(), region, img_format)?;
+		(
+			Some(img_bytes),
+			path,
+			filename,
+			true,
+			img_format.mime_type(),
+		)
 	};
 
 	let payload = match &bytes_opt {
-		Some(b) => upload::UploadPayload::Bytes(b),
+		Some(b) => upload::UploadPayload::Bytes {
+			bytes: b,
+			mime_type,
+		},
 		None => upload::UploadPayload::File(&path),
 	};
 
@@ -125,7 +138,7 @@ fn main() -> Result<()> {
 		DefaultAction::Copy => {
 			if is_image {
 				if let Some(ref bytes) = bytes_opt {
-					copy_to_clipboard(bytes.clone(), "image/png")?;
+					copy_to_clipboard(bytes.clone(), mime_type)?;
 					send_notification(
 						"Copied to Clipboard",
 						"Screenshot copied to clipboard",
