@@ -65,73 +65,70 @@ fn infer_mime_type(path: &Path) -> &'static str {
 }
 
 fn send_request(payload: UploadPayload, filename: &str, uploader: &UploadConfig) -> Result<String> {
-	let method = uploader.request_method.to_uppercase();
+	use crate::config::types::RequestMethod;
+	use ureq::RequestBuilder;
 
-	if method == "GET" {
-		let mut request = ureq::get(&uploader.request_url);
+	fn apply_config<B>(mut req: RequestBuilder<B>, uploader: &UploadConfig) -> RequestBuilder<B> {
 		for (key, value) in &uploader.parameters {
-			request = request.query(key.as_str(), value.as_str());
+			req = req.query(key.as_str(), value.as_str());
 		}
 		for (key, value) in &uploader.headers {
-			request = request.header(key.as_str(), value.as_str());
+			req = req.header(key.as_str(), unquote(value));
 		}
-		let response = request
-			.config()
-			.http_status_as_error(false)
-			.build()
+		req.config().http_status_as_error(false).build()
+	}
+
+	let response = match uploader.request_method {
+		RequestMethod::Get => apply_config(ureq::get(&uploader.request_url), uploader)
 			.call()
-			.map_err(|e| anyhow::anyhow!("{e}"))?;
-		return read_response_body(response, uploader);
-	}
+			.map_err(|e| anyhow::anyhow!("{e}"))?,
+		RequestMethod::Delete => apply_config(ureq::delete(&uploader.request_url), uploader)
+			.call()
+			.map_err(|e| anyhow::anyhow!("{e}"))?,
+		method => {
+			let req = match method {
+				RequestMethod::Post => ureq::post(&uploader.request_url),
+				RequestMethod::Put => ureq::put(&uploader.request_url),
+				RequestMethod::Patch => ureq::patch(&uploader.request_url),
+				_ => unreachable!(),
+			};
 
-	let mut request = match method.as_str() {
-		"POST" => ureq::post(&uploader.request_url),
-		"PUT" => ureq::put(&uploader.request_url),
-		"PATCH" => ureq::patch(&uploader.request_url),
-		other => bail!("Unsupported request method: {}", other),
-	};
-
-	for (key, value) in &uploader.parameters {
-		request = request.query(key.as_str(), value.as_str());
-	}
-	for (key, value) in &uploader.headers {
-		request = request.header(key.as_str(), unquote(value));
-	}
-	request = request.config().http_status_as_error(false).build();
-
-	let response = match uploader.body_type {
-		BodyType::Binary => match payload {
-			UploadPayload::Bytes { bytes, .. } => {
-				request.send(bytes).map_err(|e| anyhow::anyhow!("{e}"))?
+			let builder = apply_config(req, uploader);
+			match uploader.body_type {
+				BodyType::Binary => match payload {
+					UploadPayload::Bytes { bytes, .. } => {
+						builder.send(bytes).map_err(|e| anyhow::anyhow!("{e}"))?
+					}
+					UploadPayload::File(path) => {
+						let file = File::open(path)?;
+						builder.send(file).map_err(|e| anyhow::anyhow!("{e}"))?
+					}
+				},
+				BodyType::FormData => {
+					let form = build_multipart_form(payload, filename, uploader)?;
+					builder.send(form).map_err(|e| anyhow::anyhow!("{e}"))?
+				}
+				BodyType::URLEncoded => {
+					let args: Vec<(&str, &str)> = uploader
+						.arguments
+						.iter()
+						.map(|(k, v)| (k.as_str(), v.as_str()))
+						.collect();
+					builder
+						.send_form(args)
+						.map_err(|e| anyhow::anyhow!("{e}"))?
+				}
+				BodyType::Json => {
+					let body = build_json_body(&uploader.arguments)?;
+					let builder = builder.header("Content-Type", "application/json");
+					builder.send(&body).map_err(|e| anyhow::anyhow!("{e}"))?
+				}
+				BodyType::Xml => {
+					let body = build_xml_body(&uploader.arguments);
+					let builder = builder.header("Content-Type", "application/xml");
+					builder.send(&body).map_err(|e| anyhow::anyhow!("{e}"))?
+				}
 			}
-			UploadPayload::File(path) => {
-				let file = File::open(path)?;
-				request.send(file).map_err(|e| anyhow::anyhow!("{e}"))?
-			}
-		},
-		BodyType::FormData => {
-			let form = build_multipart_form(payload, filename, uploader)?;
-			request.send(form).map_err(|e| anyhow::anyhow!("{e}"))?
-		}
-		BodyType::URLEncoded => {
-			let args: Vec<(&str, &str)> = uploader
-				.arguments
-				.iter()
-				.map(|(k, v)| (k.as_str(), v.as_str()))
-				.collect();
-			request
-				.send_form(args)
-				.map_err(|e| anyhow::anyhow!("{e}"))?
-		}
-		BodyType::Json => {
-			let body = build_json_body(&uploader.arguments)?;
-			let request = request.header("Content-Type", "application/json");
-			request.send(&body).map_err(|e| anyhow::anyhow!("{e}"))?
-		}
-		BodyType::Xml => {
-			let body = build_xml_body(&uploader.arguments);
-			let request = request.header("Content-Type", "application/xml");
-			request.send(&body).map_err(|e| anyhow::anyhow!("{e}"))?
 		}
 	};
 

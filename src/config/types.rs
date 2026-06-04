@@ -23,6 +23,14 @@ pub trait ConfigEnum:
 	fn variants() -> Vec<&'static str> {
 		Self::iter().map(|v| v.label()).collect()
 	}
+
+	fn variants_list(&self) -> Vec<&'static str> {
+		Self::variants()
+	}
+
+	fn at_index(&self, i: usize) -> Option<Self> {
+		Self::from_index(i)
+	}
 }
 
 #[derive(
@@ -119,12 +127,75 @@ impl ConfigEnum for BodyType {
 	}
 }
 
+#[derive(
+	Debug,
+	Serialize,
+	Deserialize,
+	Default,
+	PartialEq,
+	Eq,
+	Clone,
+	Copy,
+	AsRefStr,
+	Display,
+	EnumIter,
+	IntoStaticStr,
+	strum::EnumString,
+)]
+#[strum(serialize_all = "UPPERCASE", ascii_case_insensitive)]
+pub enum RequestMethod {
+	#[default]
+	Post,
+	Get,
+	Put,
+	Patch,
+	Delete,
+}
+
+impl ConfigEnum for RequestMethod {
+	fn label(self) -> &'static str {
+		self.into()
+	}
+}
+
+impl ConfigEnum for libframr::VideoEncoder {
+	fn label(self) -> &'static str {
+		match self {
+			Self::H264 => "H.264 (x264)",
+			Self::AV1 => "AV1 (rav1)",
+		}
+	}
+}
+
+impl ConfigEnum for libframr::H264Tune {
+	fn label(self) -> &'static str {
+		self.into()
+	}
+}
+
+impl ConfigEnum for libframr::EncoderSpeed {
+	fn label(self) -> &'static str {
+		self.into()
+	}
+}
+
+impl ConfigEnum for libframr::OutputImageFormat {
+	fn label(self) -> &'static str {
+		self.as_str()
+	}
+}
+
 #[derive(Debug, Serialize, Deserialize, Default, Clone, PartialEq, Eq)]
 pub struct UploadConfig {
 	#[serde(alias = "Name")]
 	pub name: String,
-	#[serde(alias = "RequestMethod", default = "default_method")]
-	pub request_method: String,
+	#[serde(
+		alias = "RequestMethod",
+		alias = "requestMethod",
+		default,
+		deserialize_with = "deserialize_request_method"
+	)]
+	pub request_method: RequestMethod,
 	#[serde(alias = "RequestURL", alias = "requestURL")]
 	pub request_url: String,
 	#[serde(alias = "Parameters", default, deserialize_with = "deserialize_kv")]
@@ -161,17 +232,31 @@ pub struct UploadConfig {
 	#[serde(
 		alias = "DeleteRequestType",
 		alias = "deleteRequestType",
-		default = "default_delete_method"
+		default = "default_deletion_method",
+		deserialize_with = "deserialize_request_method"
 	)]
-	pub deletion_request_type: String,
+	pub deletion_request_type: RequestMethod,
 }
 
-fn default_method() -> String {
-	"POST".to_string()
+fn deserialize_request_method<'de, D>(deserializer: D) -> Result<RequestMethod, D::Error>
+where
+	D: Deserializer<'de>,
+{
+	#[derive(Deserialize)]
+	#[serde(untagged)]
+	enum RawMethod {
+		Enum(RequestMethod),
+		String(String),
+	}
+
+	match RawMethod::deserialize(deserializer)? {
+		RawMethod::Enum(m) => Ok(m),
+		RawMethod::String(s) => RequestMethod::from_str(&s).map_err(DeError::custom),
+	}
 }
 
-fn default_delete_method() -> String {
-	"DELETE".to_string()
+fn default_deletion_method() -> RequestMethod {
+	RequestMethod::Delete
 }
 
 fn deserialize_kv<'de, D>(deserializer: D) -> Result<Vec<(String, String)>, D::Error>

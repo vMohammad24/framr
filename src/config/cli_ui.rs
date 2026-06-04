@@ -1,7 +1,11 @@
-use crate::config::core::load_overrides;
-use crate::config::types::{AppConfig, BodyType, ConfigEnum, DefaultCaptureMethod, UploadConfig};
-use anyhow::Result;
-use console::style;
+use crate::config::core::{load_config, load_overrides, save_config};
+use crate::config::types::{
+	AppConfig, BodyType, ConfigEnum, DefaultAction, DefaultCaptureMethod, UploadConfig,
+};
+use anyhow::{Result, bail};
+use console::{Term, style};
+use std::thread;
+use std::time::Duration;
 
 pub fn header(text: &str) -> String {
 	style(format!("\n=== {} ===", text))
@@ -185,72 +189,327 @@ pub fn manage_kv_pairs(label: &str, pairs: &mut Vec<(String, String)>) -> Result
 	Ok(())
 }
 
-pub fn select_request_method(default_idx: usize) -> Result<String> {
-	let methods = ["POST", "GET", "PUT", "PATCH", "DELETE"];
-	let sel = super::prompt_select("Request method", &methods, default_idx)?;
-	Ok(methods[sel].to_string())
+pub fn import_uploader(source: &str) -> Result<()> {
+	let mut cfg = load_config()?;
+
+	println!("{}", header("Import Uploader"));
+	println!("  {} {}", style("Source:").bold(), style(source).blue());
+
+	let mut uploader = super::import_from_source(source, false)?;
+
+	let original_name = uploader.name.clone();
+	uploader.name = ensure_unique_uploader_name(&cfg, uploader.name);
+
+	if uploader.name != original_name {
+		println!(
+			"  {} Renamed \"{}\" to \"{}\"",
+			style("Note:").yellow().bold(),
+			style(&original_name).yellow(),
+			style(&uploader.name).yellow()
+		);
+	}
+
+	println!(
+		"\n  {} {} ({})",
+		style("Imported:").green().bold(),
+		style(&uploader.name).green().bold(),
+		style(&uploader.request_url).blue()
+	);
+	display_uploader_details(&uploader);
+
+	cfg.uploaders.push(uploader);
+	save_config(&cfg)?;
+	print_success("Configuration saved.");
+	Ok(())
+}
+
+pub fn list_uploaders() -> Result<()> {
+	let cfg = load_config()?;
+
+	println!("\n{}", style("Framr Config - Uploaders").cyan().bold());
+
+	if cfg.uploaders.is_empty() {
+		println!(
+			"  {}",
+			style(
+				"No uploaders configured. Use `framr config import <path>` or `framr config create` to add one."
+			)
+			.yellow()
+		);
+		return Ok(());
+	}
+
+	for (i, u) in cfg.uploaders.iter().enumerate() {
+		let is_default = cfg.default_uploader.as_deref() == Some(&u.name);
+		println!("{}", uploader_list_entry(i, u, is_default));
+	}
+
+	if let Some(ref default) = cfg.default_uploader {
+		println!(
+			"\n  {} {}",
+			style("Default Uploader:").bold(),
+			style(default).yellow().bold()
+		);
+	}
+
+	if let Some(action) = cfg.default_action {
+		println!(
+			"  {} {}",
+			style("Default Action:").bold(),
+			style(action.label()).yellow().bold()
+		);
+	}
+
+	if let Some(label) = format_capture_label(&cfg) {
+		println!(
+			"  {} {}",
+			style("Default Method:").bold(),
+			style(label).yellow().bold()
+		);
+	}
+
+	println!(
+		"  {} {}",
+		style("Image Format:").bold(),
+		style(cfg.image_format.unwrap_or_default().as_str())
+			.yellow()
+			.bold()
+	);
+	println!(
+		"  {} {}",
+		style("Default Sound:").bold(),
+		style(&cfg.upload_sound).yellow().bold()
+	);
+
+	display_recording_settings(&cfg);
+
+	println!(
+		"\n  {} {}",
+		style("Total:").bold(),
+		style(cfg.uploaders.len()).yellow().bold()
+	);
+	Ok(())
+}
+
+pub fn show_uploader(name_or_index: &str) -> Result<()> {
+	let cfg = load_config()?;
+
+	let idx = find_uploader_index(&cfg, name_or_index)
+		.ok_or_else(|| anyhow::anyhow!("Uploader \"{}\" not found.", name_or_index))?;
+
+	println!(
+		"{}",
+		header(&format!("Uploader: {}", &cfg.uploaders[idx].name))
+	);
+	display_uploader_details(&cfg.uploaders[idx]);
+	Ok(())
+}
+
+pub fn create_uploader() -> Result<()> {
+	let mut cfg = load_config()?;
+	create_uploader_interactive(&mut cfg)?;
+	save_config(&cfg)?;
+	print_success("Configuration saved.");
+	Ok(())
+}
+
+pub fn edit_uploader(name_or_index: Option<&str>) -> Result<()> {
+	let mut cfg = load_config()?;
+
+	if cfg.uploaders.is_empty() {
+		println!("\n{}", style("No uploaders to edit.").yellow());
+		return Ok(());
+	}
+
+	let idx = resolve_uploader_index(&cfg, name_or_index, "Select uploader to edit")?;
+	modify_uploader_at(&mut cfg, idx)?;
+	save_config(&cfg)?;
+	print_success("Configuration saved.");
+	Ok(())
+}
+
+pub fn delete_uploader(name_or_index: Option<&str>) -> Result<()> {
+	let mut cfg = load_config()?;
+
+	if cfg.uploaders.is_empty() {
+		println!("\n{}", style("No uploaders to delete.").yellow());
+		return Ok(());
+	}
+
+	let idx = resolve_uploader_index(&cfg, name_or_index, "Select uploader to delete")?;
+
+	let uploader_name = cfg.uploaders[idx].name.clone();
+	if super::prompt_confirm(
+		&format!(
+			"Delete uploader \"{}\"?",
+			style(&uploader_name).red().bold()
+		),
+		false,
+	)? {
+		cfg.uploaders.remove(idx);
+		if cfg.default_uploader.as_deref() == Some(&uploader_name) {
+			cfg.default_uploader = None;
+		}
+		save_config(&cfg)?;
+		print_error(&format!("Deleted \"{}\"", uploader_name));
+	} else {
+		println!("  {}", style("Cancelled.").dim());
+	}
+
+	Ok(())
+}
+
+pub fn set_default_uploader(name_or_index: Option<&str>) -> Result<()> {
+	let mut cfg = load_config()?;
+	if let Some(n) = name_or_index {
+		let idx = find_uploader_index(&cfg, n)
+			.ok_or_else(|| anyhow::anyhow!("Uploader \"{}\" not found.", n))?;
+		cfg.default_uploader = Some(cfg.uploaders[idx].name.clone());
+	} else {
+		let idx = select_uploader_index(&cfg, "Select default uploader")?;
+		cfg.default_uploader = Some(cfg.uploaders[idx].name.clone());
+	}
+	save_config(&cfg)?;
+	print_success(&format!(
+		"Default uploader set to \"{}\".",
+		cfg.default_uploader.as_ref().unwrap()
+	));
+	Ok(())
+}
+
+pub fn set_default_action(name_or_index: Option<&str>) -> Result<()> {
+	let mut cfg = load_config()?;
+	let action = if let Some(n) = name_or_index {
+		let variants = DefaultAction::variants();
+		let idx = variants
+			.iter()
+			.position(|v| v.to_lowercase().contains(&n.to_lowercase()))
+			.ok_or_else(|| anyhow::anyhow!("Unknown action \"{}\"", n))?;
+		DefaultAction::from_index(idx).unwrap()
+	} else {
+		let variants = DefaultAction::variants();
+		let idx = super::prompt_select("Select default action", &variants, 0)?;
+		DefaultAction::from_index(idx).unwrap()
+	};
+	cfg.default_action = Some(action);
+	save_config(&cfg)?;
+	print_success(&format!("Default action set to \"{}\".", action.label()));
+	Ok(())
+}
+
+pub fn set_default_capture(name_or_index: Option<&str>) -> Result<()> {
+	let mut cfg = load_config()?;
+	let method = if let Some(n) = name_or_index {
+		let variants = DefaultCaptureMethod::variants();
+		let idx = variants
+			.iter()
+			.position(|v| v.to_lowercase().contains(&n.to_lowercase()))
+			.ok_or_else(|| anyhow::anyhow!("Unknown method \"{}\"", n))?;
+		DefaultCaptureMethod::from_index(idx).unwrap()
+	} else {
+		let variants = DefaultCaptureMethod::variants();
+		let idx = super::prompt_select("Select default capture method", &variants, 0)?;
+		DefaultCaptureMethod::from_index(idx).unwrap()
+	};
+
+	if method == DefaultCaptureMethod::Screen {
+		let conn = libframr::FramrConnection::new()?;
+		let outputs = conn.get_all_outputs()?;
+		if outputs.is_empty() {
+			bail!("No monitors detected.");
+		}
+		let items: Vec<String> = outputs
+			.iter()
+			.enumerate()
+			.map(|(i, o)| format!("{}: {}", i, o))
+			.collect();
+		let selection = super::prompt_select("Select default monitor", &items, 0)?;
+		cfg.default_screen = Some(selection);
+	}
+
+	cfg.default_capture = Some(method);
+	save_config(&cfg)?;
+	print_success(&format!(
+		"Default capture method set to \"{}\".",
+		method.label()
+	));
+	Ok(())
+}
+
+pub fn set_default_sound(path: Option<&str>) -> Result<()> {
+	let mut cfg = load_config()?;
+	let path = match path {
+		Some(p) => p.to_string(),
+		None => super::prompt_input("Default upload sound path", Some(cfg.upload_sound.clone()))?,
+	};
+	cfg.upload_sound = path;
+	save_config(&cfg)?;
+	print_success("Default upload sound updated.");
+	Ok(())
+}
+
+pub fn set_default_format(name: Option<&str>) -> Result<()> {
+	let mut cfg = load_config()?;
+	use libframr::OutputImageFormat;
+	let format = match name {
+		Some(n) => n
+			.parse::<OutputImageFormat>()
+			.map_err(|e| anyhow::anyhow!("{}", e))?,
+		None => {
+			let formats = OutputImageFormat::all_formats();
+			let names: Vec<_> = formats.iter().map(|f| f.as_str()).collect();
+			let sel = super::prompt_select("Select default image format", &names, 0)?;
+			formats[sel]
+		}
+	};
+	cfg.image_format = Some(format);
+	save_config(&cfg)?;
+	print_success(&format!(
+		"Default image format set to \"{}\".",
+		format.as_str()
+	));
+	Ok(())
+}
+
+pub fn set_image_quality(quality: Option<u8>) -> Result<()> {
+	let mut cfg = load_config()?;
+	let quality = match quality {
+		Some(q) => q,
+		None => super::prompt_input(
+			"Image quality (1-100)",
+			Some(cfg.image_quality.unwrap_or(90)),
+		)?,
+	};
+	cfg.image_quality = Some(quality);
+	save_config(&cfg)?;
+	print_success(&format!("Image quality set to {}%.", quality));
+	Ok(())
 }
 
 pub fn create_uploader_interactive(cfg: &mut AppConfig) -> Result<()> {
 	print!("{}", header("Create new uploader"));
 
-	let name: String = loop {
-		let input: String = super::prompt_input("Name", None)?;
+	let mut uploader = UploadConfig {
+		name: loop {
+			let input: String = super::prompt_input("Name", None)?;
 
-		if cfg
-			.uploaders
-			.iter()
-			.any(|u| u.name.eq_ignore_ascii_case(&input))
-		{
-			print_error(&format!(
-				"An uploader named \"{}\" already exists. Please choose a different name.",
-				input
-			));
-		} else {
-			break input;
-		}
+			if cfg
+				.uploaders
+				.iter()
+				.any(|u| u.name.eq_ignore_ascii_case(&input))
+			{
+				print_error(&format!(
+					"An uploader named \"{}\" already exists. Please choose a different name.",
+					input
+				));
+			} else {
+				break input;
+			}
+		},
+		..Default::default()
 	};
 
-	let request_url: String = super::prompt_input("Request URL", None)?;
-	let request_method = select_request_method(0)?;
-
-	let variants = BodyType::variants();
-	let body_selection = super::prompt_select("Body type", &variants, 1)?;
-	let body_type = BodyType::from_index(body_selection).unwrap_or_default();
-
-	let file_form_name = if body_type == BodyType::FormData {
-		super::prompt_optional_input("File form name", Some("file"))?
-	} else {
-		None
-	};
-
-	let mut headers = Vec::new();
-	let mut parameters = Vec::new();
-	let mut arguments = Vec::new();
-
-	manage_kv_pairs("Headers", &mut headers)?;
-	manage_kv_pairs("URL Parameters", &mut parameters)?;
-	manage_kv_pairs("Body Arguments", &mut arguments)?;
-
-	let output_url: String =
-		super::prompt_input("Output URL parse schema", Some("{json:url}".into()))?;
-	let error_message = super::prompt_optional_input("Error message schema", None)?;
-	let deletion_url = super::prompt_optional_input("Deletion URL", None)?;
-
-	let uploader = UploadConfig {
-		name,
-		request_method,
-		request_url,
-		parameters,
-		headers,
-		body_type,
-		arguments,
-		file_form_name,
-		output_url,
-		error_message,
-		deletion_url,
-		deletion_request_type: String::new(),
-	};
+	modify_uploader_menu(&mut uploader)?;
 
 	println!(
 		"\n  {} {} ({})",
@@ -276,40 +535,28 @@ pub fn modify_uploader_at(cfg: &mut AppConfig, idx: usize) -> Result<()> {
 		);
 	}
 
-	print!("{}", header(&format!("Modifying {}", &uploader.name)));
+	modify_uploader_menu(uploader)
+}
 
-	uploader.name = super::prompt_input("Name", Some(uploader.name.clone()))?;
-	uploader.request_url = super::prompt_input("Request URL", Some(uploader.request_url.clone()))?;
-
-	let methods = ["POST", "GET", "PUT", "PATCH", "DELETE"];
-	let current_method_idx = methods
-		.iter()
-		.position(|&m| m == uploader.request_method)
-		.unwrap_or(0);
-	uploader.request_method = select_request_method(current_method_idx)?;
-
-	let variants = BodyType::variants();
-	let body_selection =
-		super::prompt_select("Body type", &variants, uploader.body_type.to_index())?;
-	uploader.body_type = BodyType::from_index(body_selection).unwrap_or_default();
-
-	if uploader.body_type == BodyType::FormData {
-		uploader.file_form_name =
-			super::prompt_optional_input("File form name", uploader.file_form_name.as_deref())?;
-	} else {
-		uploader.file_form_name = None;
-	}
-
-	manage_kv_pairs("Headers", &mut uploader.headers)?;
-	manage_kv_pairs("URL Parameters", &mut uploader.parameters)?;
-	manage_kv_pairs("Body Arguments", &mut uploader.arguments)?;
-
-	uploader.output_url =
-		super::prompt_input("Output URL parse schema", Some(uploader.output_url.clone()))?;
-	uploader.error_message =
-		super::prompt_optional_input("Error message schema", uploader.error_message.as_deref())?;
-
-	Ok(())
+pub fn modify_uploader_menu(uploader: &mut UploadConfig) -> Result<()> {
+	crate::interactive_menu!(
+		&format!("Modifying {}", uploader.name),
+		uploader,
+		[
+			name: "Name" => text,
+			request_url: "Request URL" => text,
+			request_method: "Request Method" => enum,
+			body_type: "Body Type" => enum,
+			file_form_name: "File Form Name" => opt_text if uploader.body_type == BodyType::FormData,
+			headers: "Headers" => kv,
+			parameters: "URL Parameters" => kv,
+			arguments: "Body Arguments" => kv,
+			output_url: "Output URL" => text,
+			error_message: "Error Message" => opt_text,
+			deletion_url: "Deletion URL" => opt_text,
+			deletion_request_type: "Deletion Method" => enum if uploader.deletion_url.is_some(),
+		]
+	)
 }
 
 pub fn format_capture_label(cfg: &AppConfig) -> Option<String> {
@@ -342,4 +589,311 @@ pub fn display_recording_settings(cfg: &AppConfig) {
 	println!("{}", style("Image Settings:").cyan().bold());
 	print_setting("Format:", cfg.image_format.unwrap_or_default().as_str());
 	print_setting("Quality:", format!("{}%", cfg.image_quality.unwrap_or(90)));
+}
+
+pub fn register_protocol_handler() -> Result<()> {
+	let xdg_data_home = std::env::var("XDG_DATA_HOME")
+		.map(std::path::PathBuf::from)
+		.or_else(|_| {
+			dirs::home_dir()
+				.map(|p| p.join(".local/share"))
+				.ok_or_else(|| anyhow::anyhow!("Could not find home directory"))
+		})?;
+
+	let apps_dir = xdg_data_home.join("applications");
+	std::fs::create_dir_all(&apps_dir)?;
+
+	let desktop_file_path = apps_dir.join("framr-handler.desktop");
+
+	if desktop_file_path.exists() {
+		let proceed = super::prompt_confirm(
+			&format!(
+				"Protocol handler already exists at {}. Overwrite?",
+				style(desktop_file_path.display()).blue()
+			),
+			false,
+		)?;
+
+		if !proceed {
+			println!("  {} Registration cancelled.", style("ℹ").blue().bold());
+			return Ok(());
+		}
+	}
+
+	let exe_path = std::env::current_exe()?;
+	let exe_str = exe_path
+		.to_str()
+		.ok_or_else(|| anyhow::anyhow!("Invalid executable path"))?;
+
+	if exe_str.contains("/target/") {
+		println!(
+			"  {} {}",
+			style("Warning:").yellow().bold(),
+			style("Registering a handler pointing to a build directory. Deep links will break if you move or delete this binary.").yellow()
+		);
+	}
+
+	let content = format!(
+		r#"[Desktop Entry]
+Name=Framr Deeplink Handler
+Exec={} %u
+Type=Application
+Terminal=false
+MimeType=x-scheme-handler/framr;
+NoDisplay=true
+X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2
+Comment=Handle framr:// deeplinks for importing uploaders
+"#,
+		exe_str
+	);
+
+	std::fs::write(&desktop_file_path, content)?;
+
+	println!(
+		"  {} Protocol handler registered at {}",
+		style("✔").green().bold(),
+		style(desktop_file_path.display()).blue()
+	);
+
+	match std::process::Command::new("update-desktop-database")
+		.arg(&apps_dir)
+		.status()
+	{
+		Ok(status) if !status.success() => {
+			println!(
+				"  {} {}",
+				style("Note:").yellow().bold(),
+				style(
+					"'update-desktop-database' returned an error. You may need to log out for links to work."
+				)
+				.dim()
+			);
+		}
+		Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+			println!(
+				"  {} {}",
+				style("Note:").dim().bold(),
+				style("'update-desktop-database' not found. You may need to restart your session for the protocol handler to be recognized.").dim()
+			);
+		}
+		_ => {}
+	}
+
+	Ok(())
+}
+
+pub fn run_config_wizard() -> Result<()> {
+	let mut cfg = load_config()?;
+	let term = Term::stdout();
+
+	loop {
+		let _ = term.clear_screen();
+
+		println!("\n{}", style("Configuration Menu").cyan().bold());
+		println!("{}", style("━━━━━━━━━━━━━━━━━━━━━━━━━━").dim());
+
+		if cfg.uploaders.is_empty() {
+			println!("  {}\n", style("(No uploaders currently configured)").dim());
+		} else {
+			for (i, u) in cfg.uploaders.iter().enumerate() {
+				let is_default = cfg.default_uploader.as_deref() == Some(&u.name);
+				println!("{}", uploader_list_entry(i, u, is_default));
+			}
+			println!();
+		}
+
+		println!(
+			"  {} {}",
+			style("Default Uploader:").bold(),
+			cfg.default_uploader
+				.as_deref()
+				.map(|n| style(n).yellow().bold().to_string())
+				.unwrap_or_else(|| style("(none)").dim().to_string())
+		);
+		println!(
+			"  {} {}\n",
+			style("Default Action:").bold(),
+			cfg.default_action
+				.map(|a| style(a.label()).yellow().bold().to_string())
+				.unwrap_or_else(|| style("(none)").dim().to_string())
+		);
+
+		let method_label = format_capture_label(&cfg)
+			.map(|l| style(l).yellow().bold().to_string())
+			.unwrap_or_else(|| style("(none)").dim().to_string());
+		println!("  {} {}\n", style("Default Method:").bold(), method_label);
+		println!(
+			"  {} {}",
+			style("Image Format:").bold(),
+			style(cfg.image_format.unwrap_or_default().as_str())
+				.yellow()
+				.bold()
+		);
+		println!(
+			"  {} {}%",
+			style("Image Quality:").bold(),
+			style(cfg.image_quality.unwrap_or(90).to_string())
+				.yellow()
+				.bold()
+		);
+		println!(
+			"  {} {}\n",
+			style("Default Sound:").bold(),
+			style(&cfg.upload_sound).yellow().bold()
+		);
+
+		display_recording_settings(&cfg);
+		println!();
+
+		let selection = super::prompt_select(
+			"Whatcha doin?",
+			&[
+				"Import uploader (.sxcu / .iscu URL or File)",
+				"Create new uploader",
+				"Edit existing uploader",
+				"Delete uploader",
+				"General settings...",
+				"Selection UI settings...",
+				"Recording settings...",
+				"Save & Exit",
+			],
+			7,
+		)?;
+
+		let _ = term.clear_screen();
+
+		match selection {
+			0 => {
+				let source: String = super::prompt_input("Path to file or URL", None)?;
+				import_uploader(&source)?;
+				thread::sleep(Duration::from_secs(1));
+			}
+			1 => {
+				create_uploader()?;
+				thread::sleep(Duration::from_secs(1));
+			}
+			2 => {
+				edit_uploader(None)?;
+				thread::sleep(Duration::from_secs(1));
+			}
+			3 => {
+				delete_uploader(None)?;
+				thread::sleep(Duration::from_secs(1));
+			}
+			4 => {
+				modify_app_config(&mut cfg)?;
+				save_config(&cfg)?;
+				print_success("General settings updated.");
+				thread::sleep(Duration::from_secs(1));
+			}
+			5 => {
+				modify_selection_config(&mut cfg)?;
+				save_config(&cfg)?;
+				print_success("Selection UI settings updated.");
+				thread::sleep(Duration::from_secs(1));
+			}
+			6 => {
+				modify_recording_config(&mut cfg)?;
+				save_config(&cfg)?;
+				print_success("Recording settings updated.");
+				thread::sleep(Duration::from_secs(1));
+			}
+			_ => {
+				save_config(&cfg)?;
+				print_success("Configuration saved. Exiting...");
+				return Ok(());
+			}
+		}
+	}
+}
+
+pub fn modify_app_config(cfg: &mut AppConfig) -> Result<()> {
+	crate::interactive_menu!(
+		"General Settings",
+		cfg,
+		[
+			default_uploader: "Default Uploader" => uploader,
+			default_action: "Default Action" => opt_enum [DefaultAction],
+			default_capture: "Default Capture" => custom [edit_capture_method] display_as opt_enum,
+			image_format: "Image Format" => opt_enum [libframr::OutputImageFormat],
+			image_quality: "Image Quality" => opt_num,
+			upload_sound: "Upload Sound" => text,
+		]
+	)
+}
+
+fn edit_capture_method(s: &mut AppConfig) -> Result<()> {
+	let variants = DefaultCaptureMethod::variants();
+	let current_idx = s.default_capture.map(|v| v.to_index()).unwrap_or(0);
+	let sel = super::prompt_select("Default Capture", &variants, current_idx)?;
+	let method = DefaultCaptureMethod::from_index(sel).unwrap();
+
+	if method == DefaultCaptureMethod::Screen {
+		let conn = libframr::FramrConnection::new()?;
+		let outputs = conn.get_all_outputs()?;
+
+		if outputs.is_empty() {
+			print_error("No monitors detected.");
+		} else {
+			let items: Vec<String> = outputs
+				.iter()
+				.enumerate()
+				.map(|(i, o)| format!("{}: {}", i, o))
+				.collect();
+
+			let current_screen = s.default_screen.unwrap_or(0);
+			let selection = super::prompt_select(
+				"Select default monitor",
+				&items,
+				if current_screen < items.len() {
+					current_screen
+				} else {
+					0
+				},
+			)?;
+
+			s.default_screen = Some(selection);
+		}
+	}
+	s.default_capture = Some(method);
+	Ok(())
+}
+
+pub fn modify_selection_config(cfg: &mut AppConfig) -> Result<()> {
+	crate::interactive_menu!(
+		"Selection UI Settings",
+		cfg.selection,
+		[
+			background_color: "Background Color" => color,
+			border_color: "Border Color" => color,
+			border_width: "Border Width" => num,
+			toolbar_background_color: "Toolbar BG" => color,
+			toolbar_active_color: "Toolbar Active" => color,
+			toolbar_hover_color: "Toolbar Hover" => color,
+			highlight_color: "Highlight Color" => color,
+			annotation_color: "Annotation Color" => color,
+			annotation_line_width: "Annotation Width" => num,
+			blur_radius: "Blur Radius" => num,
+			pixelate_block_size: "Pixelate Block Size" => num,
+			toolbar_y: "Toolbar Y" => num,
+			toolbar_item_width: "Toolbar Item Width" => num,
+			toolbar_height: "Toolbar Height" => num,
+			show_toolbar: "Show Toolbar" => bool,
+		]
+	)
+}
+
+pub fn modify_recording_config(cfg: &mut AppConfig) -> Result<()> {
+	crate::interactive_menu!(
+		"Recording Settings",
+		cfg.recording,
+		[
+			encoder: "Video Encoder" => enum,
+			bitrate: "Bitrate (kbps)" => nonzero_num,
+			keyframe_interval: "Keyframe Interval" => nonzero_num,
+			threads: "Threads" => opt_num,
+			tune: "H.264 Tune" => enum if cfg.recording.encoder == libframr::VideoEncoder::H264,
+			speed: "Encoder Speed" => enum,
+		]
+	)
 }

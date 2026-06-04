@@ -34,7 +34,8 @@ impl Default for RecordingConfig {
 	}
 }
 
-#[derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq, Clone, Copy, strum::EnumIter, strum::AsRefStr, strum::Display, strum::IntoStaticStr)]
+#[strum(serialize_all = "lowercase")]
 pub enum VideoEncoder {
 	#[default]
 	H264,
@@ -62,7 +63,8 @@ impl FromStr for VideoEncoder {
 	}
 }
 
-#[derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq, Clone, Copy, strum::EnumIter, strum::AsRefStr, strum::Display, strum::IntoStaticStr)]
+#[strum(serialize_all = "lowercase")]
 pub enum H264Tune {
 	#[default]
 	Zerolatency,
@@ -120,7 +122,8 @@ impl FromStr for H264Tune {
 	}
 }
 
-#[derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq, Clone, Copy, strum::EnumIter, strum::AsRefStr, strum::Display, strum::IntoStaticStr)]
+#[strum(serialize_all = "lowercase")]
 pub enum EncoderSpeed {
 	#[default]
 	Ultrafast,
@@ -187,7 +190,7 @@ impl FromStr for EncoderSpeed {
 	}
 }
 
-#[derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq, Clone, Copy, strum::EnumIter, strum::AsRefStr, strum::IntoStaticStr)]
 pub enum OutputImageFormat {
 	#[default]
 	Png,
