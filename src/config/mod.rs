@@ -12,7 +12,7 @@ use anyhow::{Result, bail};
 use console::{Term, style};
 use dialoguer::{Confirm, Input, Select, theme::ColorfulTheme};
 use libframr::{
-	FramrConnection, H264SpeedPreset, H264Tune, OutputImageFormat as LibOutputImageFormat,
+	FramrConnection, H264Tune, OutputImageFormat as LibOutputImageFormat,
 };
 use std::path::PathBuf;
 use std::thread;
@@ -1004,29 +1004,53 @@ where
 }
 
 pub fn modify_recording_config(cfg: &mut AppConfig) -> Result<()> {
+	#[derive(Clone, Copy)]
+	enum MenuOption {
+		Encoder,
+		Bitrate,
+		Keyframe,
+		Threads,
+		Tune,
+		Speed,
+		Back,
+	}
+
 	loop {
 		println!("\n{}", style("Recording Settings").cyan().bold());
 		println!("{}", style("━━━━━━━━━━━━━━━━━━━━━━━━━").dim());
 
 		let r = &mut cfg.recording;
-		let items = [
-			setting_entry("Bitrate (kbps)", r.bitrate),
-			setting_entry("Keyframe Interval", r.keyframe_interval),
-			setting_entry(
+		let mut menu = vec![
+			(MenuOption::Encoder, setting_entry("Video Encoder", r.encoder.as_str())),
+			(MenuOption::Bitrate, setting_entry("Bitrate (kbps)", r.bitrate)),
+			(MenuOption::Keyframe, setting_entry("Keyframe Interval", r.keyframe_interval)),
+			(MenuOption::Threads, setting_entry(
 				"Threads",
 				r.threads
 					.map(|t| t.to_string())
 					.unwrap_or_else(|| "Auto".to_string()),
-			),
-			setting_entry("H.264 Tune", r.tune.as_str()),
-			setting_entry("H.264 Speed Preset", r.speed_preset.as_str()),
-			style("Back").dim().to_string(),
+			)),
 		];
 
+		if r.encoder == libframr::VideoEncoder::H264 {
+			menu.push((MenuOption::Tune, setting_entry("H.264 Tune", r.tune.as_str())));
+		}
+
+		menu.push((MenuOption::Speed, setting_entry("Encoder Speed", r.speed.as_str())));
+		menu.push((MenuOption::Back, style("Back").dim().to_string()));
+
+		let items: Vec<String> = menu.iter().map(|(_, s)| s.clone()).collect();
 		let sel = prompt_select("Edit Setting", &items, items.len() - 1)?;
 
-		match sel {
-			0 => {
+		match menu[sel].0 {
+			MenuOption::Encoder => {
+				let options = [libframr::VideoEncoder::H264, libframr::VideoEncoder::AV1];
+				let names = ["H.264 (x264)", "AV1 (rav1)"];
+				let current = options.iter().position(|&e| e == r.encoder).unwrap_or(0);
+				let selection = prompt_select("Select Video Encoder", &names, current)?;
+				r.encoder = options[selection];
+			}
+			MenuOption::Bitrate => {
 				r.bitrate = validated_text_input("Bitrate (kbps)", r.bitrate, |input| {
 					let val = input
 						.parse::<u32>()
@@ -1038,7 +1062,7 @@ pub fn modify_recording_config(cfg: &mut AppConfig) -> Result<()> {
 					}
 				})?;
 			}
-			1 => {
+			MenuOption::Keyframe => {
 				r.keyframe_interval = validated_text_input(
 					"Keyframe Interval (frames)",
 					r.keyframe_interval,
@@ -1054,7 +1078,7 @@ pub fn modify_recording_config(cfg: &mut AppConfig) -> Result<()> {
 					},
 				)?;
 			}
-			2 => {
+			MenuOption::Threads => {
 				let val: u32 = validated_text_input(
 					"Threads (0 for auto)",
 					r.threads.unwrap_or(0),
@@ -1067,7 +1091,7 @@ pub fn modify_recording_config(cfg: &mut AppConfig) -> Result<()> {
 				)?;
 				r.threads = if val == 0 { None } else { Some(val) };
 			}
-			3 => {
+			MenuOption::Tune => {
 				let options = [
 					H264Tune::Zerolatency,
 					H264Tune::Film,
@@ -1081,28 +1105,28 @@ pub fn modify_recording_config(cfg: &mut AppConfig) -> Result<()> {
 				let selection = prompt_select("Select H.264 Tune", &names, current)?;
 				r.tune = options[selection];
 			}
-			4 => {
+			MenuOption::Speed => {
 				let options = [
-					H264SpeedPreset::Ultrafast,
-					H264SpeedPreset::Superfast,
-					H264SpeedPreset::Veryfast,
-					H264SpeedPreset::Faster,
-					H264SpeedPreset::Fast,
-					H264SpeedPreset::Medium,
-					H264SpeedPreset::Slow,
-					H264SpeedPreset::Slower,
-					H264SpeedPreset::Veryslow,
-					H264SpeedPreset::Placebo,
+					libframr::EncoderSpeed::Ultrafast,
+					libframr::EncoderSpeed::Superfast,
+					libframr::EncoderSpeed::Veryfast,
+					libframr::EncoderSpeed::Faster,
+					libframr::EncoderSpeed::Fast,
+					libframr::EncoderSpeed::Medium,
+					libframr::EncoderSpeed::Slow,
+					libframr::EncoderSpeed::Slower,
+					libframr::EncoderSpeed::Veryslow,
+					libframr::EncoderSpeed::Placebo,
 				];
 				let names: Vec<_> = options.iter().map(|o| o.as_str()).collect();
 				let current = options
 					.iter()
-					.position(|o| *o == r.speed_preset)
+					.position(|o| *o == r.speed)
 					.unwrap_or(0);
-				let selection = prompt_select("Select H.264 Speed Preset", &names, current)?;
-				r.speed_preset = options[selection];
+				let selection = prompt_select("Select Encoder Speed", &names, current)?;
+				r.speed = options[selection];
 			}
-			_ => break,
+			MenuOption::Back => break,
 		}
 	}
 	Ok(())

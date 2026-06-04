@@ -11,22 +11,53 @@ use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(default)]
 pub struct RecordingConfig {
+	pub encoder: VideoEncoder,
 	pub bitrate: u32,
 	pub keyframe_interval: u32,
 	pub threads: Option<u32>,
 	pub tune: H264Tune,
-	pub speed_preset: H264SpeedPreset,
+	pub speed: EncoderSpeed,
 }
 
 impl Default for RecordingConfig {
 	fn default() -> Self {
 		Self {
+			encoder: VideoEncoder::H264,
 			bitrate: 4000,
 			keyframe_interval: 60,
 			threads: None,
 			tune: H264Tune::Zerolatency,
-			speed_preset: H264SpeedPreset::Ultrafast,
+			speed: EncoderSpeed::Ultrafast,
+		}
+	}
+}
+
+#[derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq, Clone, Copy)]
+pub enum VideoEncoder {
+	#[default]
+	H264,
+	AV1,
+}
+
+impl VideoEncoder {
+	pub fn as_str(&self) -> &'static str {
+		match self {
+			Self::H264 => "h264",
+			Self::AV1 => "av1",
+		}
+	}
+}
+
+impl FromStr for VideoEncoder {
+	type Err = String;
+
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		match s.to_lowercase().as_str() {
+			"h264" | "x264" => Ok(Self::H264),
+			"av1" | "rav1" => Ok(Self::AV1),
+			_ => Err(format!("Invalid video encoder: {}", s)),
 		}
 	}
 }
@@ -90,7 +121,7 @@ impl FromStr for H264Tune {
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq, Clone, Copy)]
-pub enum H264SpeedPreset {
+pub enum EncoderSpeed {
 	#[default]
 	Ultrafast,
 	Superfast,
@@ -104,7 +135,7 @@ pub enum H264SpeedPreset {
 	Placebo,
 }
 
-impl H264SpeedPreset {
+impl EncoderSpeed {
 	pub fn to_gst_value(&self) -> i32 {
 		match self {
 			Self::Ultrafast => 1,
@@ -136,7 +167,7 @@ impl H264SpeedPreset {
 	}
 }
 
-impl FromStr for H264SpeedPreset {
+impl FromStr for EncoderSpeed {
 	type Err = String;
 
 	fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -151,7 +182,7 @@ impl FromStr for H264SpeedPreset {
 			"slower" => Ok(Self::Slower),
 			"veryslow" => Ok(Self::Veryslow),
 			"placebo" => Ok(Self::Placebo),
-			_ => Err(format!("Invalid H.264 speed preset: {}", s)),
+			_ => Err(format!("Invalid encoder speed preset: {}", s)),
 		}
 	}
 }

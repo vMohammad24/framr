@@ -29,14 +29,24 @@ pub fn wait_for_gstreamer_eos(pipeline: &gstreamer::Pipeline) -> Result<()> {
 }
 
 fn apply_encoder_config(encoder: &gstreamer::Element, config: &RecordingConfig) {
-	if config.tune.is_psy_tune() {
-		encoder.set_property("psy-tune", config.tune.to_gst_value());
-	} else {
-		encoder.set_property("tune", config.tune.to_gst_value());
+	match config.encoder {
+		crate::VideoEncoder::H264 => {
+			if config.tune.is_psy_tune() {
+				encoder.set_property("psy-tune", config.tune.to_gst_value());
+			} else {
+				encoder.set_property("tune", config.tune.to_gst_value());
+			}
+			encoder.set_property("speed-preset", config.speed.to_gst_value());
+			encoder.set_property("bitrate", config.bitrate);
+			encoder.set_property("key-int-max", config.keyframe_interval);
+		}
+		crate::VideoEncoder::AV1 => {
+			let speed = 11 - config.speed.to_gst_value(); // av1 uses 0-10, where 0 is slowest and 10 is fastest
+			encoder.set_property("speed-preset", speed as u32);
+			encoder.set_property("bitrate", config.bitrate * 1000);
+			encoder.set_property("max-key-frame-interval", config.keyframe_interval as u64);
+		}
 	}
-	encoder.set_property("speed-preset", config.speed_preset.to_gst_value());
-	encoder.set_property("bitrate", config.bitrate);
-	encoder.set_property("key-int-max", config.keyframe_interval);
 	encoder.set_property("threads", config.threads.unwrap_or(0));
 }
 
@@ -82,27 +92,46 @@ pub fn run_single_encoding_pipeline(
 		Transform::Flipped270 => "upper-right-diagonal",
 	};
 
-	let tune_prop = if recording_config.tune.is_psy_tune() {
-		"psy-tune"
-	} else {
-		"tune"
+	let threads = recording_config.threads.unwrap_or(0);
+	let encoder_str = match recording_config.encoder {
+		crate::VideoEncoder::H264 => {
+			let tune_prop = if recording_config.tune.is_psy_tune() {
+				"psy-tune"
+			} else {
+				"tune"
+			};
+			format!(
+				"x264enc {}={} speed-preset={} bitrate={} key-int-max={} threads={}",
+				tune_prop,
+				recording_config.tune.as_str(),
+				recording_config.speed.as_str(),
+				recording_config.bitrate,
+				recording_config.keyframe_interval,
+				threads
+			)
+		}
+		crate::VideoEncoder::AV1 => {
+			let speed = 11 - recording_config.speed.to_gst_value();
+			format!(
+				"rav1enc speed-preset={} bitrate={} max-key-frame-interval={} threads={}",
+				speed,
+				// rav1enc uses bps instead of kbps
+				recording_config.bitrate * 1000,
+				recording_config.keyframe_interval,
+				threads
+			)
+		}
 	};
 
-	let threads = recording_config.threads.unwrap_or(0);
 	let pipeline_str = format!(
-		"appsrc name=src format=time is-live=true ! videoconvert ! videoflip method={} ! x264enc {}={} speed-preset={} bitrate={} key-int-max={} threads={} ! mp4mux ! filesink location={}",
+		"appsrc name=src format=time is-live=true ! videoconvert ! videoflip method={} ! {} ! mp4mux ! filesink location={}",
 		flip_method,
-		tune_prop,
-		recording_config.tune.as_str(),
-		recording_config.speed_preset.as_str(),
-		recording_config.bitrate,
-		recording_config.keyframe_interval,
-		threads,
+		encoder_str,
 		output_path.to_string_lossy()
 	);
 
 	let pipeline = gstreamer::parse::launch(&pipeline_str)
-        .map_err(|e| anyhow::anyhow!("Failed to launch GStreamer pipeline. Ensure gst-plugins-good and gst-plugins-ugly (for x264enc) are installed. Error: {}", e))?
+        .map_err(|e| anyhow::anyhow!("Failed to launch GStreamer pipeline. Ensure necessary plugins (gst-plugins-good, gst-plugins-ugly for x264enc, gst-plugins-bad and gst-plugins-rs for rav1enc) are installed. Error: {}", e))?
         .dynamic_cast::<gstreamer::Pipeline>()
         .map_err(|_| anyhow::anyhow!("Failed to cast to Pipeline"))?;
 
@@ -187,9 +216,14 @@ pub fn run_composite_encoding_pipeline(
 		.build()
 		.map_err(|e| anyhow::anyhow!("Failed to create videoconvert. Error: {}", e))?;
 
-	let encoder = gstreamer::ElementFactory::make("x264enc")
+	let encoder_name = match recording_config.encoder {
+		crate::VideoEncoder::H264 => "x264enc",
+		crate::VideoEncoder::AV1 => "rav1enc",
+	};
+
+	let encoder = gstreamer::ElementFactory::make(encoder_name)
 		.build()
-		.map_err(|e| anyhow::anyhow!("Failed to create x264enc element. Ensure gst-plugins-bad is installed and x264enc element is available.\nError: {}", e))?;
+		.map_err(|e| anyhow::anyhow!("Failed to create {} element. Ensure necessary GStreamer plugins (gst-plugins-good, gst-plugins-ugly for x264enc, gst-plugins-bad and gst-plugins-rs for rav1enc) are installed.\nError: {}", encoder_name, e))?;
 
 	apply_encoder_config(&encoder, &recording_config);
 

@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use libframr::{H264SpeedPreset, H264Tune};
+use libframr::{EncoderSpeed, H264Tune, VideoEncoder};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -45,6 +45,10 @@ pub struct Cli {
 	#[arg(short, long)]
 	pub record: bool,
 
+	/// Video encoder (h264/x264, av1/rav1)
+	#[arg(long)]
+	pub encoder: Option<VideoEncoder>,
+
 	/// Recording bitrate in kbps
 	#[arg(long)]
 	pub bitrate: Option<u32>,
@@ -61,9 +65,9 @@ pub struct Cli {
 	#[arg(long)]
 	pub tune: Option<H264Tune>,
 
-	/// H.264 speed preset (ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow, placebo)
+	/// Encoder speed preset (ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow, placebo)
 	#[arg(long)]
-	pub speed_preset: Option<H264SpeedPreset>,
+	pub speed: Option<EncoderSpeed>,
 
 	/// Upload screenshot (uses default uploader, or specify with -u <name>)
 	#[arg(short = 'u', long, num_args = 0..=1, default_missing_value = "")]

@@ -324,7 +324,8 @@ pub fn format_capture_label(cfg: &AppConfig) -> Option<String> {
 pub fn display_recording_settings(cfg: &AppConfig) {
 	println!();
 	println!("{}", style("Recording Settings:").cyan().bold());
-	print_setting("Bitrate:", cfg.recording.bitrate);
+	print_setting("Video Encoder:", cfg.recording.encoder.as_str());
+	print_setting("Bitrate:", format!("{} kbps", cfg.recording.bitrate));
 	print_setting("Keyframe Interval:", cfg.recording.keyframe_interval);
 	print_setting(
 		"Threads:",
@@ -333,8 +334,10 @@ pub fn display_recording_settings(cfg: &AppConfig) {
 			.map(|t| t.to_string())
 			.unwrap_or_else(|| "Auto".to_string()),
 	);
-	print_setting("H.264 Tune:", cfg.recording.tune.as_str());
-	print_setting("H.264 Speed Preset:", cfg.recording.speed_preset.as_str());
+	if cfg.recording.encoder == libframr::VideoEncoder::H264 {
+		print_setting("H.264 Tune:", cfg.recording.tune.as_str());
+	}
+	print_setting("Encoder Speed:", cfg.recording.speed.as_str());
 	println!();
 	println!("{}", style("Image Settings:").cyan().bold());
 	print_setting("Format:", cfg.image_format.unwrap_or_default().as_str());

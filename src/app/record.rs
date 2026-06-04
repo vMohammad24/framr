@@ -12,13 +12,14 @@ pub fn get_recording_config(cli: &Cli, cfg: Option<&AppConfig>) -> RecordingConf
 	let base_config = cfg.map(|c| c.recording).unwrap_or_default();
 
 	RecordingConfig {
+		encoder: cli.encoder.unwrap_or(base_config.encoder),
 		bitrate: cli.bitrate.unwrap_or(base_config.bitrate),
 		keyframe_interval: cli
 			.keyframe_interval
 			.unwrap_or(base_config.keyframe_interval),
 		threads: cli.threads.filter(|&t| t != 0).or(base_config.threads),
 		tune: cli.tune.unwrap_or(base_config.tune),
-		speed_preset: cli.speed_preset.unwrap_or(base_config.speed_preset),
+		speed: cli.speed.unwrap_or(base_config.speed),
 	}
 }
 
