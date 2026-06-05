@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use hyprland::{
-	data::{Clients, Monitors},
+	data::{Clients, FullscreenMode, Monitors},
 	shared::HyprData,
 };
 
@@ -11,6 +11,7 @@ pub struct Window {
 	pub height: i32,
 	pub x: i32,
 	pub y: i32,
+	pub z_index: i32,
 }
 
 pub fn get_windows() -> Result<Vec<Window>> {
@@ -24,14 +25,19 @@ pub fn get_windows() -> Result<Vec<Window>> {
 }
 
 pub fn get_window_at_pos(pos: (f64, f64), windows: &[Window]) -> Option<usize> {
-	windows.iter().position(|win| {
-		let left = win.x as f64;
-		let right = left + win.width as f64;
-		let top = win.y as f64;
-		let bottom = top + win.height as f64;
+	let (px, py) = (pos.0 as i32, pos.1 as i32);
 
-		pos.0 >= left && pos.0 <= right && pos.1 >= top && pos.1 <= bottom
-	})
+	windows
+		.iter()
+		.enumerate()
+		.filter(|(_, win)| {
+			let right = win.x + win.width;
+			let bottom = win.y + win.height;
+
+			px >= win.x && px <= right && py >= win.y && py <= bottom
+		})
+		.max_by_key(|(_, win)| win.z_index)
+		.map(|(index, _)| index)
 }
 
 pub fn get_hypr_windows() -> Result<Vec<Window>> {
@@ -43,14 +49,27 @@ pub fn get_hypr_windows() -> Result<Vec<Window>> {
 		.filter(|c| {
 			monitors
 				.iter()
-				.any(|m| m.active_workspace.id == c.workspace.id)
+				.any(|m| m.active_workspace.id == c.workspace.id && c.visible)
 		})
-		.map(|c| Window {
-			title: c.title,
-			x: c.at.0 as i32,
-			y: c.at.1 as i32,
-			width: c.size.0 as i32,
-			height: c.size.1 as i32,
+		.map(|c| {
+			let layer_base: i32 = if c.over_fullscreen {
+				3000
+			} else if c.floating {
+				2500
+			} else if c.fullscreen != FullscreenMode::None {
+				2000
+			} else {
+				1000
+			};
+
+			Window {
+				title: c.title,
+				x: c.at.0 as i32,
+				y: c.at.1 as i32,
+				width: c.size.0 as i32,
+				height: c.size.1 as i32,
+				z_index: layer_base - c.focus_history_id as i32,
+			}
 		})
 		.collect();
 
