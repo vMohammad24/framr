@@ -1,21 +1,29 @@
 name: Publish to AUR
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_run:
+    workflows: ["Release"]
+    types:
+      - completed
 
 jobs:
   aur-publish:
     runs-on: ubuntu-latest
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      startsWith(github.event.workflow_run.head_branch, 'v')
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
 
       - name: Update PKGBUILD version
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
+          VERSION=${GITHUB_REF_NAME#v}
           sed -i "s/pkgver=.*/pkgver=$VERSION/" PKGBUILD
           sed -i "s/pkgver=.*/pkgver=$VERSION/" PKGBUILD-bin
+        env:
+          GITHUB_REF_NAME: ${{ github.event.workflow_run.head_branch }}
 
       - name: Publish AUR package (source)
         uses: KSXGitHub/github-actions-deploy-aur@v4.1.3
