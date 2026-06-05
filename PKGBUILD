@@ -1,11 +1,12 @@
 # Maintainer: vMohammad <vmohammad@vmohammad.dev>
 pkgname=framr
-pkgver=0.5.0 # gh action changes this and sha256sums
+pkgver=0.10.1 # gh action changes this and sha256sums
 pkgrel=1
 pkgdesc="A Wayland screenshot tool written in Rust"
 arch=('x86_64')
 url="https://github.com/vMohammad24/framr"
 license=('AGPL3')
+conflicts=("$pkgname-bin")
 options=('!lto')
 depends=('wayland' 'libxkbcommon' 'dbus' 'cairo' 'libxcursor' 'gstreamer' 'gst-plugins-base-libs' 'gst-plugins-base' 'gst-plugins-good' 'gst-plugins-ugly' 'gst-plugins-bad' 'gst-plugin-rav1e')
 makedepends=('cargo' 'pkgconf')
