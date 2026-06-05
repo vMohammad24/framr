@@ -17,9 +17,17 @@ Pre-built binaries for Linux (x86_64) are available on the [Releases](https://gi
 
 ### Arch Linux (AUR)
 
-framr is available in the AUR as `framr`:
+framr is available in the AUR as `framr` and `framr-bin`:
 ```sh
 yay -S framr
+```
+
+### Gentoo (Community-maintained)
+```bash
+eselect repository add roxy-overlay git https://codeberg.org/key/roxy-overlay.git
+eselect repository enable roxy-overlay
+emaint sync -r roxy-overlay
+emerge media-gfx/framr
 ```
 
 ### Cargo
