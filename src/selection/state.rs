@@ -1,4 +1,5 @@
 use crate::config::{Color, SelectionConfig};
+use crate::selection::tools::*;
 use crate::selection::window::Window;
 use smithay_client_toolkit::seat::keyboard::Keysym;
 use std::collections::VecDeque;
@@ -17,17 +18,31 @@ pub enum Tool {
 }
 
 impl Tool {
-	pub fn all() -> &'static [(Tool, &'static str, &'static str)] {
+	pub fn behavior(&self) -> &'static dyn ToolBehavior {
+		match self {
+			Tool::Select => &SelectTool,
+			Tool::Circle => &CircleTool,
+			Tool::Arrow => &ArrowTool,
+			Tool::Checkmark => &CheckmarkTool,
+			Tool::Blur => &BlurTool,
+			Tool::Pixelate => &PixelateTool,
+			Tool::Highlight => &HighlightTool,
+			Tool::Text => &TextTool,
+			Tool::Annotate => &AnnotateTool,
+		}
+	}
+
+	pub fn all() -> &'static [Tool] {
 		&[
-			(Tool::Select, "󰒅", "Select Area"),
-			(Tool::Circle, "", "Draw Circle"),
-			(Tool::Arrow, "󰁜", "Draw Arrow"),
-			(Tool::Checkmark, "", "Checkmark"),
-			(Tool::Blur, "󰂵", "Blur Area"),
-			(Tool::Pixelate, "󰋁", "Pixelate Area"),
-			(Tool::Highlight, "󰸱", "Highlight Area"),
-			(Tool::Text, "󰊄", "Add Text"),
-			(Tool::Annotate, "󰏫", "Free Draw"),
+			Tool::Select,
+			Tool::Circle,
+			Tool::Arrow,
+			Tool::Checkmark,
+			Tool::Blur,
+			Tool::Pixelate,
+			Tool::Highlight,
+			Tool::Text,
+			Tool::Annotate,
 		]
 	}
 
@@ -46,18 +61,11 @@ impl Tool {
 		}
 	}
 
-	pub fn keysyms(&self) -> Vec<Keysym> {
-		match self {
-			Tool::Select => vec![Keysym::_1, Keysym::s, Keysym::S],
-			Tool::Circle => vec![Keysym::_2, Keysym::c, Keysym::C],
-			Tool::Arrow => vec![Keysym::_3, Keysym::a, Keysym::A],
-			Tool::Checkmark => vec![Keysym::_4, Keysym::k, Keysym::K],
-			Tool::Blur => vec![Keysym::_5, Keysym::b, Keysym::B],
-			Tool::Pixelate => vec![Keysym::_6, Keysym::p, Keysym::P],
-			Tool::Highlight => vec![Keysym::_7, Keysym::h, Keysym::H],
-			Tool::Text => vec![Keysym::_8, Keysym::t, Keysym::T],
-			Tool::Annotate => vec![Keysym::_9, Keysym::d, Keysym::D],
-		}
+	pub fn from_keysym(keysym: Keysym) -> Option<Tool> {
+		Tool::all()
+			.iter()
+			.find(|t| t.behavior().keys().contains(&keysym))
+			.copied()
 	}
 }
 
@@ -97,7 +105,6 @@ impl SelectionState {
 	pub fn handle_pointer_enter(&mut self, surface_width: f64, offset: (f64, f64)) {
 		self.last_surface_width = surface_width;
 		self.current_offset = offset;
-		self.dirty = true;
 	}
 
 	pub fn handle_pointer_press(
@@ -108,8 +115,9 @@ impl SelectionState {
 		ctrl_pressed: bool,
 	) {
 		self.current = global_pos;
-		if button == 0x110 {
-			// lclick
+		let mouse_btn = MouseButton::from_raw(button);
+
+		if mouse_btn == MouseButton::Left {
 			let ty = self.config.toolbar_y;
 			let th = self.config.toolbar_height;
 			if local_pos.1 >= ty && local_pos.1 <= ty + th {
@@ -127,80 +135,22 @@ impl SelectionState {
 					}
 				}
 			}
+		}
 
-			if self.active_tool == Tool::Select {
-				let hovered_win =
-					crate::selection::window::get_window_at_pos(global_pos, &self.windows);
+		if mouse_btn == MouseButton::Left {
+			let config = self.config;
+			let behavior = self.active_tool.behavior();
+			behavior.on_press(
+				self,
+				global_pos,
+				local_pos,
+				mouse_btn,
+				ctrl_pressed,
+				&config,
+			);
+		}
 
-				if hovered_win.is_some() {
-					self.start = Some(global_pos);
-					self.move_start_point = Some(global_pos);
-					self.end = Some(global_pos);
-					self.is_dragging = true;
-				} else {
-					let mut hit_idx = None;
-					for (idx, ann) in self.annotations.iter().enumerate().rev() {
-						if crate::selection::graphics::hit_test(ann, global_pos, 5.0) {
-							hit_idx = Some(idx);
-							break;
-						}
-					}
-
-					if let Some(idx) = hit_idx {
-						self.push_undo();
-						self.selected_annotation = Some(idx);
-						self.is_moving_annotation = true;
-						self.move_start_point = Some(global_pos);
-						self.original_points = Some(self.annotations[idx].points.clone());
-					} else {
-						self.selected_annotation = None;
-						self.start = Some(global_pos);
-						self.move_start_point = Some(global_pos);
-						self.end = None;
-						self.is_dragging = true;
-					}
-				}
-			} else if ctrl_pressed {
-				let mut hit_idx = None;
-				for (idx, ann) in self.annotations.iter().enumerate().rev() {
-					if crate::selection::graphics::hit_test(ann, global_pos, 5.0) {
-						hit_idx = Some(idx);
-						break;
-					}
-				}
-
-				if let Some(idx) = hit_idx {
-					self.push_undo();
-					self.selected_annotation = Some(idx);
-					self.is_moving_annotation = true;
-					self.move_start_point = Some(global_pos);
-					self.original_points = Some(self.annotations[idx].points.clone());
-				}
-			} else {
-				self.push_undo();
-				let tool = self.active_tool;
-				let color = self.config.annotation_color;
-				self.annotations.push(Annotation {
-					tool,
-					points: vec![global_pos],
-					text: if tool == Tool::Text {
-						Some(String::new())
-					} else {
-						None
-					},
-					color,
-				});
-
-				if tool == Tool::Text {
-					self.editing_text_idx = Some(self.annotations.len() - 1);
-					self.selected_annotation = Some(self.annotations.len() - 1);
-				} else {
-					self.editing_text_idx = None;
-					self.is_dragging = true;
-				}
-			}
-		} else if button == 0x111 {
-			// rclick
+		if mouse_btn == MouseButton::Right {
 			if self.is_dragging {
 				self.is_dragging = false;
 				if self.active_tool == Tool::Select {
@@ -218,7 +168,8 @@ impl SelectionState {
 
 	pub fn handle_pointer_release(&mut self, global_pos: (f64, f64), button: u32) {
 		self.current = global_pos;
-		if button == 0x110 {
+		let mouse_btn = MouseButton::from_raw(button);
+		if mouse_btn == MouseButton::Left {
 			if self.is_moving_annotation {
 				self.is_moving_annotation = false;
 				self.move_start_point = None;
@@ -226,33 +177,10 @@ impl SelectionState {
 			}
 			if self.is_dragging {
 				self.is_dragging = false;
-				if self.active_tool == Tool::Select {
-					if let Some(start) = self.start {
-						let dx = (start.0 - global_pos.0).abs();
-						let dy = (start.1 - global_pos.1).abs();
-
-						if dx <= 5.0 && dy <= 5.0 {
-							if let Some(hovered_idx) = self.hovered_window {
-								if let Some(win) = self.windows.get(hovered_idx).cloned() {
-									let win_x = win.x as f64;
-									let win_y = win.y as f64;
-									let win_w = win.width as f64;
-									let win_h = win.height as f64;
-									self.start = Some((win_x, win_y));
-									self.end = Some((win_x + win_w, win_y + win_h));
-								}
-							} else {
-								self.start = None;
-								self.end = None;
-							}
-						} else {
-							self.end = Some(global_pos);
-						}
-					}
-
-					self.finished = true;
-					self.move_start_point = None;
-				}
+				let config = self.config;
+				self.active_tool
+					.behavior()
+					.on_release(self, global_pos, mouse_btn, &config);
 			}
 		}
 		self.dirty = true;
@@ -260,10 +188,6 @@ impl SelectionState {
 
 	pub fn handle_pointer_motion(&mut self, global_pos: (f64, f64), shift_pressed: bool) {
 		self.current = global_pos;
-		if self.active_tool == Tool::Select && !self.is_dragging {
-			self.hovered_window =
-				crate::selection::window::get_window_at_pos(global_pos, &self.windows);
-		}
 
 		if self.is_moving_annotation {
 			if let (Some(start), Some(orig), Some(idx)) = (
@@ -287,20 +211,10 @@ impl SelectionState {
 					p.1 = orig[i].1 + dy;
 				}
 			}
-		} else if self.is_dragging {
-			if self.active_tool == Tool::Select {
-				self.end = Some(global_pos);
-			} else if let Some(ann) = self.annotations.last_mut() {
-				if ann.tool == Tool::Annotate {
-					ann.points.push(global_pos);
-				} else {
-					if ann.points.len() > 1 {
-						ann.points[1] = global_pos;
-					} else {
-						ann.points.push(global_pos);
-					}
-				}
-			}
+		} else {
+			self.active_tool
+				.behavior()
+				.on_motion(self, global_pos, shift_pressed);
 		}
 		self.dirty = true;
 	}

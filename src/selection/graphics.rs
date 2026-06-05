@@ -1,10 +1,10 @@
-use cairo::{Antialias, Context, Format, ImageSurface, LineCap, LineJoin};
+use cairo::{Context, Format, ImageSurface};
 use image::{Rgba, RgbaImage};
 use libframr::OutputInfo;
-use pangocairo::functions::{create_layout, show_layout};
+use pangocairo::functions::create_layout;
 
 use crate::config::{Color, SelectionConfig};
-use crate::selection::state::{Annotation, Tool};
+use crate::selection::state::Annotation;
 
 pub fn apply_annotations(
 	img: &mut RgbaImage,
@@ -13,31 +13,7 @@ pub fn apply_annotations(
 	config: &SelectionConfig,
 ) {
 	for ann in annotations {
-		if (ann.tool == Tool::Blur || ann.tool == Tool::Pixelate || ann.tool == Tool::Highlight)
-			&& ann.points.len() >= 2
-		{
-			let (x1, y1) = (
-				ann.points[0].0 - output.logical_position.x as f64,
-				ann.points[0].1 - output.logical_position.y as f64,
-			);
-			let (x2, y2) = (
-				ann.points[1].0 - output.logical_position.x as f64,
-				ann.points[1].1 - output.logical_position.y as f64,
-			);
-			let bx = (x1.min(x2) as u32).min(img.width());
-			let by = (y1.min(y2) as u32).min(img.height());
-			let bw = ((x1 - x2).abs() as u32).min(img.width() - bx);
-			let bh = ((y1 - y2).abs() as u32).min(img.height() - by);
-			if bw > 0 && bh > 0 {
-				if ann.tool == Tool::Blur {
-					apply_blur(img, bx, by, bw, bh, config.blur_radius);
-				} else if ann.tool == Tool::Pixelate {
-					apply_pixelate(img, bx, by, bw, bh, config.pixelate_block_size);
-				} else {
-					apply_highlight(img, bx, by, bw, bh, config.highlight_color);
-				}
-			}
-		}
+		ann.tool.behavior().apply_effect(img, ann, output, config);
 	}
 
 	let (w, h) = img.dimensions();
@@ -69,7 +45,7 @@ pub fn apply_annotations(
 			eprintln!("failed to paint: {}", e);
 		}
 		for ann in annotations {
-			if ann.tool != Tool::Blur && ann.tool != Tool::Pixelate && ann.tool != Tool::Highlight {
+			if !ann.tool.behavior().is_region_effect() {
 				draw_annotation(&cr, ann, output, config);
 			}
 		}
@@ -180,76 +156,10 @@ pub fn get_text_size(text: &str) -> (f64, f64) {
 }
 
 pub fn hit_test(ann: &Annotation, point: (f64, f64), threshold: f64) -> bool {
-	match ann.tool {
-		Tool::Circle => {
-			if ann.points.len() >= 2 {
-				let center = ann.points[0];
-				let edge = ann.points[1];
-				let dx = center.0 - edge.0;
-				let dy = center.1 - edge.1;
-				let radius = (dx * dx + dy * dy).sqrt();
-
-				let pdx = center.0 - point.0;
-				let pdy = center.1 - point.1;
-				let dist = (pdx * pdx + pdy * pdy).sqrt();
-
-				(dist - radius).abs() <= threshold
-			} else {
-				false
-			}
-		}
-		Tool::Arrow => {
-			if ann.points.len() >= 2 {
-				dist_to_segment(point, ann.points[0], ann.points[1]) <= threshold
-			} else {
-				false
-			}
-		}
-		Tool::Checkmark => {
-			if !ann.points.is_empty() {
-				let p = ann.points[0];
-				let dx = (point.0 - p.0).abs();
-				let dy = (point.1 - p.1).abs();
-				dx <= 20.0 && dy <= 20.0
-			} else {
-				false
-			}
-		}
-		Tool::Annotate => ann
-			.points
-			.windows(2)
-			.any(|w| dist_to_segment(point, w[0], w[1]) <= threshold),
-		Tool::Text => {
-			if let Some(text) = &ann.text
-				&& !ann.points.is_empty()
-			{
-				let p = ann.points[0];
-				let (w, h) = get_text_size(text);
-				let dx = point.0 - p.0;
-				let dy = point.1 - p.1;
-				dx >= 0.0 && dx <= w && dy >= 0.0 && dy <= h
-			} else {
-				false
-			}
-		}
-		Tool::Blur | Tool::Pixelate | Tool::Highlight => {
-			if ann.points.len() >= 2 {
-				let (x1, y1) = ann.points[0];
-				let (x2, y2) = ann.points[1];
-				let x = x1.min(x2);
-				let y = y1.min(y2);
-				let w = (x1 - x2).abs();
-				let h = (y1 - y2).abs();
-				point.0 >= x && point.0 <= x + w && point.1 >= y && point.1 <= y + h
-			} else {
-				false
-			}
-		}
-		Tool::Select => false,
-	}
+	ann.tool.behavior().hit_test(ann, point, threshold)
 }
 
-fn dist_to_segment(p: (f64, f64), a: (f64, f64), b: (f64, f64)) -> f64 {
+pub fn dist_to_segment(p: (f64, f64), a: (f64, f64), b: (f64, f64)) -> f64 {
 	let dx = b.0 - a.0;
 	let dy = b.1 - a.1;
 	if dx == 0.0 && dy == 0.0 {
@@ -277,92 +187,5 @@ pub fn draw_annotation(
 	output: &OutputInfo,
 	config: &SelectionConfig,
 ) {
-	set_source_color(cr, ann.color);
-	cr.set_line_width(config.annotation_line_width);
-	cr.set_antialias(Antialias::Best);
-	cr.set_line_cap(LineCap::Round);
-	cr.set_line_join(LineJoin::Round);
-
-	let offset_x = output.logical_position.x as f64;
-	let offset_y = output.logical_position.y as f64;
-
-	match ann.tool {
-		Tool::Circle => {
-			if ann.points.len() >= 2 {
-				let (x1, y1) = (ann.points[0].0 - offset_x, ann.points[0].1 - offset_y);
-				let (x2, y2) = (ann.points[1].0 - offset_x, ann.points[1].1 - offset_y);
-				let dx = x1 - x2;
-				let dy = y1 - y2;
-				let radius = (dx * dx + dy * dy).sqrt();
-
-				cr.arc(x1, y1, radius, 0.0, 2.0 * std::f64::consts::PI);
-				if let Err(e) = cr.stroke() {
-					eprintln!("failed to stroke circle: {}", e);
-				}
-			}
-		}
-		Tool::Arrow => {
-			if ann.points.len() >= 2 {
-				let (x1, y1) = (ann.points[0].0 - offset_x, ann.points[0].1 - offset_y);
-				let (x2, y2) = (ann.points[1].0 - offset_x, ann.points[1].1 - offset_y);
-				cr.move_to(x1, y1);
-				cr.line_to(x2, y2);
-				if let Err(e) = cr.stroke() {
-					eprintln!("failed to stroke arrow line: {}", e);
-				}
-				let angle = (y2 - y1).atan2(x2 - x1);
-				let head_len = 20.0;
-				cr.move_to(x2, y2);
-				cr.line_to(
-					x2 - head_len * (angle - 0.5).cos(),
-					y2 - head_len * (angle - 0.5).sin(),
-				);
-				cr.move_to(x2, y2);
-				cr.line_to(
-					x2 - head_len * (angle + 0.5).cos(),
-					y2 - head_len * (angle + 0.5).sin(),
-				);
-				if let Err(e) = cr.stroke() {
-					eprintln!("failed to stroke arrow head: {}", e);
-				}
-			}
-		}
-		Tool::Checkmark => {
-			if !ann.points.is_empty() {
-				let (x, y) = (ann.points[0].0 - offset_x, ann.points[0].1 - offset_y);
-				cr.move_to(x - 10.0, y);
-				cr.line_to(x, y + 10.0);
-				cr.line_to(x + 20.0, y - 10.0);
-				if let Err(e) = cr.stroke() {
-					eprintln!("failed to stroke checkmark: {}", e);
-				}
-			}
-		}
-		Tool::Annotate => {
-			if !ann.points.is_empty() {
-				let (x0, y0) = (ann.points[0].0 - offset_x, ann.points[0].1 - offset_y);
-				cr.move_to(x0, y0);
-				for p in &ann.points[1..] {
-					cr.line_to(p.0 - offset_x, p.1 - offset_y);
-				}
-				if let Err(e) = cr.stroke() {
-					eprintln!("failed to stroke annotation: {}", e);
-				}
-			}
-		}
-		Tool::Text => {
-			if let Some(text) = &ann.text
-				&& !ann.points.is_empty()
-			{
-				let (x, y) = (ann.points[0].0 - offset_x, ann.points[0].1 - offset_y);
-				let layout = create_layout(cr);
-				layout.set_text(text);
-				let font = pango::FontDescription::from_string("system-ui Bold 20");
-				layout.set_font_description(Some(&font));
-				cr.move_to(x, y);
-				show_layout(cr, &layout);
-			}
-		}
-		_ => {}
-	}
+	ann.tool.behavior().draw(cr, ann, output, config);
 }

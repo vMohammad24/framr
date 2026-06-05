@@ -106,50 +106,9 @@ impl AppState {
 			}
 
 			for (idx, ann) in state.annotations.iter().enumerate() {
-				if ann.tool == Tool::Blur
-					|| ann.tool == Tool::Pixelate
-					|| ann.tool == Tool::Highlight
-				{
-					if ann.points.len() >= 2 {
-						let offset_x = surface_data.output.logical_position.x as f64;
-						let offset_y = surface_data.output.logical_position.y as f64;
-						let x1 = ann.points[0].0 - offset_x;
-						let y1 = ann.points[0].1 - offset_y;
-						let x2 = ann.points[1].0 - offset_x;
-						let y2 = ann.points[1].1 - offset_y;
-
-						let x = x1.min(x2);
-						let y = y1.min(y2);
-						let w = (x1 - x2).abs();
-						let h = (y1 - y2).abs();
-
-						if w > 0.0 && h > 0.0 {
-							if ann.tool == Tool::Blur {
-								if let Err(e) =
-									cr.set_source_surface(&surface_data.cached_blurred_bg, 0.0, 0.0)
-								{
-									eprintln!("failed to set blurred source surface: {}", e);
-								}
-							} else if ann.tool == Tool::Pixelate {
-								if let Err(e) = cr.set_source_surface(
-									&surface_data.cached_pixelated_bg,
-									0.0,
-									0.0,
-								) {
-									eprintln!("failed to set pixelated source surface: {}", e);
-								}
-							} else {
-								graphics::set_source_color(&cr, state.config.highlight_color);
-							}
-							cr.rectangle(x, y, w, h);
-							if let Err(e) = cr.fill() {
-								eprintln!("failed to fill: {}", e);
-							}
-						}
-					}
-				} else {
-					graphics::draw_annotation(&cr, ann, &surface_data.output, &state.config);
-				}
+				ann.tool
+					.behavior()
+					.render(&cr, ann, surface_data, &state.config);
 
 				if Some(idx) == state.selected_annotation {
 					let offset_x = surface_data.output.logical_position.x as f64;
@@ -337,7 +296,9 @@ impl AppState {
 
 		let mut hovered_tooltip = None;
 
-		for (i, (tool, icon, tip)) in tools.iter().enumerate() {
+		for (i, tool) in tools.iter().enumerate() {
+			let icon = tool.behavior().icon();
+			let tip = tool.behavior().tooltip();
 			let tx = x + i as f64 * item_w;
 
 			let is_hovered =
@@ -354,7 +315,7 @@ impl AppState {
 			}
 
 			if is_hovered {
-				hovered_tooltip = Some((*tip, tx + (item_w / 2.0), y + h + 10.0));
+				hovered_tooltip = Some((tip, tx + (item_w / 2.0), y + h + 10.0));
 			}
 
 			cr.set_source_rgb(1.0, 1.0, 1.0);
@@ -613,13 +574,10 @@ impl KeyboardHandler for AppState {
                 }
             }
             _ => {
-                for (tool, _, _) in Tool::all() {
-                    if tool.keysyms().contains(&event.keysym) {
-                        s.active_tool = *tool;
-                        s.selected_annotation = None;
-                        s.dirty = true;
-                        return;
-                    }
+                if let Some(tool) = Tool::from_keysym(event.keysym) {
+                    s.active_tool = tool;
+                    s.selected_annotation = None;
+                    s.dirty = true;
                 }
             }
         }
