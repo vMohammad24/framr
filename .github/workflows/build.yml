@@ -15,7 +15,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Install System Dependencies
-        run: pacman -Syu --noconfirm pkg-config wayland wayland-protocols libxkbcommon cairo pango libxcursor mesa dbus gstreamer gst-plugins-base-libs gst-plugins-base gst-plugins-good gst-plugins-ugly gst-plugins-bad gst-plugins-rs
+        run: pacman -Syu --noconfirm pkg-config wayland wayland-protocols libxkbcommon cairo pango libxcursor mesa dbus gstreamer gst-plugins-base-libs gst-plugins-base gst-plugins-good gst-plugins-ugly gst-plugins-bad gst-plugins-rs gstreamer-vaapi
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
