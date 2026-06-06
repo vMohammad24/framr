@@ -1,6 +1,6 @@
 [package]
 name = "libframr"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 
 [dependencies]
@@ -11,8 +11,8 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 memmap2 = "0.9"
 rustix = { version = "1", features = ["fs", "shm", "pipe"] }
 anyhow = "1.0"
-drm-fourcc = "2.2"
-dbus = "0.9.11"
+drm-fourcc = "2"
+dbus = "0.9"
 gstreamer = "0.25"
 gstreamer-app = "0.25"
 gstreamer-video = "0.25"
