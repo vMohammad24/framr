@@ -33,7 +33,7 @@ emerge media-gfx/framr
 ### Cargo
 You can install `framr` from source using `cargo`:
 ```bash
-cargo install --path .
+cargo install --git https://github.com/vMohammad24/framr.git
 ```
 
 ### Nix
