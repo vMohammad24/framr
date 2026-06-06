@@ -1,10 +1,9 @@
 name: Publish to AUR
 
 on:
-  workflow_run:
-    workflows: ["Release"]
-    types:
-      - completed
+  push:
+    tags:
+      - "v*"
 
 jobs:
   aur-publish:
