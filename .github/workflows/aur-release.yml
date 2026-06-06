@@ -9,14 +9,20 @@ on:
 jobs:
   aur-publish:
     runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Update PKGBUILD version
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
-          sed -i "s/pkgver=.*/pkgver=$VERSION/" PKGBUILD
-          sed -i "s/pkgver=.*/pkgver=$VERSION/" PKGBUILD-bin
+          TAG_NAME="${{ github.event.workflow_run.head_branch }}"
+          VERSION="${TAG_NAME#v}"
+
+          sed -i "s|pkgver=.*|pkgver=$VERSION|" PKGBUILD
+          sed -i "s|pkgver=.*|pkgver=$VERSION|" PKGBUILD-bin
+
+          echo "TAG_NAME=$TAG_NAME" >> "$GITHUB_ENV"
+
       - name: Publish AUR package (source)
         uses: KSXGitHub/github-actions-deploy-aur@v4.1.3
         with:
@@ -28,7 +34,7 @@ jobs:
           commit_username: vMohammad
           commit_email: vmohammad@vmohammad.dev
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-          commit_message: "Update to ${{ github.ref_name }} (gh action)"
+          commit_message: "Update to ${{ env.TAG_NAME }} (gh action)"
           ssh_keyscan_types: ed25519
 
       - name: Publish AUR package (binary)
@@ -42,5 +48,5 @@ jobs:
           commit_username: vMohammad
           commit_email: vmohammad@vmohammad.dev
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-          commit_message: "Update to ${{ github.ref_name }} (gh action)"
+          commit_message: "Update to ${{ env.TAG_NAME }} (gh action)"
           ssh_keyscan_types: ed25519
