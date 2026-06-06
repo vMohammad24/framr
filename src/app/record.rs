@@ -9,17 +9,20 @@ use crate::pidfile;
 use crate::selection;
 
 pub fn get_recording_config(cli: &Cli, cfg: Option<&AppConfig>) -> RecordingConfig {
-	let base_config = cfg.map(|c| c.recording).unwrap_or_default();
+	let base_config = cfg.map(|c| c.recording.clone()).unwrap_or_default();
 
 	RecordingConfig {
 		encoder: cli.encoder.unwrap_or(base_config.encoder),
+		container: cli.container.unwrap_or(base_config.container),
 		bitrate: cli.bitrate.unwrap_or(base_config.bitrate),
+		fps: cli.fps.unwrap_or(base_config.fps),
 		keyframe_interval: cli
 			.keyframe_interval
 			.unwrap_or(base_config.keyframe_interval),
 		threads: cli.threads.filter(|&t| t != 0).or(base_config.threads),
 		tune: cli.tune.unwrap_or(base_config.tune),
 		speed: cli.speed.unwrap_or(base_config.speed),
+		hw_encoder: cli.hw_encoder.clone().or(base_config.hw_encoder),
 	}
 }
 
@@ -36,7 +39,8 @@ pub fn record(
 	let conn = FramrConnection::new()?;
 	let recording_config = get_recording_config(cli, cfg);
 
-	let filename = resolve_output(cli, "recording_%Y-%m-%d_%H-%M-%S.mp4", "mp4")
+	let ext = recording_config.container.as_str();
+	let filename = resolve_output(cli, &format!("recording_%Y-%m-%d_%H-%M-%S.{}", ext), ext)
 		.to_string_lossy()
 		.to_string();
 

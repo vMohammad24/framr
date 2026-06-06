@@ -514,6 +514,3 @@ impl WlrBackend {
 		Ok(())
 	}
 }
-
-impl WlrBackend {
-}

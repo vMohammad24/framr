@@ -1,3 +1,6 @@
+pub use connection::FramrConnection;
+pub use error::FramrError;
+pub use output::{FrameFormat, LogicalRegion, OutputInfo, PixelFormat, Position, Size, Transform};
 pub mod backend;
 mod buffer;
 mod connection;
@@ -10,31 +13,99 @@ mod transform;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(default)]
 pub struct RecordingConfig {
 	pub encoder: VideoEncoder,
+	pub container: ContainerFormat,
 	pub bitrate: u32,
+	pub fps: u32,
 	pub keyframe_interval: u32,
 	pub threads: Option<u32>,
 	pub tune: H264Tune,
 	pub speed: EncoderSpeed,
+	pub hw_encoder: Option<String>,
 }
 
 impl Default for RecordingConfig {
 	fn default() -> Self {
 		Self {
 			encoder: VideoEncoder::H264,
+			container: ContainerFormat::Mp4,
 			bitrate: 4000,
+			fps: 30,
 			keyframe_interval: 60,
 			threads: None,
 			tune: H264Tune::Zerolatency,
 			speed: EncoderSpeed::Ultrafast,
+			hw_encoder: None,
 		}
 	}
 }
 
-#[derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq, Clone, Copy, strum::EnumIter, strum::AsRefStr, strum::Display, strum::IntoStaticStr)]
+#[derive(
+	Debug,
+	Serialize,
+	Deserialize,
+	Default,
+	PartialEq,
+	Eq,
+	Clone,
+	Copy,
+	strum::EnumIter,
+	strum::AsRefStr,
+	strum::Display,
+	strum::IntoStaticStr,
+)]
+#[strum(serialize_all = "lowercase")]
+pub enum ContainerFormat {
+	#[default]
+	Mp4,
+	Matroska,
+}
+
+impl ContainerFormat {
+	pub fn as_str(&self) -> &'static str {
+		match self {
+			Self::Mp4 => "mp4",
+			Self::Matroska => "mkv",
+		}
+	}
+
+	pub fn gst_muxer(&self) -> &'static str {
+		match self {
+			Self::Mp4 => "mp4mux",
+			Self::Matroska => "matroskamux",
+		}
+	}
+}
+
+impl FromStr for ContainerFormat {
+	type Err = String;
+
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		match s.to_lowercase().as_str() {
+			"mp4" => Ok(Self::Mp4),
+			"mkv" | "matroska" => Ok(Self::Matroska),
+			_ => Err(format!("Invalid container format: {}", s)),
+		}
+	}
+}
+
+#[derive(
+	Debug,
+	Serialize,
+	Deserialize,
+	Default,
+	PartialEq,
+	Eq,
+	Clone,
+	Copy,
+	strum::EnumIter,
+	strum::AsRefStr,
+	strum::Display,
+	strum::IntoStaticStr,
+)]
 #[strum(serialize_all = "lowercase")]
 pub enum VideoEncoder {
 	#[default]
@@ -63,7 +134,20 @@ impl FromStr for VideoEncoder {
 	}
 }
 
-#[derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq, Clone, Copy, strum::EnumIter, strum::AsRefStr, strum::Display, strum::IntoStaticStr)]
+#[derive(
+	Debug,
+	Serialize,
+	Deserialize,
+	Default,
+	PartialEq,
+	Eq,
+	Clone,
+	Copy,
+	strum::EnumIter,
+	strum::AsRefStr,
+	strum::Display,
+	strum::IntoStaticStr,
+)]
 #[strum(serialize_all = "lowercase")]
 pub enum H264Tune {
 	#[default]
@@ -122,7 +206,20 @@ impl FromStr for H264Tune {
 	}
 }
 
-#[derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq, Clone, Copy, strum::EnumIter, strum::AsRefStr, strum::Display, strum::IntoStaticStr)]
+#[derive(
+	Debug,
+	Serialize,
+	Deserialize,
+	Default,
+	PartialEq,
+	Eq,
+	Clone,
+	Copy,
+	strum::EnumIter,
+	strum::AsRefStr,
+	strum::Display,
+	strum::IntoStaticStr,
+)]
 #[strum(serialize_all = "lowercase")]
 pub enum EncoderSpeed {
 	#[default]
@@ -190,7 +287,19 @@ impl FromStr for EncoderSpeed {
 	}
 }
 
-#[derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq, Clone, Copy, strum::EnumIter, strum::AsRefStr, strum::IntoStaticStr)]
+#[derive(
+	Debug,
+	Serialize,
+	Deserialize,
+	Default,
+	PartialEq,
+	Eq,
+	Clone,
+	Copy,
+	strum::EnumIter,
+	strum::AsRefStr,
+	strum::IntoStaticStr,
+)]
 pub enum OutputImageFormat {
 	#[default]
 	Png,
@@ -257,6 +366,37 @@ impl FromStr for OutputImageFormat {
 	}
 }
 
-pub use connection::FramrConnection;
-pub use error::FramrError;
-pub use output::{FrameFormat, LogicalRegion, OutputInfo, PixelFormat, Position, Size, Transform};
+pub fn find_hardware_encoder(
+	encoder_type: VideoEncoder,
+	preferred: Option<&str>,
+) -> Option<String> {
+	if let Some(p) = preferred {
+		if gstreamer::ElementFactory::find(p).is_some() {
+			return Some(p.to_string());
+		}
+	}
+
+	let candidates = match encoder_type {
+		VideoEncoder::H264 => vec![
+			"amfh264enc",   // AMF
+			"vah264enc",    // VA
+			"nvh264enc",    // NVIDIA
+			"msdkh264enc",  // Intel
+			"vaapih264enc", // VA (Old)
+		],
+		VideoEncoder::AV1 => vec![
+			"amfav1enc",   // AMF
+			"vaav1enc",    // VAAPI
+			"nvav1enc",    // NVIDIA
+			"msdkav1enc",  // Intel
+			"vaapiav1enc", // VA (Old)
+		],
+	};
+
+	for name in candidates {
+		if gstreamer::ElementFactory::find(name).is_some() {
+			return Some(name.to_string());
+		}
+	}
+	None
+}

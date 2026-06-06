@@ -49,9 +49,21 @@ pub struct Cli {
 	#[arg(long)]
 	pub encoder: Option<VideoEncoder>,
 
+	/// Container format (mp4, mkv/matroska)
+	#[arg(long)]
+	pub container: Option<libframr::ContainerFormat>,
+
+	/// Preferred hardware encoder element using gstreamer (e.g. nvh264enc, vaapiav1enc)
+	#[arg(long)]
+	pub hw_encoder: Option<String>,
+
 	/// Recording bitrate in kbps
 	#[arg(long)]
 	pub bitrate: Option<u32>,
+
+	/// Recording FPS
+	#[arg(long)]
+	pub fps: Option<u32>,
 
 	/// Recording keyframe interval in frames
 	#[arg(long)]

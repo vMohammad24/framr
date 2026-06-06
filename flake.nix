@@ -40,12 +40,16 @@
             cairo
             pango
             libxcursor
+            mesa
+            libgbm
+            libdrm
             gst_all_1.gstreamer.dev
             gst_all_1.gst-plugins-base.dev
             gst_all_1.gst-plugins-good
             gst_all_1.gst-plugins-ugly
             gst_all_1.gst-plugins-bad
             gst_all_1.gst-plugins-rs
+            gst_all_1.gst-vaapi
           ];
 
           nativeBuildInputs = with pkgs; [
