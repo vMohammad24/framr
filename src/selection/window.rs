@@ -3,6 +3,7 @@ use hyprland::{
 	data::{Clients, FullscreenMode, Monitors},
 	shared::HyprData,
 };
+use swayipc::{Connection, Node, NodeType};
 
 #[derive(Clone, Debug)]
 pub struct Window {
@@ -20,6 +21,7 @@ pub fn get_windows() -> Result<Vec<Window>> {
 	match desktop.as_str() {
 		"Hyprland" => get_hypr_windows().context("Error fetching Hyprland windows"),
 		"KDE" => get_kde_windows(),
+		"sway" => get_sway_windows().context("Error fetching Sway windows"),
 		_ => Ok(vec![]),
 	}
 }
@@ -76,6 +78,53 @@ pub fn get_hypr_windows() -> Result<Vec<Window>> {
 	Ok(windows)
 }
 
+pub fn get_sway_windows() -> Result<Vec<Window>> {
+	let mut connection = Connection::new().context("Failed to connect to Sway IPC")?;
+	let tree = connection.get_tree().context("Failed to fetch Sway tree")?;
+
+	let mut windows = Vec::new();
+	let mut focus_counter = 0;
+
+	fn traverse(node: &Node, windows: &mut Vec<Window>, focus_counter: &mut i32) {
+		let is_window = node.app_id.is_some() || node.window.is_some();
+
+		if node.visible.unwrap_or(false) && is_window {
+			let is_fullscreen = matches!(node.fullscreen_mode, Some(1) | Some(2));
+			let is_floating = node.node_type == NodeType::FloatingCon;
+
+			let layer_base = if is_fullscreen {
+				3000
+			} else if is_floating {
+				2500
+			} else {
+				1000
+			};
+
+			windows.push(Window {
+				title: node.name.clone().unwrap_or_default(),
+				x: node.rect.x,
+				y: node.rect.y,
+				width: node.rect.width,
+				height: node.rect.height,
+				z_index: layer_base - *focus_counter,
+			});
+
+			*focus_counter += 1;
+		}
+
+		for child in &node.nodes {
+			traverse(child, windows, focus_counter);
+		}
+
+		for floating_child in &node.floating_nodes {
+			traverse(floating_child, windows, focus_counter);
+		}
+	}
+
+	traverse(&tree, &mut windows, &mut focus_counter);
+
+	Ok(windows)
+}
 // TODO: implement this
 pub fn get_kde_windows() -> Result<Vec<Window>> {
 	Ok(vec![])
