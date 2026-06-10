@@ -105,7 +105,37 @@ fn send_request(payload: UploadPayload, filename: &str, uploader: &UploadConfig)
 					}
 				},
 				BodyType::FormData => {
-					let form = build_multipart_form(payload, filename, uploader)?;
+					let mut form = Form::new();
+					let escaped_args: Vec<(String, String)> = uploader
+						.arguments
+						.iter()
+						.map(|(k, v)| (k.replace('"', "\\\""), v.replace('"', "\\\"")))
+						.collect();
+					for (key, value) in &escaped_args {
+						form = form.text(key.as_str(), value.as_str());
+					}
+					let escaped_form_name = uploader
+						.file_form_name
+						.as_deref()
+						.unwrap_or("file")
+						.replace('"', "\\\"");
+					let escaped_filename = filename.replace('"', "\\\"");
+
+					let part = match payload {
+						UploadPayload::Bytes { bytes, mime_type } => Part::bytes(bytes)
+							.file_name(&escaped_filename)
+							.mime_str(mime_type)
+							.map_err(|e| anyhow::anyhow!("{e}"))?,
+						UploadPayload::File(path) => {
+							let mime_type = infer_mime_type(path);
+							Part::file(path)
+								.map_err(|e| anyhow::anyhow!("Failed to create file part: {}", e))?
+								.file_name(&escaped_filename)
+								.mime_str(mime_type)
+								.map_err(|e| anyhow::anyhow!("{e}"))?
+						}
+					};
+					form = form.part(&escaped_form_name, part);
 					builder.send(form).map_err(|e| anyhow::anyhow!("{e}"))?
 				}
 				BodyType::URLEncoded => {
@@ -158,33 +188,6 @@ fn read_response_body(
 	}
 
 	Ok(body)
-}
-
-fn build_multipart_form<'a>(
-	payload: UploadPayload<'a>,
-	filename: &str,
-	uploader: &'a UploadConfig,
-) -> Result<Form<'a>> {
-	let mut form = Form::new();
-	for (key, value) in &uploader.arguments {
-		form = form.text(key.as_str(), value.as_str());
-	}
-	let form_name = uploader.file_form_name.as_deref().unwrap_or("file");
-	let part = match payload {
-		UploadPayload::Bytes { bytes, mime_type } => Part::bytes(bytes)
-			.file_name(filename)
-			.mime_str(mime_type)
-			.map_err(|e| anyhow::anyhow!("{e}"))?,
-		UploadPayload::File(path) => {
-			let mime_type = infer_mime_type(path);
-			Part::file(path)
-				.map_err(|e| anyhow::anyhow!("Failed to create file part: {}", e))?
-				.file_name(filename)
-				.mime_str(mime_type)
-				.map_err(|e| anyhow::anyhow!("{e}"))?
-		}
-	};
-	Ok(form.part(form_name, part))
 }
 
 fn build_json_body(arguments: &[(String, String)]) -> Result<String> {
