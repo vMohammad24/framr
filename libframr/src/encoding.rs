@@ -28,6 +28,33 @@ pub fn wait_for_gstreamer_eos(pipeline: &gstreamer::Pipeline) -> Result<()> {
 	Ok(())
 }
 
+fn encoder_min_dimensions(encoder: &gstreamer::Element) -> (i32, i32) {
+	let (mut min_w, mut min_h) = (2, 2);
+	if let Some(tmpl) = encoder.pad_template("sink") {
+		for s in tmpl.caps().iter() {
+			if let Ok(r) = s.get::<gstreamer::IntRange<i32>>("width") {
+				min_w = min_w.max(r.min());
+			}
+			if let Ok(r) = s.get::<gstreamer::IntRange<i32>>("height") {
+				min_h = min_h.max(r.min());
+			}
+		}
+	}
+	(min_w, min_h)
+}
+
+fn fit_encoder_dimensions(encoder: &gstreamer::Element, width: i32, height: i32) -> (i32, i32) {
+	let (min_w, min_h) = encoder_min_dimensions(encoder);
+	let scale = (min_w as f64 / width as f64)
+		.max(min_h as f64 / height as f64)
+		.max(1.0);
+	let scaled_w = (width as f64 * scale).ceil() as i32;
+	let scaled_h = (height as f64 * scale).ceil() as i32;
+	let even_w = ((scaled_w + 1) / 2 * 2).max(min_w);
+	let even_h = ((scaled_h + 1) / 2 * 2).max(min_h);
+	(even_w, even_h)
+}
+
 fn apply_encoder_config(encoder: &gstreamer::Element, config: &RecordingConfig) {
 	let Some(factory) = encoder.factory() else {
 		return;
@@ -170,6 +197,14 @@ pub fn run_single_encoding_pipeline(
 
 	videoflip.set_property_from_str("video-direction", direction_nick);
 
+	let videoscale = gstreamer::ElementFactory::make("videoscale")
+		.build()
+		.map_err(|e| anyhow::anyhow!("Failed to create videoscale. Error: {}", e))?;
+
+	let capsfilter = gstreamer::ElementFactory::make("capsfilter")
+		.build()
+		.map_err(|e| anyhow::anyhow!("Failed to create capsfilter. Error: {}", e))?;
+
 	let hw_encoder = crate::find_hardware_encoder(
 		recording_config.encoder,
 		recording_config.hw_encoder.as_deref(),
@@ -203,6 +238,8 @@ pub fn run_single_encoding_pipeline(
 		&videoconvert,
 		&videorate,
 		&videoflip,
+		&videoscale,
+		&capsfilter,
 		&encoder,
 		&muxer,
 		&sink,
@@ -212,6 +249,8 @@ pub fn run_single_encoding_pipeline(
 		&videoconvert,
 		&videorate,
 		&videoflip,
+		&videoscale,
+		&capsfilter,
 		&encoder,
 		&muxer,
 		&sink,
@@ -242,6 +281,14 @@ pub fn run_single_encoding_pipeline(
 		.build();
 
 	appsrc.set_caps(Some(&caps));
+
+	let (target_width, target_height) =
+		fit_encoder_dimensions(&encoder, format.width, format.height);
+	let scaled_caps = gstreamer_video::VideoCapsBuilder::new()
+		.width(target_width)
+		.height(target_height)
+		.build();
+	capsfilter.set_property("caps", &scaled_caps);
 
 	pipeline.set_state(gstreamer::State::Playing)?;
 
