@@ -31,10 +31,13 @@ pub fn record(
 	cfg: Option<&AppConfig>,
 	is_upload_action: bool,
 ) -> Result<Option<(PathBuf, String)>> {
-	if pidfile::try_acquire_lock().is_err() {
-		pidfile::stop_recording()?;
-		return Ok(None);
-	}
+	let _lock = match pidfile::try_acquire_lock() {
+		Ok(lock) => lock,
+		Err(_) => {
+			pidfile::stop_recording()?;
+			return Ok(None);
+		}
+	};
 
 	let conn = FramrConnection::new()?;
 	let recording_config = get_recording_config(cli, cfg);
