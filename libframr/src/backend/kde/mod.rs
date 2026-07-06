@@ -1,7 +1,9 @@
+mod record;
+
+use crate::RecordingConfig;
 use crate::backend::{CaptureBackend, RecordingHandle};
 use crate::convert::convert_to_rgba;
-use crate::output::{LogicalRegion, OutputInfo, PixelFormat};
-use crate::RecordingConfig;
+use crate::output::{LogicalRegion, OutputInfo, PixelFormat, Position, Size};
 use anyhow::{Result, anyhow};
 use dbus::arg::{self, RefArg};
 use dbus::blocking::SyncConnection;
@@ -121,6 +123,25 @@ impl KdeBackend {
 		ImageBuffer::<Rgba<u8>, Vec<u8>>::from_raw(width, height, raw)
 			.ok_or_else(|| anyhow!("Failed to create image buffer"))
 	}
+
+	fn region_scale(&self, region: &LogicalRegion) -> f64 {
+		self.wayland_state
+			.outputs
+			.iter()
+			.filter(|o| {
+				let ox = o.logical_position.x;
+				let oy = o.logical_position.y;
+				let ow = o.logical_size.width as i32;
+				let oh = o.logical_size.height as i32;
+				region.position.x < ox + ow
+					&& region.position.x + region.size.width as i32 > ox
+					&& region.position.y < oy + oh
+					&& region.position.y + region.size.height as i32 > oy
+			})
+			.map(|o| o.scale.max(1))
+			.max()
+			.unwrap_or(1) as f64
+	}
 }
 
 impl CaptureBackend for KdeBackend {
@@ -169,37 +190,84 @@ impl CaptureBackend for KdeBackend {
 
 	fn start_recording_all(
 		&self,
-		_include_cursor: bool,
-		_output_path: std::path::PathBuf,
-		_recording_config: RecordingConfig,
+		include_cursor: bool,
+		output_path: std::path::PathBuf,
+		recording_config: RecordingConfig,
 	) -> Result<RecordingHandle> {
-		Err(anyhow!(
-			"Recording is not supported on KDE KWin backend yet"
-		))
+		let outputs = self.wayland_state.get_outputs()?;
+		if outputs.is_empty() {
+			return Err(anyhow!("No outputs available"));
+		}
+
+		let min_x = outputs.iter().map(|o| o.logical_position.x).min().unwrap();
+		let min_y = outputs.iter().map(|o| o.logical_position.y).min().unwrap();
+		let max_x = outputs
+			.iter()
+			.map(|o| o.logical_position.x + o.logical_size.width as i32)
+			.max()
+			.unwrap();
+		let max_y = outputs
+			.iter()
+			.map(|o| o.logical_position.y + o.logical_size.height as i32)
+			.max()
+			.unwrap();
+
+		let region = LogicalRegion {
+			position: Position { x: min_x, y: min_y },
+			size: Size {
+				width: (max_x - min_x) as u32,
+				height: (max_y - min_y) as u32,
+			},
+		};
+
+		self.start_recording_region_internal(&region, include_cursor, output_path, recording_config)
 	}
 
 	fn start_recording_region_internal(
 		&self,
-		_region: &LogicalRegion,
-		_include_cursor: bool,
-		_output_path: std::path::PathBuf,
-		_recording_config: RecordingConfig,
+		region: &LogicalRegion,
+		include_cursor: bool,
+		output_path: std::path::PathBuf,
+		recording_config: RecordingConfig,
 	) -> Result<RecordingHandle> {
-		Err(anyhow!(
-			"Recording is not supported on KDE KWin backend yet"
-		))
+		record::start_zkde_recording(
+			&self.wayland_state.conn,
+			record::StreamTarget::Region {
+				region: *region,
+				scale: self.region_scale(region),
+			},
+			include_cursor,
+			output_path,
+			recording_config,
+		)
 	}
 
 	fn start_recording(
 		&self,
-		_output: &OutputInfo,
-		_region: Option<LogicalRegion>,
-		_include_cursor: bool,
-		_output_path: std::path::PathBuf,
-		_recording_config: RecordingConfig,
+		output: &OutputInfo,
+		region: Option<LogicalRegion>,
+		include_cursor: bool,
+		output_path: std::path::PathBuf,
+		recording_config: RecordingConfig,
 	) -> Result<RecordingHandle> {
-		Err(anyhow!(
-			"Recording is not supported on KDE KWin backend yet"
-		))
+		let target = match region {
+			Some(region) => record::StreamTarget::Region {
+				region,
+				scale: output.scale.max(1) as f64,
+			},
+			None => record::StreamTarget::Output(
+				self.wayland_state
+					.wl_outputs
+					.get(output.id)
+					.ok_or_else(|| anyhow!("WlOutput not found for id {}", output.id))?,
+			),
+		};
+		record::start_zkde_recording(
+			&self.wayland_state.conn,
+			target,
+			include_cursor,
+			output_path,
+			recording_config,
+		)
 	}
 }

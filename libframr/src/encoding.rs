@@ -305,6 +305,125 @@ pub fn run_single_encoding_pipeline(
 	Ok(())
 }
 
+pub fn run_pipewire_encoding_pipeline(
+	node_id: u32,
+	output_path: std::path::PathBuf,
+	stop_receiver: crossbeam_channel::Receiver<()>,
+	recording_config: RecordingConfig,
+) -> Result<()> {
+	let pipeline = gstreamer::Pipeline::new();
+
+	let src = gstreamer::ElementFactory::make("pipewiresrc")
+		.build()
+		.map_err(|e| {
+			anyhow::anyhow!(
+				"Failed to create pipewiresrc (is the GStreamer PipeWire plugin installed?). Error: {}",
+				e
+			)
+		})?;
+
+	src.set_property("path", node_id.to_string());
+	if src.has_property("do-timestamp") {
+		src.set_property("do-timestamp", true);
+	}
+
+	let queue = gstreamer::ElementFactory::make("queue")
+		.build()
+		.map_err(|e| anyhow::anyhow!("Failed to create queue. Error: {}", e))?;
+
+	let videoconvert = gstreamer::ElementFactory::make("videoconvert")
+		.build()
+		.map_err(|e| anyhow::anyhow!("Failed to create videoconvert. Error: {}", e))?;
+
+	let videorate = gstreamer::ElementFactory::make("videorate")
+		.build()
+		.map_err(|e| anyhow::anyhow!("Failed to create videorate. Error: {}", e))?;
+	videorate.set_property("skip-to-first", true);
+
+	let capsfilter = gstreamer::ElementFactory::make("capsfilter")
+		.build()
+		.map_err(|e| anyhow::anyhow!("Failed to create capsfilter. Error: {}", e))?;
+	let rate_caps = gstreamer_video::VideoCapsBuilder::new()
+		.framerate(gstreamer::Fraction::new(recording_config.fps as i32, 1))
+		.build();
+	capsfilter.set_property("caps", &rate_caps);
+
+	let hw_encoder = crate::find_hardware_encoder(
+		recording_config.encoder,
+		recording_config.hw_encoder.as_deref(),
+	);
+	let encoder_name = hw_encoder
+		.as_deref()
+		.unwrap_or(match recording_config.encoder {
+			crate::VideoEncoder::H264 => "x264enc",
+			crate::VideoEncoder::AV1 => "rav1enc",
+		});
+
+	let encoder = gstreamer::ElementFactory::make(encoder_name)
+		.build()
+		.map_err(|e| anyhow::anyhow!("Failed to create encoder {}. Error: {}", encoder_name, e))?;
+
+	apply_encoder_config(&encoder, &recording_config);
+
+	let muxer_name = recording_config.container.gst_muxer();
+	let muxer = gstreamer::ElementFactory::make(muxer_name)
+		.build()
+		.map_err(|e| anyhow::anyhow!("Failed to create muxer {}. Error: {}", muxer_name, e))?;
+
+	let sink = gstreamer::ElementFactory::make("filesink")
+		.build()
+		.map_err(|e| anyhow::anyhow!("Failed to create filesink. Error: {}", e))?;
+	sink.set_property("location", output_path.to_string_lossy().as_ref());
+
+	let elements = [
+		&src,
+		&queue,
+		&videoconvert,
+		&videorate,
+		&capsfilter,
+		&encoder,
+		&muxer,
+		&sink,
+	];
+	pipeline.add_many(elements)?;
+	gstreamer::Element::link_many(elements)?;
+
+	pipeline.set_state(gstreamer::State::Playing)?;
+
+	let bus = pipeline
+		.bus()
+		.ok_or_else(|| anyhow::anyhow!("Pipeline has no bus"))?;
+
+	loop {
+		match stop_receiver.recv_timeout(std::time::Duration::from_millis(100)) {
+			Ok(_) | Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+			Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
+		}
+		while let Some(msg) = bus.pop() {
+			use gstreamer::MessageView;
+			match msg.view() {
+				MessageView::Error(err) => {
+					let _ = pipeline.set_state(gstreamer::State::Null);
+					return Err(anyhow::anyhow!(
+						"GStreamer error: {} ({})",
+						err.error(),
+						err.debug().unwrap_or_else(|| "no debug info".into())
+					));
+				}
+				MessageView::Eos(..) => {
+					pipeline.set_state(gstreamer::State::Null)?;
+					return Ok(());
+				}
+				_ => (),
+			}
+		}
+	}
+
+	pipeline.send_event(gstreamer::event::Eos::new());
+	wait_for_gstreamer_eos(&pipeline)?;
+	Ok(())
+}
+
 pub fn run_composite_encoding_pipeline(
 	output_path: std::path::PathBuf,
 	region: LogicalRegion,
