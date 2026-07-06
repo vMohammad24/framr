@@ -635,7 +635,7 @@ checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
 name = "framr"
-version = "0.12.3"
+version = "0.13.0"
 dependencies = [
  "anyhow",
  "base64",
@@ -1195,7 +1195,7 @@ dependencies = [
 
 [[package]]
 name = "libframr"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
