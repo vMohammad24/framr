@@ -57,6 +57,7 @@
             pkg-config
             rustPlatform.bindgenHook
             makeWrapper
+            installShellFiles
             gst_all_1.gstreamer.dev
             gst_all_1.gst-plugins-base.dev
           ];
@@ -78,6 +79,11 @@
             postInstall = ''
               ls -lha assets
               install -Dm644 assets/framr-handler.desktop -t $out/share/applications
+
+              installShellCompletion --cmd framr \
+                --bash <($out/bin/framr completions bash) \
+                --zsh <($out/bin/framr completions zsh) \
+                --fish <($out/bin/framr completions fish)
 
               wrapProgram $out/bin/framr \
                 --prefix GST_PLUGIN_SYSTEM_PATH_1_0 : "$GST_PLUGIN_SYSTEM_PATH_1_0"

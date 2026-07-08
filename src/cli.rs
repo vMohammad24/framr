@@ -109,6 +109,11 @@ pub enum Commands {
 		#[command(subcommand)]
 		action: Option<ConfigAction>,
 	},
+	/// Generate shell completions
+	Completions {
+		/// Shell to generate the completions for
+		shell: clap_complete::Shell,
+	},
 	/// Upload a file or byte data from stdin
 	Upload {
 		/// Path to the file to upload (omit to read from stdin)

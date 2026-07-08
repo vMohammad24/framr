@@ -63,6 +63,11 @@ fn main() -> Result<()> {
 				None => config::run_config_wizard(),
 			};
 		}
+		Some(Commands::Completions { shell }) => {
+			use clap::CommandFactory;
+			clap_complete::generate(shell, &mut Cli::command(), "framr", &mut std::io::stdout());
+			return Ok(());
+		}
 		Some(Commands::Upload {
 			ref file,
 			ref uploader,

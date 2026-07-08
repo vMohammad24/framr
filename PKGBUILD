@@ -29,6 +29,10 @@ package() {
     install -Dm755 "target/release/framr" "$pkgdir/usr/bin/framr"
     install -Dm644 "assets/framr-handler.desktop" "$pkgdir/usr/share/applications/framr-handler.desktop"
 
+    target/release/framr completions bash | install -Dm644 /dev/stdin "$pkgdir/usr/share/bash-completion/completions/framr"
+    target/release/framr completions zsh | install -Dm644 /dev/stdin "$pkgdir/usr/share/zsh/site-functions/_framr"
+    target/release/framr completions fish | install -Dm644 /dev/stdin "$pkgdir/usr/share/fish/vendor_completions.d/framr.fish"
+
     if [ -f "LICENSE" ]; then
         install -Dm644 "LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
     fi
