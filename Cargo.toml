@@ -2,6 +2,10 @@
 name = "framr"
 version = "0.13.0"
 edition = "2024"
+description = "Wayland screenshot, annotation and screen recording tool with ShareX-compatible uploads"
+license = "AGPL-3.0-only"
+repository = "https://github.com/vMohammad24/framr"
+authors = ["vMohammad <vmohammad@vmohammad.dev>"]
 
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
@@ -41,6 +45,23 @@ swayipc = "4"
 [package.metadata.dist]
 targets = ["x86_64-unknown-linux-gnu"]
 installers = ["shell"]
+
+[package.metadata.deb]
+extended-description = "FramR captures screenshots and screen recordings on Wayland (wlroots compositors and KDE Plasma), with built-in annotation tools and uploads to any ShareX- or iShare-compatible host."
+depends = "libwayland-client0, libxkbcommon0, libcairo2, libpango-1.0-0, libpangocairo-1.0-0, libdbus-1-3, libxcursor1, libgstreamer1.0-0, libgstreamer-plugins-base1.0-0, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-pipewire"
+assets = [
+	["target/release/framr", "usr/bin/", "755"],
+	["assets/framr-handler.desktop", "usr/share/applications/", "644"],
+	["LICENSE", "usr/share/doc/framr/", "644"],
+]
+
+[package.metadata.generate-rpm]
+auto-req = "no"
+assets = [
+	{ source = "target/release/framr", dest = "/usr/bin/framr", mode = "755" },
+	{ source = "assets/framr-handler.desktop", dest = "/usr/share/applications/framr-handler.desktop", mode = "644" },
+	{ source = "LICENSE", dest = "/usr/share/licenses/framr/LICENSE", mode = "644", doc = true },
+]
 
 
 [profile.release]
