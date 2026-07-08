@@ -33,3 +33,43 @@ jobs:
         with:
           name: framr-arch-binary
           path: target/release/framr
+
+  package:
+    runs-on: ubuntu-latest
+    container:
+      image: debian:bookworm
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install System Dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential pkg-config curl ca-certificates git libwayland-dev libxkbcommon-dev libcairo2-dev libpango1.0-dev libdbus-1-dev libxcursor-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: "debian"
+
+      - name: Build Framr
+        run: cargo build --release --locked
+
+      - name: Package deb and rpm
+        run: |
+          cargo install cargo-deb cargo-generate-rpm --locked
+          cargo deb --no-build --no-strip
+          cargo generate-rpm
+          mv target/debian/*.deb target/generate-rpm/*.rpm .
+
+      - name: Upload Package Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: framr-packages
+          path: |
+            *.deb
+            *.rpm

@@ -23,11 +23,21 @@ jobs:
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Download Package Artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: framr-packages
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.event.workflow_run.head_branch }}
-          files: framr
+          files: |
+            framr
+            *.deb
+            *.rpm
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
