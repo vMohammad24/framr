@@ -2,7 +2,7 @@
 pkgname=framr
 pkgver=0.10.1 # gh action changes this and sha256sums
 pkgrel=1
-pkgdesc="A Wayland screenshot tool written in Rust"
+pkgdesc="Wayland screenshot, annotation and screen recording tool with ShareX-compatible uploads"
 arch=('x86_64')
 url="https://github.com/vMohammad24/framr"
 license=('AGPL3')

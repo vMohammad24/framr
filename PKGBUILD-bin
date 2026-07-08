@@ -2,7 +2,7 @@
 pkgname=framr-bin
 pkgver=0.10.1
 pkgrel=1
-pkgdesc="A Wayland screenshot tool written in Rust (pre-compiled binary)"
+pkgdesc="Wayland screenshot, annotation and screen recording tool with ShareX-compatible uploads (pre-compiled binary)"
 arch=('x86_64')
 url="https://github.com/vMohammad24/framr"
 license=('AGPL3')
