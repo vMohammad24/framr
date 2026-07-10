@@ -25,13 +25,3 @@ pub fn apply_transform(
 		_ => image,
 	}
 }
-
-#[allow(dead_code)]
-pub fn transformed_size(width: u32, height: u32, transform: Transform) -> (u32, u32) {
-	match transform {
-		Transform::_90 | Transform::_270 | Transform::Flipped90 | Transform::Flipped270 => {
-			(height, width)
-		}
-		_ => (width, height),
-	}
-}
