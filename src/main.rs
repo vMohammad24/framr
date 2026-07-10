@@ -16,7 +16,7 @@ use crate::app::record::record;
 use crate::app::{handle_upload, resolve_action};
 use crate::cli::{Cli, Commands, ConfigAction};
 use crate::config::DefaultAction;
-use crate::utils::clipboard::copy_to_clipboard;
+use crate::utils::clipboard::{copy_file_uri, copy_to_clipboard};
 use crate::utils::notify::send_notification;
 
 fn main() -> std::process::ExitCode {
@@ -161,11 +161,10 @@ fn run(cli: Cli) -> Result<()> {
 					)?;
 				}
 			} else {
-				let p_str = path.to_string_lossy();
-				copy_to_clipboard(p_str.as_bytes().to_vec(), "text/plain;charset=utf-8")?;
+				copy_file_uri(&path)?;
 				send_notification(
-					"Video Path Copied",
-					"The path to the recording was copied to your clipboard",
+					"Recording Copied",
+					"The recording file was copied to your clipboard",
 					None,
 					cli.silent,
 				)?;
