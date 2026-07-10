@@ -30,14 +30,22 @@ jobs:
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Generate Changelog from Commits
+        id: build_changelog
+        uses: mikepenz/release-changelog-builder-action@v6
+        with:
+          commitMode: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.event.workflow_run.head_branch }}
+          body: ${{ steps.build_changelog.outputs.changelog }}
           files: |
             framr
             *.deb
             *.rpm
-          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
