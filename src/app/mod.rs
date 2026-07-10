@@ -1,4 +1,5 @@
 use anyhow::Result;
+use libframr::LogicalRegion;
 use std::io::{self, IsTerminal, Read};
 use std::path::PathBuf;
 
@@ -94,6 +95,37 @@ pub fn handle_upload(
 		copy_to_clipboard(url.as_bytes().to_vec(), "text/plain;charset=utf-8")?;
 	}
 	Ok(())
+}
+
+fn last_region_path() -> PathBuf {
+	dirs::runtime_dir()
+		.unwrap_or_else(std::env::temp_dir)
+		.join("framr-last-region")
+}
+
+pub fn save_last_region(region: &LogicalRegion) {
+	let _ = std::fs::write(
+		last_region_path(),
+		format!(
+			"{} {} {} {}",
+			region.position.x, region.position.y, region.size.width, region.size.height
+		),
+	);
+}
+
+pub fn load_last_region() -> Result<LogicalRegion> {
+	let content = std::fs::read_to_string(last_region_path())
+		.map_err(|_| anyhow::anyhow!("No previous region saved. Select an area with -a first."))?;
+	let parts: Vec<&str> = content.split_whitespace().collect();
+	if parts.len() != 4 {
+		anyhow::bail!("Invalid last-region file. Select an area with -a to rewrite it.");
+	}
+	Ok(LogicalRegion::new(
+		parts[0].parse()?,
+		parts[1].parse()?,
+		parts[2].parse()?,
+		parts[3].parse()?,
+	))
 }
 
 fn is_image_data(bytes: &[u8]) -> bool {

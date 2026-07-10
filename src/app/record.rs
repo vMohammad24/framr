@@ -69,12 +69,18 @@ pub fn record(
 		let output = conn.get_output(screen_num)?;
 		conn.start_recording(&output, None, cli.cursor, path.clone(), recording_config)?
 	} else {
-		let mut selection_cfg = cfg.map(|c| c.selection).unwrap_or_default();
-		selection_cfg.show_toolbar = false;
-		let ui = selection::SelectionUI::new(selection_cfg)?;
-		let (region, _) = ui
-			.run(false)?
-			.ok_or_else(|| anyhow::anyhow!("Selection cancelled"))?;
+		let region = if cli.last {
+			crate::app::load_last_region()?
+		} else {
+			let mut selection_cfg = cfg.map(|c| c.selection).unwrap_or_default();
+			selection_cfg.show_toolbar = false;
+			let ui = selection::SelectionUI::new(selection_cfg)?;
+			let (region, _) = ui
+				.run(false)?
+				.ok_or_else(|| anyhow::anyhow!("Selection cancelled"))?;
+			crate::app::save_last_region(&region);
+			region
+		};
 
 		conn.start_recording_region(&region, cli.cursor, path.clone(), recording_config)?
 	};

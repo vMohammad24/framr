@@ -29,6 +29,10 @@ pub struct Cli {
 	#[arg(short, long)]
 	pub area: bool,
 
+	/// Reuse the last selected region
+	#[arg(short, long)]
+	pub last: bool,
+
 	/// Copy to clipboard
 	#[arg(short, long)]
 	pub copy: bool,

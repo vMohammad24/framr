@@ -40,22 +40,28 @@ pub fn capture(
 		(Some(DefaultCaptureMethod::Full), None)
 	};
 
-	let (image, region) = match method {
-		Some(DefaultCaptureMethod::Area) => {
-			let selection_cfg = cfg.map(|c| c.selection).unwrap_or_default();
-			let ui = selection::SelectionUI::new(selection_cfg)?;
-			let (r, img) = ui
-				.run(true)?
-				.ok_or_else(|| anyhow::anyhow!("Selection cancelled"))?;
-			let img = img.ok_or_else(|| anyhow::anyhow!("Failed to capture image"))?;
-			(img, Some(r))
+	let (image, region) = if cli.last {
+		let r = crate::app::load_last_region()?;
+		(conn.screenshot_region(&r, cli.cursor)?, Some(r))
+	} else {
+		match method {
+			Some(DefaultCaptureMethod::Area) => {
+				let selection_cfg = cfg.map(|c| c.selection).unwrap_or_default();
+				let ui = selection::SelectionUI::new(selection_cfg)?;
+				let (r, img) = ui
+					.run(true)?
+					.ok_or_else(|| anyhow::anyhow!("Selection cancelled"))?;
+				let img = img.ok_or_else(|| anyhow::anyhow!("Failed to capture image"))?;
+				crate::app::save_last_region(&r);
+				(img, Some(r))
+			}
+			Some(DefaultCaptureMethod::Screen) => {
+				let screen_num = screen.unwrap_or(0);
+				let output = conn.get_output(screen_num)?;
+				(conn.screenshot_output(&output, cli.cursor)?, None)
+			}
+			_ => (conn.screenshot_all(cli.cursor)?, None),
 		}
-		Some(DefaultCaptureMethod::Screen) => {
-			let screen_num = screen.unwrap_or(0);
-			let output = conn.get_output(screen_num)?;
-			(conn.screenshot_output(&output, cli.cursor)?, None)
-		}
-		_ => (conn.screenshot_all(cli.cursor)?, None),
 	};
 
 	let mut buf = Cursor::new(Vec::new());
