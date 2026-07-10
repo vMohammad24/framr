@@ -4,7 +4,11 @@ use libframr::{EncoderSpeed, H264Tune, VideoEncoder};
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "framr")]
+#[command(
+	name = "framr",
+	version = concat!("v", env!("CARGO_PKG_VERSION")),
+	disable_version_flag = true
+)]
 pub struct Cli {
 	#[command(subcommand)]
 	pub command: Option<Commands>,
@@ -14,8 +18,8 @@ pub struct Cli {
 	pub screen: Option<usize>,
 
 	/// Version
-	#[arg(short, long)]
-	pub version: bool,
+	#[arg(short = 'v', long, action = clap::ArgAction::Version)]
+	pub version: Option<bool>,
 
 	/// List available screens
 	#[arg(long)]

@@ -27,11 +27,6 @@ fn main() -> Result<()> {
 		return config::import_uploader(uri);
 	}
 
-	if cli.version {
-		println!("framr v{}", env!("CARGO_PKG_VERSION"));
-		return Ok(());
-	}
-
 	let cfg = config::load_config().ok();
 
 	match cli.command {
