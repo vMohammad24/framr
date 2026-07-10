@@ -86,6 +86,12 @@ pub fn record(
 	};
 
 	println!("Recording to {}... Press Ctrl+C to stop.", path.display());
+	let _ = crate::utils::notify::send_notification(
+		"Recording Started",
+		&format!("Recording to {}", filename),
+		None,
+		cli.silent,
+	);
 
 	let (tx, rx) = std::sync::mpsc::channel();
 	ctrlc::set_handler(move || {
