@@ -69,6 +69,10 @@ pub struct Cli {
 	#[arg(long)]
 	pub fps: Option<u32>,
 
+	/// Stop recording after this many seconds
+	#[arg(long, requires = "record", value_parser = clap::value_parser!(u64).range(1..))]
+	pub duration: Option<u64>,
+
 	/// Recording keyframe interval in frames
 	#[arg(long)]
 	pub keyframe_interval: Option<u32>,

@@ -86,12 +86,20 @@ pub fn record(
 		let _ = tx.send(());
 	})?;
 
+	let deadline = cli
+		.duration
+		.map(|secs| std::time::Instant::now() + std::time::Duration::from_secs(secs));
+
 	loop {
 		if rx
 			.recv_timeout(std::time::Duration::from_millis(100))
 			.is_ok()
 		{
 			println!("\nStopping recording...");
+			break;
+		}
+		if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+			println!("\nDuration reached, stopping recording...");
 			break;
 		}
 		if handle.pipeline_thread.is_finished() {
