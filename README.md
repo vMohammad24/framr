@@ -24,11 +24,11 @@ Area selection, annotations, recording, and instant uploads.
 
 ## Features
 
-**Capture.** Full screen, a specific monitor, or area selection across multiple monitors.
+**Capture.** Full screen, a specific monitor, or area selection across multiple monitors. Re-shoot the last selected region with `--last`.
 
 **Annotate.** Arrows, text, highlights, circles, blur and pixelate for sensitive info. Undo/redo and custom colors work in the selection overlay itself, no separate editor or program.
 
-**Record.** Run once to start, again to stop. Encodes to H264 or AV1, outputs MP4 or MKV. Supports hardware encoding with support for AMF, VAAPI, NVENC, QSV.
+**Record.** Run once to start, again to stop, or set a fixed length with `--duration`. Encodes to H264 or AV1, outputs MP4, MKV or WebM. Supports hardware encoding with support for AMF, VAAPI, NVENC, QSV.
 
 **Upload.** Any ShareX (`.sxcu`) or iShare (`.iscu`) compatible host works. Import configs from a file, URL, or a `framr://` deeplink. The URL lands in your clipboard when the upload finishes.
 
@@ -37,13 +37,16 @@ Area selection, annotations, recording, and instant uploads.
 ## Quick start
 
 ```bash
-framr -a            # select an area, annotate, save
-framr -a -c         # select an area, copy to clipboard
-framr -s 0          # shoot monitor 0
-framr -r            # record a selected region (run again to stop)
-framr -s 0 -r       # record monitor 0
-framr -a -u         # select, then upload with your default uploader
-framr config        # interactive setup wizard
+framr -a                    # select an area, annotate, save
+framr -a -c                 # select an area, copy to clipboard
+framr -a -c -o ~/Pictures   # select an area, save it there and copy it
+framr -l                    # re-shoot the last selected region
+framr -s 0                  # shoot monitor 0
+framr -r                    # record a selected region (run again to stop)
+framr -s 0 -r               # record monitor 0
+framr -s 0 -r --duration 10 # record monitor 0 for 10 seconds
+framr -a -u                 # select, then upload with your default uploader
+framr config                # interactive setup wizard
 ```
 
 ## Installation
