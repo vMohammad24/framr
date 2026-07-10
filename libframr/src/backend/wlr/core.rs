@@ -4,9 +4,11 @@ use wayland_client::globals::{GlobalList, registry_queue_init};
 use wayland_client::protocol::wl_output::WlOutput;
 use wayland_protocols::xdg::xdg_output::zv1::client::zxdg_output_manager_v1::ZxdgOutputManagerV1;
 
+use crate::backend::wlr::dispatch::{
+	OutputEnumState, PartialOutput, RegistryState, convert_transform,
+};
 use crate::error::FramrError;
 use crate::output::OutputInfo;
-use crate::backend::wlr::dispatch::{RegistryState, OutputEnumState, convert_transform, PartialOutput};
 
 pub struct WlrBackend {
 	pub(crate) conn: Connection,

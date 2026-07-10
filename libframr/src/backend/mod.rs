@@ -1,5 +1,5 @@
-use crate::output::{LogicalRegion, OutputInfo};
 use crate::RecordingConfig;
+use crate::output::{LogicalRegion, OutputInfo};
 use anyhow::Result;
 use image::RgbaImage;
 
@@ -42,19 +42,16 @@ pub trait CaptureBackend: Send + Sync {
 		recording_config: RecordingConfig,
 	) -> Result<RecordingHandle> {
 		let outputs = self.get_outputs()?;
-		let containing = outputs.iter().find(|o| {
-			let ox = o.logical_position.x;
-			let oy = o.logical_position.y;
-			let ow = o.logical_size.width as i32;
-			let oh = o.logical_size.height as i32;
-			region.position.x >= ox
-				&& region.position.y >= oy
-				&& region.position.x + region.size.width as i32 <= ox + ow
-				&& region.position.y + region.size.height as i32 <= oy + oh
-		});
+		let containing = outputs.iter().find(|o| o.contains(region));
 
 		if let Some(output) = containing {
-			return self.start_recording(output, Some(*region), include_cursor, output_path, recording_config);
+			return self.start_recording(
+				output,
+				Some(*region),
+				include_cursor,
+				output_path,
+				recording_config,
+			);
 		}
 
 		self.start_recording_region_internal(region, include_cursor, output_path, recording_config)
@@ -70,16 +67,7 @@ pub trait CaptureBackend: Send + Sync {
 
 	fn capture_region(&self, region: &LogicalRegion, include_cursor: bool) -> Result<RgbaImage> {
 		let outputs = self.get_outputs()?;
-		let containing = outputs.iter().find(|o| {
-			let ox = o.logical_position.x;
-			let oy = o.logical_position.y;
-			let ow = o.logical_size.width as i32;
-			let oh = o.logical_size.height as i32;
-			region.position.x >= ox
-				&& region.position.y >= oy
-				&& region.position.x + region.size.width as i32 <= ox + ow
-				&& region.position.y + region.size.height as i32 <= oy + oh
-		});
+		let containing = outputs.iter().find(|o| o.contains(region));
 
 		if let Some(output) = containing {
 			return self.capture_output(output, Some(*region), include_cursor);

@@ -30,6 +30,7 @@ impl Dispatch<WlRegistry, GlobalListContents> for RegistryState {
 
 wayland_client::delegate_noop!(OutputEnumState: ignore ZxdgOutputManagerV1);
 
+#[derive(Default)]
 pub(crate) struct OutputEnumState {
 	pub(crate) outputs: Vec<PartialOutput>,
 }
@@ -43,14 +44,6 @@ pub(crate) struct PartialOutput {
 	pub(crate) scale: i32,
 	pub(crate) logical_position: Position,
 	pub(crate) logical_size: Size,
-}
-
-impl Default for OutputEnumState {
-	fn default() -> Self {
-		Self {
-			outputs: Vec::new(),
-		}
-	}
 }
 
 impl Dispatch<WlRegistry, ()> for OutputEnumState {
@@ -188,13 +181,15 @@ pub(crate) fn convert_format(f: WlFormat) -> Option<PixelFormat> {
 	}
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum FrameState {
+	#[default]
 	Pending,
 	Finished,
 	Failed,
 }
 
+#[derive(Default)]
 pub(crate) struct CaptureState {
 	pub(crate) formats: Vec<FrameFormat>,
 	pub(crate) buffer_done: bool,
@@ -202,19 +197,6 @@ pub(crate) struct CaptureState {
 	pub(crate) tv_sec_hi: u32,
 	pub(crate) tv_sec_lo: u32,
 	pub(crate) tv_nsec: u32,
-}
-
-impl Default for CaptureState {
-	fn default() -> Self {
-		Self {
-			formats: Vec::new(),
-			buffer_done: false,
-			frame_state: FrameState::Pending,
-			tv_sec_hi: 0,
-			tv_sec_lo: 0,
-			tv_nsec: 0,
-		}
-	}
 }
 
 wayland_client::delegate_noop!(CaptureState: ignore WlShm);

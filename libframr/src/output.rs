@@ -61,6 +61,51 @@ pub struct OutputInfo {
 	pub scale: i32,
 }
 
+impl OutputInfo {
+	pub fn contains(&self, region: &LogicalRegion) -> bool {
+		let ox = self.logical_position.x;
+		let oy = self.logical_position.y;
+		let ow = self.logical_size.width as i32;
+		let oh = self.logical_size.height as i32;
+		region.position.x >= ox
+			&& region.position.y >= oy
+			&& region.position.x + region.size.width as i32 <= ox + ow
+			&& region.position.y + region.size.height as i32 <= oy + oh
+	}
+
+	pub fn intersects(&self, region: &LogicalRegion) -> bool {
+		let ox = self.logical_position.x;
+		let oy = self.logical_position.y;
+		let ow = self.logical_size.width as i32;
+		let oh = self.logical_size.height as i32;
+		region.position.x < ox + ow
+			&& region.position.x + region.size.width as i32 > ox
+			&& region.position.y < oy + oh
+			&& region.position.y + region.size.height as i32 > oy
+	}
+}
+
+pub fn bounding_region(outputs: &[OutputInfo]) -> Option<LogicalRegion> {
+	let first = outputs.first()?;
+	let mut min_x = first.logical_position.x;
+	let mut min_y = first.logical_position.y;
+	let mut max_x = min_x;
+	let mut max_y = min_y;
+	for o in outputs {
+		min_x = min_x.min(o.logical_position.x);
+		min_y = min_y.min(o.logical_position.y);
+		max_x = max_x.max(o.logical_position.x + o.logical_size.width as i32);
+		max_y = max_y.max(o.logical_position.y + o.logical_size.height as i32);
+	}
+	Some(LogicalRegion {
+		position: Position { x: min_x, y: min_y },
+		size: Size {
+			width: (max_x - min_x) as u32,
+			height: (max_y - min_y) as u32,
+		},
+	})
+}
+
 impl fmt::Display for OutputInfo {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		write!(

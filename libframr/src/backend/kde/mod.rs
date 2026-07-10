@@ -3,7 +3,7 @@ mod record;
 use crate::RecordingConfig;
 use crate::backend::{CaptureBackend, RecordingHandle};
 use crate::convert::convert_to_rgba;
-use crate::output::{LogicalRegion, OutputInfo, PixelFormat, Position, Size};
+use crate::output::{LogicalRegion, OutputInfo, PixelFormat};
 use anyhow::{Result, anyhow};
 use dbus::arg::{self, RefArg};
 use dbus::blocking::SyncConnection;
@@ -128,16 +128,7 @@ impl KdeBackend {
 		self.wayland_state
 			.outputs
 			.iter()
-			.filter(|o| {
-				let ox = o.logical_position.x;
-				let oy = o.logical_position.y;
-				let ow = o.logical_size.width as i32;
-				let oh = o.logical_size.height as i32;
-				region.position.x < ox + ow
-					&& region.position.x + region.size.width as i32 > ox
-					&& region.position.y < oy + oh
-					&& region.position.y + region.size.height as i32 > oy
-			})
+			.filter(|o| o.intersects(region))
 			.map(|o| o.scale.max(1))
 			.max()
 			.unwrap_or(1) as f64
@@ -194,31 +185,8 @@ impl CaptureBackend for KdeBackend {
 		output_path: std::path::PathBuf,
 		recording_config: RecordingConfig,
 	) -> Result<RecordingHandle> {
-		let outputs = self.wayland_state.get_outputs()?;
-		if outputs.is_empty() {
-			return Err(anyhow!("No outputs available"));
-		}
-
-		let min_x = outputs.iter().map(|o| o.logical_position.x).min().unwrap();
-		let min_y = outputs.iter().map(|o| o.logical_position.y).min().unwrap();
-		let max_x = outputs
-			.iter()
-			.map(|o| o.logical_position.x + o.logical_size.width as i32)
-			.max()
-			.unwrap();
-		let max_y = outputs
-			.iter()
-			.map(|o| o.logical_position.y + o.logical_size.height as i32)
-			.max()
-			.unwrap();
-
-		let region = LogicalRegion {
-			position: Position { x: min_x, y: min_y },
-			size: Size {
-				width: (max_x - min_x) as u32,
-				height: (max_y - min_y) as u32,
-			},
-		};
+		let region = crate::output::bounding_region(&self.wayland_state.outputs)
+			.ok_or_else(|| anyhow!("No outputs available"))?;
 
 		self.start_recording_region_internal(&region, include_cursor, output_path, recording_config)
 	}

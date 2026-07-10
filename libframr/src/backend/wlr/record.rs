@@ -4,17 +4,17 @@ use wayland_client::globals::registry_queue_init;
 use wayland_client::protocol::wl_shm::WlShm;
 use wayland_protocols_wlr::screencopy::v1::client::zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1;
 
-use crate::backend::{CaptureBackend, RecordingHandle};
+use crate::RecordingConfig;
 use crate::backend::wlr::core::WlrBackend;
 use crate::backend::wlr::dispatch::{CaptureState, FrameState, MultiCaptureState};
 use crate::backend::wlr::shm::{
-	allocate_shm_buffer, pixel_format_to_wl_shm, ShmPool, ShmPoolError, WlBufferGuard, WlFrameGuard,
+	ShmPool, ShmPoolError, WlBufferGuard, WlFrameGuard, allocate_shm_buffer, pixel_format_to_wl_shm,
 };
+use crate::backend::{CaptureBackend, RecordingHandle};
 use crate::convert::convert_to_rgba;
 use crate::error::FramrError;
-use crate::output::{FrameFormat, LogicalRegion, OutputInfo, Position, Size};
+use crate::output::{FrameFormat, LogicalRegion, OutputInfo};
 use crate::transform::apply_transform;
-use crate::RecordingConfig;
 
 impl CaptureBackend for WlrBackend {
 	fn get_outputs(&self) -> Result<Vec<OutputInfo>> {
@@ -41,7 +41,8 @@ impl CaptureBackend for WlrBackend {
 			)
 		});
 
-		let (mmap, frame_format) = self.capture_output_raw(wl_output, region_raw, include_cursor)?;
+		let (mmap, frame_format) =
+			self.capture_output_raw(wl_output, region_raw, include_cursor)?;
 
 		let mut raw: Vec<u8> = mmap.to_vec();
 
@@ -59,33 +60,12 @@ impl CaptureBackend for WlrBackend {
 
 	fn capture_all_outputs(&self, include_cursor: bool) -> Result<RgbaImage> {
 		let outputs = &self.outputs;
-		if outputs.is_empty() {
-			return Err(FramrError::NoOutputs.into());
-		}
-
-		let min_x = outputs
-			.iter()
-			.map(|o| o.logical_position.x)
-			.min()
-			.unwrap_or(0);
-		let min_y = outputs
-			.iter()
-			.map(|o| o.logical_position.y)
-			.min()
-			.unwrap_or(0);
-		let max_x = outputs
-			.iter()
-			.map(|o| o.logical_position.x + o.logical_size.width as i32)
-			.max()
-			.unwrap_or(0);
-		let max_y = outputs
-			.iter()
-			.map(|o| o.logical_position.y + o.logical_size.height as i32)
-			.max()
-			.unwrap_or(0);
-
-		let total_width = (max_x - min_x) as u32;
-		let total_height = (max_y - min_y) as u32;
+		let bounds = crate::output::bounding_region(outputs)
+			.ok_or::<anyhow::Error>(FramrError::NoOutputs.into())?;
+		let min_x = bounds.position.x;
+		let min_y = bounds.position.y;
+		let total_width = bounds.size.width;
+		let total_height = bounds.size.height;
 
 		let mut state = MultiCaptureState::new(outputs.len());
 		let mut event_queue = self.conn.new_event_queue::<MultiCaptureState>();
@@ -236,31 +216,8 @@ impl CaptureBackend for WlrBackend {
 		output_path: std::path::PathBuf,
 		recording_config: RecordingConfig,
 	) -> Result<RecordingHandle> {
-		let outputs = self.outputs.clone();
-		if outputs.is_empty() {
-			return Err(FramrError::NoOutputs.into());
-		}
-
-		let min_x = outputs.iter().map(|o| o.logical_position.x).min().unwrap();
-		let min_y = outputs.iter().map(|o| o.logical_position.y).min().unwrap();
-		let max_x = outputs
-			.iter()
-			.map(|o| o.logical_position.x + o.logical_size.width as i32)
-			.max()
-			.unwrap();
-		let max_y = outputs
-			.iter()
-			.map(|o| o.logical_position.y + o.logical_size.height as i32)
-			.max()
-			.unwrap();
-
-		let region = LogicalRegion {
-			position: Position { x: min_x, y: min_y },
-			size: Size {
-				width: (max_x - min_x) as u32,
-				height: (max_y - min_y) as u32,
-			},
-		};
+		let region = crate::output::bounding_region(&self.outputs)
+			.ok_or::<anyhow::Error>(FramrError::NoOutputs.into())?;
 
 		self.start_recording_region_internal(&region, include_cursor, output_path, recording_config)
 	}
@@ -279,22 +236,11 @@ impl CaptureBackend for WlrBackend {
 		let wl_outputs = self.wl_outputs.clone();
 		let region = *region;
 
-		let mut intersecting = Vec::new();
-		for (i, output) in outputs.iter().enumerate() {
-			let ox = output.logical_position.x;
-			let oy = output.logical_position.y;
-			let ow = output.logical_size.width as i32;
-			let oh = output.logical_size.height as i32;
-
-			let rx = region.position.x;
-			let ry = region.position.y;
-			let rw = region.size.width as i32;
-			let rh = region.size.height as i32;
-
-			if rx < ox + ow && rx + rw > ox && ry < oy + oh && ry + rh > oy {
-				intersecting.push((i, output.clone()));
-			}
-		}
+		let intersecting: Vec<_> = outputs
+			.iter()
+			.filter(|o| o.intersects(&region))
+			.cloned()
+			.collect();
 
 		if intersecting.is_empty() {
 			return Err(anyhow::anyhow!("No outputs intersect with region"));
@@ -302,9 +248,9 @@ impl CaptureBackend for WlrBackend {
 
 		let max_scale = intersecting
 			.iter()
-			.map(|(_, o)| o.scale.max(1))
+			.map(|o| o.scale.max(1))
 			.max()
-			.unwrap_or(1) as i32;
+			.unwrap_or(1);
 
 		let num_outputs = intersecting.len();
 		let (stop_sender, stop_receiver) = crossbeam_channel::bounded(1);
@@ -323,7 +269,7 @@ impl CaptureBackend for WlrBackend {
 			.map(|_| crossbeam_channel::bounded::<usize>(3))
 			.unzip();
 
-		for (output_idx, (_, output)) in intersecting.iter().enumerate() {
+		for (output_idx, output) in intersecting.iter().enumerate() {
 			let conn = conn.clone();
 			let wl_outputs = wl_outputs.clone();
 			let stop_receiver = stop_receiver.clone();
@@ -349,13 +295,12 @@ impl CaptureBackend for WlrBackend {
 			});
 		}
 
-		let encoder_outputs = intersecting.iter().map(|(_, o)| o.clone()).collect();
 		let pipeline_thread = std::thread::spawn(move || -> Result<()> {
 			crate::encoding::run_composite_encoding_pipeline(
 				output_path,
 				region,
 				max_scale,
-				encoder_outputs,
+				intersecting,
 				frame_receivers,
 				format_receivers,
 				return_senders,
@@ -379,7 +324,12 @@ impl WlrBackend {
 		region: Option<LogicalRegion>,
 		include_cursor: bool,
 		stop_receiver: crossbeam_channel::Receiver<()>,
-		frame_sender: crossbeam_channel::Sender<(std::sync::Arc<memmap2::Mmap>, usize, u64, FrameFormat)>,
+		frame_sender: crossbeam_channel::Sender<(
+			std::sync::Arc<memmap2::Mmap>,
+			usize,
+			u64,
+			FrameFormat,
+		)>,
 		return_receiver: crossbeam_channel::Receiver<usize>,
 		format_sender: Option<crossbeam_channel::Sender<FrameFormat>>,
 		use_relative_pts: bool,
