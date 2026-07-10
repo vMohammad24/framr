@@ -39,6 +39,7 @@ csscolorparser = "0.8"
 gstreamer = "0.25"
 swayipc = "4"
 clap_complete = "4"
+clap_mangen = "0.3"
 
 
 [package.metadata.dist]

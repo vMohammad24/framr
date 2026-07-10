@@ -77,6 +77,12 @@ fn run(cli: Cli) -> Result<()> {
 			clap_complete::generate(shell, &mut Cli::command(), "framr", &mut std::io::stdout());
 			return Ok(());
 		}
+		Some(Commands::Man { ref dir }) => {
+			use clap::CommandFactory;
+			std::fs::create_dir_all(dir)?;
+			clap_mangen::generate_to(Cli::command(), dir)?;
+			return Ok(());
+		}
 		Some(Commands::Upload {
 			ref file,
 			ref uploader,

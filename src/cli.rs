@@ -131,6 +131,13 @@ pub enum Commands {
 		/// Shell to generate the completions for
 		shell: clap_complete::Shell,
 	},
+	/// Generate man pages
+	#[command(hide = true)]
+	Man {
+		/// Directory to write the man pages to
+		#[arg(default_value = ".")]
+		dir: PathBuf,
+	},
 	/// Upload a file or byte data from stdin
 	Upload {
 		/// Path to the file to upload (omit to read from stdin)
