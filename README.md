@@ -26,7 +26,7 @@ Area selection, annotations, recording, and instant uploads.
 
 **Capture.** Full screen, a specific monitor, or area selection across multiple monitors. Re-shoot the last selected region with `--last`.
 
-**Annotate.** Arrows, text, highlights, circles, blur and pixelate for sensitive info. Undo/redo and custom colors work in the selection overlay itself, no separate editor or program.
+**Annotate.** Arrows, text, highlights, circles, rectangles, numbered markers, blur and pixelate for sensitive info. Undo/redo and custom colors work in the selection overlay itself, no separate editor or program.
 
 **Record.** Run once to start, again to stop, or set a fixed length with `--duration`. Encodes to H264 or AV1, outputs MP4, MKV or WebM. Supports hardware encoding with support for AMF, VAAPI, NVENC, QSV.
 
@@ -45,6 +45,7 @@ framr -s 0                  # shoot monitor 0
 framr -r                    # record a selected region (run again to stop)
 framr -s 0 -r               # record monitor 0
 framr -s 0 -r --duration 10 # record monitor 0 for 10 seconds
+framr --delay 3 -o -        # wait 3 seconds, write the PNG to stdout
 framr -a -u                 # select, then upload with your default uploader
 framr config                # interactive setup wizard
 ```
