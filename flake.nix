@@ -85,6 +85,9 @@
                 --zsh <($out/bin/framr completions zsh) \
                 --fish <($out/bin/framr completions fish)
 
+              $out/bin/framr man man-pages
+              installManPage man-pages/*.1
+
               wrapProgram $out/bin/framr \
                 --prefix GST_PLUGIN_SYSTEM_PATH_1_0 : "$GST_PLUGIN_SYSTEM_PATH_1_0"
             '';

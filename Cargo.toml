@@ -56,6 +56,7 @@ assets = [
 	["target/completions/framr.bash", "usr/share/bash-completion/completions/framr", "644"],
 	["target/completions/_framr", "usr/share/zsh/vendor-completions/_framr", "644"],
 	["target/completions/framr.fish", "usr/share/fish/vendor_completions.d/framr.fish", "644"],
+	["target/man/*.1", "usr/share/man/man1/", "644"],
 ]
 
 [package.metadata.generate-rpm]
@@ -67,6 +68,7 @@ assets = [
 	{ source = "target/completions/framr.bash", dest = "/usr/share/bash-completion/completions/framr", mode = "644" },
 	{ source = "target/completions/_framr", dest = "/usr/share/zsh/site-functions/_framr", mode = "644" },
 	{ source = "target/completions/framr.fish", dest = "/usr/share/fish/vendor_completions.d/framr.fish", mode = "644" },
+	{ source = "target/man/*.1", dest = "/usr/share/man/man1/", mode = "644" },
 ]
 
 

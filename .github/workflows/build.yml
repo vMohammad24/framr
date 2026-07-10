@@ -63,12 +63,13 @@ jobs:
       - name: Build Framr
         run: cargo build --release --locked
 
-      - name: Generate shell completions
+      - name: Generate shell completions and man pages
         run: |
           mkdir -p target/completions
           target/release/framr completions bash > target/completions/framr.bash
           target/release/framr completions zsh > target/completions/_framr
           target/release/framr completions fish > target/completions/framr.fish
+          target/release/framr man target/man
 
       - name: Package deb and rpm
         run: |

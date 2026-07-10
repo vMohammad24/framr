@@ -33,6 +33,9 @@ package() {
     target/release/framr completions zsh | install -Dm644 /dev/stdin "$pkgdir/usr/share/zsh/site-functions/_framr"
     target/release/framr completions fish | install -Dm644 /dev/stdin "$pkgdir/usr/share/fish/vendor_completions.d/framr.fish"
 
+    target/release/framr man target/man
+    install -Dm644 target/man/*.1 -t "$pkgdir/usr/share/man/man1"
+
     if [ -f "LICENSE" ]; then
         install -Dm644 "LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
     fi
