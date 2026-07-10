@@ -8,8 +8,10 @@ use std::collections::VecDeque;
 pub enum Tool {
 	Select,
 	Circle,
+	Rectangle,
 	Arrow,
 	Checkmark,
+	Counter,
 	Blur,
 	Pixelate,
 	Highlight,
@@ -22,8 +24,10 @@ impl Tool {
 		match self {
 			Tool::Select => &SelectTool,
 			Tool::Circle => &CircleTool,
+			Tool::Rectangle => &RectangleTool,
 			Tool::Arrow => &ArrowTool,
 			Tool::Checkmark => &CheckmarkTool,
+			Tool::Counter => &CounterTool,
 			Tool::Blur => &BlurTool,
 			Tool::Pixelate => &PixelateTool,
 			Tool::Highlight => &HighlightTool,
@@ -36,8 +40,10 @@ impl Tool {
 		&[
 			Tool::Select,
 			Tool::Circle,
+			Tool::Rectangle,
 			Tool::Arrow,
 			Tool::Checkmark,
+			Tool::Counter,
 			Tool::Blur,
 			Tool::Pixelate,
 			Tool::Highlight,

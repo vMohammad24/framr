@@ -3,9 +3,11 @@ mod arrow;
 mod blur;
 mod checkmark;
 mod circle;
+mod counter;
 mod helpers;
 mod highlight;
 mod pixelate;
+mod rectangle;
 mod select;
 mod text;
 
@@ -14,8 +16,10 @@ pub use arrow::ArrowTool;
 pub use blur::BlurTool;
 pub use checkmark::CheckmarkTool;
 pub use circle::CircleTool;
+pub use counter::CounterTool;
 pub use highlight::HighlightTool;
 pub use pixelate::PixelateTool;
+pub use rectangle::RectangleTool;
 pub use select::SelectTool;
 pub use text::TextTool;
 
