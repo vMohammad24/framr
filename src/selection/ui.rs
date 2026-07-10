@@ -145,7 +145,7 @@ impl SelectionUI {
 
 		event_queue.roundtrip(&mut app)?;
 
-		for (i, (info, img)) in self.outputs.iter().enumerate() {
+		for (info, img) in self.outputs.iter() {
 			let (w, h) = (info.logical_size.width, info.logical_size.height);
 
 			let cached_bg = image_to_cairo_surface(img)?;
@@ -195,35 +195,54 @@ impl SelectionUI {
 				slot: None,
 				waiting_for_frame: false,
 			});
-
-			let info = info.clone();
-			let img = img.clone();
-			let tx = tx.clone();
-			let conn_handle = conn.clone();
-			let (blur_radius, pixelate_block_size) = {
-				let state = app.state.lock().unwrap();
-				(state.config.blur_radius, state.config.pixelate_block_size)
-			};
-			std::thread::spawn(move || {
-				let (w, h) = (info.logical_size.width, info.logical_size.height);
-				let mut blurred_img = img.clone();
-				graphics::apply_blur(&mut blurred_img, 0, 0, w, h, blur_radius);
-				let mut pixelated_img = img.clone();
-				graphics::apply_pixelate(&mut pixelated_img, 0, 0, w, h, pixelate_block_size);
-
-				let _ = tx.send(UserEvent::ProcessingFinished {
-					surface_idx: i,
-					blurred_img,
-					pixelated_img,
-				});
-				let _ = conn_handle.flush();
-			});
 		}
 
 		app.state.lock().unwrap().dirty = true;
 
+		let mut effects_spawned = false;
+
 		while !app.exit {
 			event_queue.blocking_dispatch(&mut app)?;
+
+			if !effects_spawned {
+				let (needs_effects, blur_radius, pixelate_block_size) = {
+					let state = app.state.lock().unwrap();
+					(
+						matches!(state.active_tool, Tool::Blur | Tool::Pixelate),
+						state.config.blur_radius,
+						state.config.pixelate_block_size,
+					)
+				};
+				if needs_effects {
+					effects_spawned = true;
+					for (i, (info, img)) in self.outputs.iter().enumerate() {
+						let (w, h) = (info.logical_size.width, info.logical_size.height);
+						let img = img.clone();
+						let tx = tx.clone();
+						let conn_handle = conn.clone();
+						std::thread::spawn(move || {
+							let mut pixelated_img = img.clone();
+							graphics::apply_pixelate(
+								&mut pixelated_img,
+								0,
+								0,
+								w,
+								h,
+								pixelate_block_size,
+							);
+							let mut blurred_img = img;
+							graphics::apply_blur(&mut blurred_img, 0, 0, w, h, blur_radius);
+
+							let _ = tx.send(UserEvent::ProcessingFinished {
+								surface_idx: i,
+								blurred_img,
+								pixelated_img,
+							});
+							let _ = conn_handle.flush();
+						});
+					}
+				}
+			}
 
 			while let Ok(event) = app.rx.try_recv() {
 				match event {
