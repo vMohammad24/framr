@@ -466,7 +466,9 @@ pub fn run_composite_encoding_pipeline(
 			.build();
 
 		appsrcs[i].0.set_caps(Some(&caps));
-		appsrcs[i].0.set_max_bytes(frame_format.byte_size() as u64 * 4);
+		appsrcs[i]
+			.0
+			.set_max_bytes(frame_format.byte_size() as u64 * 4);
 	}
 
 	pipeline.set_state(gstreamer::State::Playing)?;
