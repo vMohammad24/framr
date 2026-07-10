@@ -56,11 +56,13 @@ impl Default for RecordingConfig {
 	strum::AsRefStr,
 	strum::Display,
 	strum::IntoStaticStr,
+	strum::EnumString,
 )]
-#[strum(serialize_all = "lowercase")]
+#[strum(serialize_all = "lowercase", ascii_case_insensitive)]
 pub enum ContainerFormat {
 	#[default]
 	Mp4,
+	#[strum(to_string = "matroska", serialize = "mkv")]
 	Matroska,
 }
 
@@ -80,18 +82,6 @@ impl ContainerFormat {
 	}
 }
 
-impl FromStr for ContainerFormat {
-	type Err = String;
-
-	fn from_str(s: &str) -> Result<Self, Self::Err> {
-		match s.to_lowercase().as_str() {
-			"mp4" => Ok(Self::Mp4),
-			"mkv" | "matroska" => Ok(Self::Matroska),
-			_ => Err(format!("Invalid container format: {}", s)),
-		}
-	}
-}
-
 #[derive(
 	Debug,
 	Serialize,
@@ -105,35 +95,17 @@ impl FromStr for ContainerFormat {
 	strum::AsRefStr,
 	strum::Display,
 	strum::IntoStaticStr,
+	strum::EnumString,
 )]
-#[strum(serialize_all = "lowercase")]
+#[strum(serialize_all = "lowercase", ascii_case_insensitive)]
 pub enum VideoEncoder {
 	#[default]
+	#[strum(to_string = "h264", serialize = "x264")]
 	H264,
+	#[strum(to_string = "av1", serialize = "rav1")]
 	AV1,
 }
 
-impl VideoEncoder {
-	pub fn as_str(&self) -> &'static str {
-		match self {
-			Self::H264 => "h264",
-			Self::AV1 => "av1",
-		}
-	}
-}
-
-impl FromStr for VideoEncoder {
-	type Err = String;
-
-	fn from_str(s: &str) -> Result<Self, Self::Err> {
-		match s.to_lowercase().as_str() {
-			"h264" | "x264" => Ok(Self::H264),
-			"av1" | "rav1" => Ok(Self::AV1),
-			_ => Err(format!("Invalid video encoder: {}", s)),
-		}
-	}
-}
-
 #[derive(
 	Debug,
 	Serialize,
@@ -147,8 +119,9 @@ impl FromStr for VideoEncoder {
 	strum::AsRefStr,
 	strum::Display,
 	strum::IntoStaticStr,
+	strum::EnumString,
 )]
-#[strum(serialize_all = "lowercase")]
+#[strum(serialize_all = "lowercase", ascii_case_insensitive)]
 pub enum H264Tune {
 	#[default]
 	Zerolatency,
@@ -161,48 +134,7 @@ pub enum H264Tune {
 
 impl H264Tune {
 	pub fn is_psy_tune(&self) -> bool {
-		match self {
-			Self::Film | Self::Animation | Self::Grain => true,
-			_ => false,
-		}
-	}
-
-	pub fn to_gst_value(&self) -> i32 {
-		match self {
-			Self::Zerolatency => 4,
-			Self::Stillimage => 1,
-			Self::Fastdecode => 2,
-			Self::Film => 1,
-			Self::Animation => 2,
-			Self::Grain => 3,
-		}
-	}
-
-	pub fn as_str(&self) -> &'static str {
-		match self {
-			Self::Zerolatency => "zerolatency",
-			Self::Film => "film",
-			Self::Animation => "animation",
-			Self::Grain => "grain",
-			Self::Stillimage => "stillimage",
-			Self::Fastdecode => "fastdecode",
-		}
-	}
-}
-
-impl FromStr for H264Tune {
-	type Err = String;
-
-	fn from_str(s: &str) -> Result<Self, Self::Err> {
-		match s.to_lowercase().as_str() {
-			"zerolatency" => Ok(Self::Zerolatency),
-			"film" => Ok(Self::Film),
-			"animation" => Ok(Self::Animation),
-			"grain" => Ok(Self::Grain),
-			"stillimage" => Ok(Self::Stillimage),
-			"fastdecode" => Ok(Self::Fastdecode),
-			_ => Err(format!("Invalid H.264 tune: {}", s)),
-		}
+		matches!(self, Self::Film | Self::Animation | Self::Grain)
 	}
 }
 
@@ -219,8 +151,9 @@ impl FromStr for H264Tune {
 	strum::AsRefStr,
 	strum::Display,
 	strum::IntoStaticStr,
+	strum::EnumString,
 )]
-#[strum(serialize_all = "lowercase")]
+#[strum(serialize_all = "lowercase", ascii_case_insensitive)]
 pub enum EncoderSpeed {
 	#[default]
 	Ultrafast,
@@ -250,41 +183,6 @@ impl EncoderSpeed {
 			Self::Placebo => 10,
 		}
 	}
-
-	pub fn as_str(&self) -> &'static str {
-		match self {
-			Self::Ultrafast => "ultrafast",
-			Self::Superfast => "superfast",
-			Self::Veryfast => "veryfast",
-			Self::Faster => "faster",
-			Self::Fast => "fast",
-			Self::Medium => "medium",
-			Self::Slow => "slow",
-			Self::Slower => "slower",
-			Self::Veryslow => "veryslow",
-			Self::Placebo => "placebo",
-		}
-	}
-}
-
-impl FromStr for EncoderSpeed {
-	type Err = String;
-
-	fn from_str(s: &str) -> Result<Self, Self::Err> {
-		match s.to_lowercase().as_str() {
-			"ultrafast" => Ok(Self::Ultrafast),
-			"superfast" => Ok(Self::Superfast),
-			"veryfast" => Ok(Self::Veryfast),
-			"faster" => Ok(Self::Faster),
-			"fast" => Ok(Self::Fast),
-			"medium" => Ok(Self::Medium),
-			"slow" => Ok(Self::Slow),
-			"slower" => Ok(Self::Slower),
-			"veryslow" => Ok(Self::Veryslow),
-			"placebo" => Ok(Self::Placebo),
-			_ => Err(format!("Invalid encoder speed preset: {}", s)),
-		}
-	}
 }
 
 #[derive(
@@ -308,9 +206,6 @@ pub enum OutputImageFormat {
 }
 
 impl OutputImageFormat {
-	pub fn all_formats() -> &'static [Self] {
-		&[Self::Png, Self::Jpeg, Self::WebP]
-	}
 	pub fn to_image_format(self) -> image::ImageFormat {
 		match self {
 			Self::Png => image::ImageFormat::Png,
