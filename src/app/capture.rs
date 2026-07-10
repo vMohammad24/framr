@@ -99,11 +99,9 @@ pub fn get_capture_path(
 	image_format: OutputImageFormat,
 ) -> Result<(PathBuf, String)> {
 	let ext = image_format.extension();
-	let windows = get_windows()?;
-	let pos = region
-		.map(|r| (r.position.x as f64, r.position.y as f64))
-		.unwrap_or((0.0, 0.0));
-	let active_window = get_window_at_pos(pos, &windows);
+	let windows = get_windows().unwrap_or_default();
+	let active_window = region
+		.and_then(|r| get_window_at_pos((r.position.x as f64, r.position.y as f64), &windows));
 	let default = if active_window.is_some() {
 		format!("{{window}}_%Y-%m-%d_%H-%M-%S.{}", ext)
 	} else {

@@ -19,10 +19,24 @@ use crate::config::DefaultAction;
 use crate::utils::clipboard::copy_to_clipboard;
 use crate::utils::notify::send_notification;
 
-fn main() -> Result<()> {
+fn main() -> std::process::ExitCode {
 	sound::init_sound();
 	let cli = Cli::parse();
+	let silent = cli.silent;
 
+	match run(cli) {
+		Ok(()) => std::process::ExitCode::SUCCESS,
+		Err(e) => {
+			eprintln!("Error: {e:#}");
+			if e.to_string() != "Selection cancelled" {
+				let _ = send_notification("framr error", &format!("{e:#}"), None, silent);
+			}
+			std::process::ExitCode::FAILURE
+		}
+	}
+}
+
+fn run(cli: Cli) -> Result<()> {
 	if let Some(ref uri) = cli.uri {
 		return config::import_uploader(uri);
 	}
