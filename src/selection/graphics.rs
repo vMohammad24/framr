@@ -1,5 +1,6 @@
+use anyhow::{Result, anyhow};
 use cairo::{Context, Format, ImageSurface};
-use image::{Rgba, RgbaImage};
+use image::RgbaImage;
 use libframr::OutputInfo;
 use pangocairo::functions::create_layout;
 
@@ -11,39 +12,34 @@ pub fn apply_annotations(
 	annotations: &[Annotation],
 	output: &OutputInfo,
 	config: &SelectionConfig,
-) {
+) -> Result<()> {
 	for ann in annotations {
 		ann.tool.behavior().apply_effect(img, ann, output, config);
 	}
 
-	let (w, h) = img.dimensions();
-	let mut cairo_data = Vec::with_capacity((w * h * 4) as usize);
-	for pixel in img.pixels() {
-		// BGRA
-		cairo_data.push(pixel[2]);
-		cairo_data.push(pixel[1]);
-		cairo_data.push(pixel[0]);
-		cairo_data.push(pixel[3]);
+	if annotations
+		.iter()
+		.all(|a| a.tool.behavior().is_region_effect())
+	{
+		return Ok(());
 	}
 
-	let mut surface =
-		ImageSurface::create(Format::ARgb32, w as i32, h as i32).expect("failed to create surface");
+	let (w, h) = img.dimensions();
+	let mut cairo_data = img.as_raw().clone();
+	for pixel in cairo_data.chunks_exact_mut(4) {
+		pixel.swap(0, 2); // RGBA to BGRA
+	}
+
+	let mut surface = ImageSurface::create_for_data(
+		cairo_data,
+		Format::ARgb32,
+		w as i32,
+		h as i32,
+		(w * 4) as i32,
+	)
+	.map_err(|e| anyhow!("failed to create cairo surface: {e}"))?;
 	{
-		let cr = Context::new(&surface).expect("failed to create context");
-		let src_surface = ImageSurface::create_for_data(
-			cairo_data,
-			Format::ARgb32,
-			w as i32,
-			h as i32,
-			(w * 4) as i32,
-		)
-		.expect("failed to create src surface");
-		if let Err(e) = cr.set_source_surface(&src_surface, 0.0, 0.0) {
-			eprintln!("failed to set source surface: {}", e);
-		}
-		if let Err(e) = cr.paint() {
-			eprintln!("failed to paint: {}", e);
-		}
+		let cr = Context::new(&surface).map_err(|e| anyhow!("failed to create context: {e}"))?;
 		for ann in annotations {
 			if !ann.tool.behavior().is_region_effect() {
 				draw_annotation(&cr, ann, output, config);
@@ -52,14 +48,16 @@ pub fn apply_annotations(
 	}
 
 	surface.flush();
-	let data = surface.data().expect("failed to get surface data");
-	for (i, chunk) in data.chunks(4).enumerate() {
-		let py = i as u32 / w;
-		let px = i as u32 % w;
-		if py < h && px < w {
-			img.put_pixel(px, py, Rgba([chunk[2], chunk[1], chunk[0], chunk[3]]));
-		}
+	let data = surface
+		.data()
+		.map_err(|e| anyhow!("failed to get surface data: {e}"))?;
+	for (dst, src) in img.as_mut().chunks_exact_mut(4).zip(data.chunks_exact(4)) {
+		dst[0] = src[2];
+		dst[1] = src[1];
+		dst[2] = src[0];
+		dst[3] = src[3];
 	}
+	Ok(())
 }
 
 pub fn apply_blur(img: &mut RgbaImage, x: u32, y: u32, w: u32, h: u32, radius: f32) {

@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use cairo::{Context, Format, ImageSurface};
+use cairo::{Context, ImageSurface};
 use libframr::{OutputInfo, Position};
 use pangocairo::functions::{create_layout, show_layout};
 use smithay_client_toolkit::{
@@ -44,6 +44,7 @@ pub struct SurfaceData {
 	pub cached_bg: ImageSurface,
 	pub cached_blurred_bg: ImageSurface,
 	pub cached_pixelated_bg: ImageSurface,
+	pub scratch: ImageSurface,
 	pub _layer: LayerSurface,
 	pub wl_surface: WlSurface,
 	pub dimensions: (u32, u32),
@@ -92,10 +93,8 @@ impl AppState {
 			)
 			.map_err(|e| anyhow!("failed to create buffer: {}", e))?;
 
-		let mut cairo_surface = ImageSurface::create(Format::ARgb32, width as i32, height as i32)
-			.map_err(|e| anyhow!("failed to create cairo surface: {}", e))?;
 		{
-			let cr = Context::new(&cairo_surface)
+			let cr = Context::new(&surface_data.scratch)
 				.map_err(|e| anyhow!("failed to create context: {}", e))?;
 
 			if let Err(e) = cr.set_source_surface(&surface_data.cached_bg, 0.0, 0.0) {
@@ -248,8 +247,9 @@ impl AppState {
 			}
 		}
 
-		cairo_surface.flush();
-		let cairo_data = cairo_surface
+		surface_data.scratch.flush();
+		let cairo_data = surface_data
+			.scratch
 			.data()
 			.map_err(|e| anyhow!("failed to get surface data: {}", e))?;
 		canvas.copy_from_slice(&cairo_data);

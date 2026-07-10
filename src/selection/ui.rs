@@ -33,7 +33,7 @@ pub struct SelectionUI {
 	state: Arc<Mutex<SelectionState>>,
 }
 
-fn image_to_cairo_surface(img: &RgbaImage) -> cairo::ImageSurface {
+fn image_to_cairo_surface(img: &RgbaImage) -> Result<cairo::ImageSurface> {
 	let (w, h) = img.dimensions();
 	let stride = w as i32 * 4;
 	let mut cairo_data = img.as_raw().clone();
@@ -48,7 +48,7 @@ fn image_to_cairo_surface(img: &RgbaImage) -> cairo::ImageSurface {
 		h as i32,
 		stride,
 	)
-	.expect("failed to create cairo surface")
+	.map_err(|e| anyhow::anyhow!("failed to create cairo surface: {e}"))
 }
 
 impl SelectionUI {
@@ -148,9 +148,25 @@ impl SelectionUI {
 		for (i, (info, img)) in self.outputs.iter().enumerate() {
 			let (w, h) = (info.logical_size.width, info.logical_size.height);
 
-			let cached_bg = image_to_cairo_surface(img);
+			let cached_bg = image_to_cairo_surface(img)?;
 			let cached_blurred_bg = cached_bg.clone();
 			let cached_pixelated_bg = cached_bg.clone();
+			let scratch = cairo::ImageSurface::create(
+				cairo::Format::ARgb32,
+				info.logical_size.width as i32,
+				info.logical_size.height as i32,
+			)
+			.map_err(|e| anyhow::anyhow!("failed to create scratch surface: {e}"))?;
+
+			let wl_output = app
+				.output_state
+				.outputs()
+				.find(|o| {
+					let info_name = app.output_state.info(o).and_then(|i| i.name);
+					info_name.as_deref() == Some(&info.name)
+				})
+				.or_else(|| app.output_state.outputs().next())
+				.ok_or_else(|| anyhow::anyhow!("compositor reported no outputs"))?;
 
 			let wl_surface = app.compositor_state.create_surface(&qh);
 			let layer = app.layer_shell.create_layer_surface(
@@ -158,15 +174,7 @@ impl SelectionUI {
 				wl_surface.clone(),
 				Layer::Overlay,
 				Some("framr-selection"),
-				Some(
-					&app.output_state
-						.outputs()
-						.find(|o| {
-							let info_name = app.output_state.info(o).and_then(|i| i.name);
-							info_name.as_deref() == Some(&info.name)
-						})
-						.unwrap_or_else(|| app.output_state.outputs().next().unwrap()),
-				),
+				Some(&wl_output),
 			);
 
 			layer.set_anchor(Anchor::TOP | Anchor::LEFT | Anchor::RIGHT | Anchor::BOTTOM);
@@ -180,6 +188,7 @@ impl SelectionUI {
 				cached_bg,
 				cached_blurred_bg,
 				cached_pixelated_bg,
+				scratch,
 				_layer: layer,
 				wl_surface,
 				dimensions: (w, h),
@@ -224,8 +233,8 @@ impl SelectionUI {
 						pixelated_img,
 					} => {
 						if let Some(sd) = app.surfaces.get_mut(surface_idx) {
-							sd.cached_blurred_bg = image_to_cairo_surface(&blurred_img);
-							sd.cached_pixelated_bg = image_to_cairo_surface(&pixelated_img);
+							sd.cached_blurred_bg = image_to_cairo_surface(&blurred_img)?;
+							sd.cached_pixelated_bg = image_to_cairo_surface(&pixelated_img)?;
 							app.state.lock().unwrap().dirty = true;
 						}
 					}
@@ -301,29 +310,22 @@ impl SelectionUI {
 
 			if intersect_x < intersect_x2 && intersect_y < intersect_y2 {
 				let mut base = img.clone();
-				graphics::apply_annotations(&mut base, &state.annotations, info, &state.config);
+				graphics::apply_annotations(&mut base, &state.annotations, info, &state.config)?;
 
 				let local_x = (intersect_x - out_x) as u32;
 				let local_y = (intersect_y - out_y) as u32;
 				let intersect_w = (intersect_x2 - intersect_x) as u32;
 				let intersect_h = (intersect_y2 - intersect_y) as u32;
 
-				let target_x = (intersect_x - x) as u32;
-				let target_y = (intersect_y - y) as u32;
+				let target_x = (intersect_x - x) as i64;
+				let target_y = (intersect_y - y) as i64;
 
-				let cropped = base
-					.view(local_x, local_y, intersect_w, intersect_h)
-					.to_image();
-
-				for py in 0..intersect_h {
-					for px in 0..intersect_w {
-						final_img.put_pixel(
-							target_x + px,
-							target_y + py,
-							*cropped.get_pixel(px, py),
-						);
-					}
-				}
+				image::imageops::replace(
+					&mut final_img,
+					&*base.view(local_x, local_y, intersect_w, intersect_h),
+					target_x,
+					target_y,
+				);
 				has_content = true;
 			}
 		}
