@@ -18,6 +18,7 @@ pub fn send_notification(
 	if let Some(bytes) = image_data
 		&& let Ok(img) = image::load_from_memory(bytes)
 	{
+		let img = img.thumbnail(256, 256);
 		let (width, height) = img.dimensions();
 		let pixels = img.to_rgba8().into_raw();
 		if let Ok(icon) = notify_rust::Image::from_rgba(width as i32, height as i32, pixels) {
