@@ -47,18 +47,7 @@ impl Tool {
 	}
 
 	pub fn from_index(index: usize) -> Self {
-		match index {
-			0 => Tool::Select,
-			1 => Tool::Circle,
-			2 => Tool::Arrow,
-			3 => Tool::Checkmark,
-			4 => Tool::Blur,
-			5 => Tool::Pixelate,
-			6 => Tool::Highlight,
-			7 => Tool::Text,
-			8 => Tool::Annotate,
-			_ => Tool::Select,
-		}
+		Tool::all().get(index).copied().unwrap_or(Tool::Select)
 	}
 
 	pub fn from_keysym(keysym: Keysym) -> Option<Tool> {
