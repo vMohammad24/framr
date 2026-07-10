@@ -28,11 +28,15 @@ jobs:
       - name: Build Framr
         run: cargo build --release --locked
 
+      - name: Package Binary
+        run: |
+          tar -czvf framr-${{ github.ref_name }}-x86_64-linux.tar.gz -C target/release framr
+
       - name: Upload Artifact
         uses: actions/upload-artifact@v7
         with:
           name: framr-arch-binary
-          path: target/release/framr
+          path: framr-${{ github.ref_name }}-x86_64-linux.tar.gz
 
   package:
     runs-on: ubuntu-latest
