@@ -57,7 +57,7 @@ pub fn play_sound(sound_path: &str) -> Result<()> {
 
 	let abs_path = std::fs::canonicalize(path).context("Failed to get absolute path")?;
 
-	gst::init()?;
+	gst::init().context("Failed to initialize GStreamer")?;
 
 	let path_str = abs_path
 		.to_str()
