@@ -1,8 +1,4 @@
 use anyhow::{Context, Result};
-use hyprland::{
-	data::{Clients, FullscreenMode, Monitors},
-	shared::HyprData,
-};
 use serde::Deserialize;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
@@ -47,8 +43,50 @@ pub fn get_window_at_pos(pos: (f64, f64), windows: &[Window]) -> Option<usize> {
 }
 
 pub fn get_hypr_windows() -> Result<Vec<Window>> {
-	let monitors = Monitors::get()?;
-	let clients = Clients::get()?;
+	#[derive(Deserialize)]
+	struct HyprWorkspaceRef {
+		id: i32,
+	}
+
+	#[derive(Deserialize)]
+	struct HyprClient {
+		title: String,
+		at: (i32, i32),
+		size: (i32, i32),
+		workspace: HyprWorkspaceRef,
+		floating: bool,
+		fullscreen: u8,
+		#[serde(rename = "overFullscreen")]
+		over_fullscreen: bool,
+		visible: bool,
+		#[serde(rename = "focusHistoryID")]
+		focus_history_id: i32,
+	}
+
+	#[derive(Deserialize)]
+	struct HyprMonitor {
+		#[serde(rename = "activeWorkspace")]
+		active_workspace: HyprWorkspaceRef,
+	}
+
+	fn hypr_query(command: &str) -> Result<String> {
+		let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+			.context("XDG_RUNTIME_DIR environment variable not set")?;
+		let signature = std::env::var("HYPRLAND_INSTANCE_SIGNATURE")
+			.context("HYPRLAND_INSTANCE_SIGNATURE environment variable not set")?;
+		let mut stream =
+			UnixStream::connect(format!("{runtime_dir}/hypr/{signature}/.socket.sock"))
+				.context("Failed to connect to Hyprland IPC socket")?;
+		stream.write_all(command.as_bytes())?;
+		let mut response = String::new();
+		stream.read_to_string(&mut response)?;
+		Ok(response)
+	}
+
+	let monitors: Vec<HyprMonitor> = serde_json::from_str(&hypr_query("j/monitors")?)
+		.context("Failed to parse Hyprland monitors JSON")?;
+	let clients: Vec<HyprClient> = serde_json::from_str(&hypr_query("j/clients")?)
+		.context("Failed to parse Hyprland clients JSON")?;
 
 	let windows = clients
 		.into_iter()
@@ -62,7 +100,7 @@ pub fn get_hypr_windows() -> Result<Vec<Window>> {
 				3000
 			} else if c.floating {
 				2500
-			} else if c.fullscreen != FullscreenMode::None {
+			} else if c.fullscreen != 0 {
 				2000
 			} else {
 				1000
@@ -70,11 +108,11 @@ pub fn get_hypr_windows() -> Result<Vec<Window>> {
 
 			Window {
 				title: c.title,
-				x: c.at.0 as i32,
-				y: c.at.1 as i32,
-				width: c.size.0 as i32,
-				height: c.size.1 as i32,
-				z_index: layer_base - c.focus_history_id as i32,
+				x: c.at.0,
+				y: c.at.1,
+				width: c.size.0,
+				height: c.size.1,
+				z_index: layer_base - c.focus_history_id,
 			}
 		})
 		.collect();
