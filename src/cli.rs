@@ -126,6 +126,7 @@ pub enum Commands {
 		action: Option<ConfigAction>,
 	},
 	/// Generate shell completions
+	#[command(hide = true)]
 	Completions {
 		/// Shell to generate the completions for
 		shell: clap_complete::Shell,
