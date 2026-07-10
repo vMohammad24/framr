@@ -1,15 +1,14 @@
+use anyhow::Result;
 use std::ops::Deref;
 use std::os::fd::AsFd;
-use anyhow::Result;
 use wayland_client::protocol::wl_buffer::WlBuffer;
-use wayland_client::protocol::wl_shm::{WlShm, Format as WlFormat};
+use wayland_client::protocol::wl_shm::{Format as WlFormat, WlShm};
 use wayland_protocols_wlr::screencopy::v1::client::zwlr_screencopy_frame_v1::ZwlrScreencopyFrameV1;
 
 use crate::buffer::create_shm_fd;
 use crate::output::PixelFormat;
 
-pub(crate) fn pixel_format_to_wl_shm(
-fmt: PixelFormat) -> WlFormat {
+pub(crate) fn pixel_format_to_wl_shm(fmt: PixelFormat) -> WlFormat {
 	match fmt {
 		PixelFormat::Argb8888 => WlFormat::Argb8888,
 		PixelFormat::Xrgb8888 => WlFormat::Xrgb8888,

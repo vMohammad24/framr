@@ -5,7 +5,9 @@ use wayland_protocols_wlr::screencopy::v1::client::zwlr_screencopy_manager_v1::Z
 
 use crate::backend::wlr::core::WlrBackend;
 use crate::backend::wlr::dispatch::{CaptureState, FrameState};
-use crate::backend::wlr::shm::{pixel_format_to_wl_shm, allocate_shm_buffer, WlBufferGuard, WlFrameGuard};
+use crate::backend::wlr::shm::{
+	WlBufferGuard, WlFrameGuard, allocate_shm_buffer, pixel_format_to_wl_shm,
+};
 use crate::error::FramrError;
 use crate::output::FrameFormat;
 
@@ -67,7 +69,4 @@ impl WlrBackend {
 
 		Ok((mmap, frame_format))
 	}
-}
-
-impl WlrBackend {
 }
