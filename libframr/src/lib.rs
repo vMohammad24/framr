@@ -64,6 +64,7 @@ pub enum ContainerFormat {
 	Mp4,
 	#[strum(to_string = "matroska", serialize = "mkv")]
 	Matroska,
+	WebM,
 }
 
 impl ContainerFormat {
@@ -71,6 +72,7 @@ impl ContainerFormat {
 		match self {
 			Self::Mp4 => "mp4",
 			Self::Matroska => "mkv",
+			Self::WebM => "webm",
 		}
 	}
 
@@ -78,6 +80,7 @@ impl ContainerFormat {
 		match self {
 			Self::Mp4 => "mp4mux",
 			Self::Matroska => "matroskamux",
+			Self::WebM => "webmmux",
 		}
 	}
 }

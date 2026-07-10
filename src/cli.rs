@@ -53,7 +53,7 @@ pub struct Cli {
 	#[arg(long)]
 	pub encoder: Option<VideoEncoder>,
 
-	/// Container format (mp4, mkv/matroska)
+	/// Container format (mp4, mkv/matroska, webm)
 	#[arg(long)]
 	pub container: Option<libframr::ContainerFormat>,
 
