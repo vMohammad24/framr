@@ -171,6 +171,16 @@ fn run(cli: Cli) -> Result<()> {
 			}
 		}
 		DefaultAction::Save | DefaultAction::SaveAndCopy => {
+			if path.as_os_str() == "-" {
+				let bytes = bytes_opt
+					.as_ref()
+					.ok_or_else(|| anyhow::anyhow!("Only screenshots can be written to stdout"))?;
+				std::io::Write::write_all(&mut std::io::stdout(), bytes)?;
+				if action == DefaultAction::SaveAndCopy {
+					copy_to_clipboard(bytes.clone(), mime_type)?;
+				}
+				return Ok(());
+			}
 			if let Some(parent) = path.parent() {
 				std::fs::create_dir_all(parent)?;
 			}

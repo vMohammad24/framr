@@ -39,6 +39,10 @@ pub fn record(
 		}
 	};
 
+	if cli.output.as_deref().is_some_and(|o| o.as_os_str() == "-") {
+		anyhow::bail!("Recordings cannot be written to stdout");
+	}
+
 	let conn = FramrConnection::new()?;
 	let recording_config = get_recording_config(cli, cfg);
 	if recording_config.container == libframr::ContainerFormat::WebM

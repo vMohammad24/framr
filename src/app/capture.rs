@@ -123,6 +123,7 @@ pub fn get_capture_path(
 		filename = filename.replace("{window}", title);
 	}
 	let path = match &cli.output {
+		Some(dir) if dir.as_os_str() == "-" => PathBuf::from("-"),
 		Some(dir) => dir.join(&filename),
 		None => PathBuf::from(&filename),
 	};
