@@ -43,6 +43,10 @@ pub fn record(
 		anyhow::bail!("Recordings cannot be written to stdout");
 	}
 
+	if let Some(secs) = cli.delay {
+		std::thread::sleep(std::time::Duration::from_secs(secs));
+	}
+
 	let conn = FramrConnection::new()?;
 	let recording_config = get_recording_config(cli, cfg);
 	if recording_config.container == libframr::ContainerFormat::WebM

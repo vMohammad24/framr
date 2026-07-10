@@ -33,6 +33,10 @@ pub struct Cli {
 	#[arg(short, long)]
 	pub last: bool,
 
+	/// Delay before capturing, in seconds
+	#[arg(short, long)]
+	pub delay: Option<u64>,
+
 	/// Copy to clipboard
 	#[arg(short, long)]
 	pub copy: bool,

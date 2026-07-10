@@ -23,6 +23,10 @@ pub fn capture(
 	cli: &Cli,
 	cfg: Option<&AppConfig>,
 ) -> Result<(Vec<u8>, Option<LogicalRegion>, OutputImageFormat)> {
+	if let Some(secs) = cli.delay {
+		std::thread::sleep(std::time::Duration::from_secs(secs));
+	}
+
 	let conn = FramrConnection::new()?;
 
 	let image_format = cfg.and_then(|c| c.image_format).unwrap_or_default();
