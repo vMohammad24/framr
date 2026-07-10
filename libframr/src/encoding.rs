@@ -9,7 +9,9 @@ use crate::RecordingConfig;
 use crate::output::{FrameFormat, LogicalRegion, OutputInfo, PixelFormat, Transform};
 
 pub fn wait_for_gstreamer_eos(pipeline: &gstreamer::Pipeline) -> Result<()> {
-	let bus = pipeline.bus().unwrap();
+	let bus = pipeline
+		.bus()
+		.ok_or_else(|| anyhow::anyhow!("Pipeline has no bus"))?;
 	for msg in bus.iter_timed(gstreamer::ClockTime::NONE) {
 		use gstreamer::MessageView;
 		match msg.view() {
@@ -61,62 +63,90 @@ fn apply_encoder_config(encoder: &gstreamer::Element, config: &RecordingConfig) 
 	};
 	let name = factory.name();
 
-	match config.encoder {
-		crate::VideoEncoder::H264 => {
-			encoder.set_property("bitrate", config.bitrate);
-			if name == "x264enc" {
-				encoder.set_property("speed-preset", config.speed.to_gst_value());
-				encoder.set_property("key-int-max", config.keyframe_interval);
-				if config.tune.is_psy_tune() {
-					encoder.set_property("psy-tune", config.tune.to_gst_value());
-				} else {
-					encoder.set_property("tune", config.tune.to_gst_value());
-				}
-			} else if name.starts_with("vaapi") || name.starts_with("va") {
-				if encoder.has_property("keyframe-period") {
-					encoder.set_property("keyframe-period", config.keyframe_interval as i32);
-				}
-				if encoder.has_property("rate-control") {
-					encoder.set_property_from_str("rate-control", "cbr");
-				}
-			} else if name.starts_with("nv") {
-				if encoder.has_property("gop-size") {
-					encoder.set_property("gop-size", config.keyframe_interval as i32);
-				}
-				if encoder.has_property("rc-mode") {
-					encoder.set_property_from_str("rc-mode", "cbr");
-				}
-			}
+	if name == "x264enc" {
+		encoder.set_property("bitrate", config.bitrate);
+		encoder.set_property_from_str("speed-preset", config.speed.as_ref());
+		encoder.set_property("key-int-max", config.keyframe_interval);
+		if config.tune.is_psy_tune() {
+			encoder.set_property_from_str("psy-tune", config.tune.as_ref());
+		} else {
+			encoder.set_property_from_str("tune", config.tune.as_ref());
 		}
-		crate::VideoEncoder::AV1 => {
-			if name == "rav1enc" {
-				let speed = 11 - config.speed.to_gst_value();
-				encoder.set_property("speed-preset", speed as u32);
-				encoder.set_property("bitrate", (config.bitrate * 1000) as i32);
-				encoder.set_property("max-key-frame-interval", config.keyframe_interval as u64);
-			} else {
-				encoder.set_property("bitrate", config.bitrate);
-				if name.starts_with("vaapi") || name.starts_with("va") {
-					if encoder.has_property("keyframe-period") {
-						encoder.set_property("keyframe-period", config.keyframe_interval as i32);
-					}
-					if encoder.has_property("rate-control") {
-						encoder.set_property_from_str("rate-control", "cbr");
-					}
-				} else if name.starts_with("nv") {
-					if encoder.has_property("gop-size") {
-						encoder.set_property("gop-size", config.keyframe_interval as i32);
-					}
-					if encoder.has_property("rc-mode") {
-						encoder.set_property_from_str("rc-mode", "cbr");
-					}
-				}
+	} else if name == "rav1enc" {
+		let speed = 11 - config.speed.to_gst_value();
+		encoder.set_property("speed-preset", speed as u32);
+		encoder.set_property("bitrate", (config.bitrate * 1000) as i32);
+		encoder.set_property("max-key-frame-interval", config.keyframe_interval as u64);
+	} else {
+		encoder.set_property("bitrate", config.bitrate);
+		if name.starts_with("va") {
+			if encoder.has_property("keyframe-period") {
+				encoder.set_property("keyframe-period", config.keyframe_interval as i32);
+			}
+			if encoder.has_property("rate-control") {
+				encoder.set_property_from_str("rate-control", "cbr");
+			}
+		} else if name.starts_with("nv") {
+			if encoder.has_property("gop-size") {
+				encoder.set_property("gop-size", config.keyframe_interval as i32);
+			}
+			if encoder.has_property("rc-mode") {
+				encoder.set_property_from_str("rc-mode", "cbr");
 			}
 		}
 	}
 
 	if encoder.has_property("threads") {
 		encoder.set_property("threads", config.threads.unwrap_or(0));
+	}
+}
+
+fn make_element(name: &str) -> Result<gstreamer::Element> {
+	gstreamer::ElementFactory::make(name)
+		.build()
+		.map_err(|e| anyhow::anyhow!("Failed to create {}. Error: {}", name, e))
+}
+
+fn make_appsrc(name: &str) -> Result<AppSrc> {
+	let appsrc = gstreamer::ElementFactory::make("appsrc")
+		.name(name)
+		.build()
+		.map_err(|e| anyhow::anyhow!("Failed to create appsrc. Error: {}", e))?
+		.dynamic_cast::<AppSrc>()
+		.map_err(|_| anyhow::anyhow!("appsrc element is not an AppSrc"))?;
+	configure_appsrc(&appsrc);
+	Ok(appsrc)
+}
+
+fn make_encoder(config: &RecordingConfig) -> Result<gstreamer::Element> {
+	let hw_encoder = crate::find_hardware_encoder(config.encoder, config.hw_encoder.as_deref());
+	let name = hw_encoder.as_deref().unwrap_or(match config.encoder {
+		crate::VideoEncoder::H264 => "x264enc",
+		crate::VideoEncoder::AV1 => "rav1enc",
+	});
+	let encoder = make_element(name)?;
+	apply_encoder_config(&encoder, config);
+	Ok(encoder)
+}
+
+fn make_parser(encoder: crate::VideoEncoder) -> Option<gstreamer::Element> {
+	let name = match encoder {
+		crate::VideoEncoder::H264 => "h264parse",
+		crate::VideoEncoder::AV1 => "av1parse",
+	};
+	gstreamer::ElementFactory::make(name).build().ok()
+}
+
+fn gst_video_format(format: PixelFormat) -> Result<gstreamer_video::VideoFormat> {
+	match format {
+		PixelFormat::Argb8888 => Ok(gstreamer_video::VideoFormat::Bgra),
+		PixelFormat::Xrgb8888 => Ok(gstreamer_video::VideoFormat::Bgrx),
+		PixelFormat::Abgr8888 => Ok(gstreamer_video::VideoFormat::Rgba),
+		PixelFormat::Xbgr8888 => Ok(gstreamer_video::VideoFormat::Rgbx),
+		_ => Err(anyhow::anyhow!(
+			"Unsupported pixel format for recording: {:?}",
+			format
+		)),
 	}
 }
 
@@ -162,27 +192,14 @@ pub fn run_single_encoding_pipeline(
 ) -> Result<()> {
 	let pipeline = gstreamer::Pipeline::new();
 
-	let appsrc = gstreamer::ElementFactory::make("appsrc")
-		.name("src")
-		.build()
-		.map_err(|e| anyhow::anyhow!("Failed to create appsrc. Error: {}", e))?
-		.dynamic_cast::<AppSrc>()
-		.unwrap();
+	let appsrc = make_appsrc("src")?;
 
-	configure_appsrc(&appsrc);
+	let videoconvert = make_element("videoconvert")?;
 
-	let videoconvert = gstreamer::ElementFactory::make("videoconvert")
-		.build()
-		.map_err(|e| anyhow::anyhow!("Failed to create videoconvert. Error: {}", e))?;
-
-	let videorate = gstreamer::ElementFactory::make("videorate")
-		.build()
-		.map_err(|e| anyhow::anyhow!("Failed to create videorate. Error: {}", e))?;
+	let videorate = make_element("videorate")?;
 	videorate.set_property("skip-to-first", true);
 
-	let videoflip = gstreamer::ElementFactory::make("videoflip")
-		.build()
-		.map_err(|e| anyhow::anyhow!("Failed to create videoflip. Error: {}", e))?;
+	let videoflip = make_element("videoflip")?;
 
 	let direction_nick = match transform {
 		Transform::Normal => "identity",
@@ -197,43 +214,21 @@ pub fn run_single_encoding_pipeline(
 
 	videoflip.set_property_from_str("video-direction", direction_nick);
 
-	let videoscale = gstreamer::ElementFactory::make("videoscale")
-		.build()
-		.map_err(|e| anyhow::anyhow!("Failed to create videoscale. Error: {}", e))?;
+	let videoscale = make_element("videoscale")?;
 
-	let capsfilter = gstreamer::ElementFactory::make("capsfilter")
-		.build()
-		.map_err(|e| anyhow::anyhow!("Failed to create capsfilter. Error: {}", e))?;
+	let capsfilter = make_element("capsfilter")?;
 
-	let hw_encoder = crate::find_hardware_encoder(
-		recording_config.encoder,
-		recording_config.hw_encoder.as_deref(),
-	);
-	let encoder_name = hw_encoder
-		.as_deref()
-		.unwrap_or_else(|| match recording_config.encoder {
-			crate::VideoEncoder::H264 => "x264enc",
-			crate::VideoEncoder::AV1 => "rav1enc",
-		});
+	let encoder = make_encoder(&recording_config)?;
 
-	let encoder = gstreamer::ElementFactory::make(encoder_name)
-		.build()
-		.map_err(|e| anyhow::anyhow!("Failed to create encoder {}. Error: {}", encoder_name, e))?;
+	let parser = make_parser(recording_config.encoder);
 
-	apply_encoder_config(&encoder, &recording_config);
+	let muxer = make_element(recording_config.container.gst_muxer())?;
 
-	let muxer_name = recording_config.container.gst_muxer();
-	let muxer = gstreamer::ElementFactory::make(muxer_name)
-		.build()
-		.map_err(|e| anyhow::anyhow!("Failed to create muxer {}. Error: {}", muxer_name, e))?;
-
-	let sink = gstreamer::ElementFactory::make("filesink")
-		.build()
-		.map_err(|e| anyhow::anyhow!("Failed to create filesink. Error: {}", e))?;
+	let sink = make_element("filesink")?;
 
 	sink.set_property("location", output_path.to_string_lossy().as_ref());
 
-	pipeline.add_many(&[
+	let mut elements: Vec<&gstreamer::Element> = vec![
 		appsrc.upcast_ref(),
 		&videoconvert,
 		&videorate,
@@ -241,37 +236,18 @@ pub fn run_single_encoding_pipeline(
 		&videoscale,
 		&capsfilter,
 		&encoder,
-		&muxer,
-		&sink,
-	])?;
-	gstreamer::Element::link_many(&[
-		appsrc.upcast_ref(),
-		&videoconvert,
-		&videorate,
-		&videoflip,
-		&videoscale,
-		&capsfilter,
-		&encoder,
-		&muxer,
-		&sink,
-	])?;
+	];
+	elements.extend(&parser);
+	elements.push(&muxer);
+	elements.push(&sink);
+	pipeline.add_many(&elements)?;
+	gstreamer::Element::link_many(&elements)?;
 
 	pipeline.set_state(gstreamer::State::Ready)?;
 
 	let (_, _, _, format) = frame_receiver.recv()?;
 
-	let gst_format = match format.format {
-		PixelFormat::Argb8888 => gstreamer_video::VideoFormat::Bgra,
-		PixelFormat::Xrgb8888 => gstreamer_video::VideoFormat::Bgrx,
-		PixelFormat::Abgr8888 => gstreamer_video::VideoFormat::Rgba,
-		PixelFormat::Xbgr8888 => gstreamer_video::VideoFormat::Rgbx,
-		_ => {
-			return Err(anyhow::anyhow!(
-				"Unsupported pixel format for recording: {:?}",
-				format.format
-			));
-		}
-	};
+	let gst_format = gst_video_format(format.format)?;
 
 	let caps = gstreamer_video::VideoCapsBuilder::new()
 		.format(gst_format)
@@ -327,66 +303,41 @@ pub fn run_pipewire_encoding_pipeline(
 		src.set_property("do-timestamp", true);
 	}
 
-	let queue = gstreamer::ElementFactory::make("queue")
-		.build()
-		.map_err(|e| anyhow::anyhow!("Failed to create queue. Error: {}", e))?;
+	let queue = make_element("queue")?;
 
-	let videoconvert = gstreamer::ElementFactory::make("videoconvert")
-		.build()
-		.map_err(|e| anyhow::anyhow!("Failed to create videoconvert. Error: {}", e))?;
+	let videoconvert = make_element("videoconvert")?;
 
-	let videorate = gstreamer::ElementFactory::make("videorate")
-		.build()
-		.map_err(|e| anyhow::anyhow!("Failed to create videorate. Error: {}", e))?;
+	let videorate = make_element("videorate")?;
 	videorate.set_property("skip-to-first", true);
 
-	let capsfilter = gstreamer::ElementFactory::make("capsfilter")
-		.build()
-		.map_err(|e| anyhow::anyhow!("Failed to create capsfilter. Error: {}", e))?;
+	let capsfilter = make_element("capsfilter")?;
 	let rate_caps = gstreamer_video::VideoCapsBuilder::new()
 		.framerate(gstreamer::Fraction::new(recording_config.fps as i32, 1))
 		.build();
 	capsfilter.set_property("caps", &rate_caps);
 
-	let hw_encoder = crate::find_hardware_encoder(
-		recording_config.encoder,
-		recording_config.hw_encoder.as_deref(),
-	);
-	let encoder_name = hw_encoder
-		.as_deref()
-		.unwrap_or(match recording_config.encoder {
-			crate::VideoEncoder::H264 => "x264enc",
-			crate::VideoEncoder::AV1 => "rav1enc",
-		});
+	let encoder = make_encoder(&recording_config)?;
 
-	let encoder = gstreamer::ElementFactory::make(encoder_name)
-		.build()
-		.map_err(|e| anyhow::anyhow!("Failed to create encoder {}. Error: {}", encoder_name, e))?;
+	let parser = make_parser(recording_config.encoder);
 
-	apply_encoder_config(&encoder, &recording_config);
+	let muxer = make_element(recording_config.container.gst_muxer())?;
 
-	let muxer_name = recording_config.container.gst_muxer();
-	let muxer = gstreamer::ElementFactory::make(muxer_name)
-		.build()
-		.map_err(|e| anyhow::anyhow!("Failed to create muxer {}. Error: {}", muxer_name, e))?;
-
-	let sink = gstreamer::ElementFactory::make("filesink")
-		.build()
-		.map_err(|e| anyhow::anyhow!("Failed to create filesink. Error: {}", e))?;
+	let sink = make_element("filesink")?;
 	sink.set_property("location", output_path.to_string_lossy().as_ref());
 
-	let elements = [
+	let mut elements = vec![
 		&src,
 		&queue,
 		&videoconvert,
 		&videorate,
 		&capsfilter,
 		&encoder,
-		&muxer,
-		&sink,
 	];
-	pipeline.add_many(elements)?;
-	gstreamer::Element::link_many(elements)?;
+	elements.extend(&parser);
+	elements.push(&muxer);
+	elements.push(&sink);
+	pipeline.add_many(&elements)?;
+	gstreamer::Element::link_many(&elements)?;
 
 	pipeline.set_state(gstreamer::State::Playing)?;
 
@@ -442,78 +393,37 @@ pub fn run_composite_encoding_pipeline(
 	let pipeline = gstreamer::Pipeline::new();
 
 	let mut appsrcs = Vec::with_capacity(num_outputs);
-	let compositor = gstreamer::ElementFactory::make("compositor")
-		.build()
-		.map_err(|e| anyhow::anyhow!("Failed to create compositor. Error: {}", e))?;
+	let compositor = make_element("compositor")?;
 
 	compositor.set_property("background", 0u32);
 
 	compositor.set_property("width", composite_width);
 	compositor.set_property("height", composite_height);
 
-	let videoconvert = gstreamer::ElementFactory::make("videoconvert")
-		.build()
-		.map_err(|e| anyhow::anyhow!("Failed to create videoconvert. Error: {}", e))?;
+	let videoconvert = make_element("videoconvert")?;
 
-	let videorate = gstreamer::ElementFactory::make("videorate")
-		.build()
-		.map_err(|e| anyhow::anyhow!("Failed to create videorate. Error: {}", e))?;
+	let videorate = make_element("videorate")?;
 	videorate.set_property("skip-to-first", true);
 
-	let hw_encoder = crate::find_hardware_encoder(
-		recording_config.encoder,
-		recording_config.hw_encoder.as_deref(),
-	);
-	let encoder_name = hw_encoder
-		.as_deref()
-		.unwrap_or_else(|| match recording_config.encoder {
-			crate::VideoEncoder::H264 => "x264enc",
-			crate::VideoEncoder::AV1 => "rav1enc",
-		});
+	let encoder = make_encoder(&recording_config)?;
 
-	let encoder = gstreamer::ElementFactory::make(encoder_name)
-		.build()
-		.map_err(|e| anyhow::anyhow!("Failed to create encoder {}. Error: {}", encoder_name, e))?;
+	let parser = make_parser(recording_config.encoder);
 
-	apply_encoder_config(&encoder, &recording_config);
+	let muxer = make_element(recording_config.container.gst_muxer())?;
 
-	let muxer_name = recording_config.container.gst_muxer();
-	let muxer = gstreamer::ElementFactory::make(muxer_name)
-		.build()
-		.map_err(|e| anyhow::anyhow!("Failed to create muxer {}. Error: {}", muxer_name, e))?;
-
-	let sink = gstreamer::ElementFactory::make("filesink")
-		.build()
-		.map_err(|e| anyhow::anyhow!("Failed to create filesink. Error: {}", e))?;
+	let sink = make_element("filesink")?;
 
 	sink.set_property("location", output_path.to_string_lossy().as_ref());
 
-	pipeline.add_many(&[
-		&compositor,
-		&videoconvert,
-		&videorate,
-		&encoder,
-		&muxer,
-		&sink,
-	])?;
-	gstreamer::Element::link_many(&[
-		&compositor,
-		&videoconvert,
-		&videorate,
-		&encoder,
-		&muxer,
-		&sink,
-	])?;
+	let mut elements = vec![&compositor, &videoconvert, &videorate, &encoder];
+	elements.extend(&parser);
+	elements.push(&muxer);
+	elements.push(&sink);
+	pipeline.add_many(&elements)?;
+	gstreamer::Element::link_many(&elements)?;
 
 	for (i, output) in intersecting_outputs.iter().enumerate() {
-		let appsrc = gstreamer::ElementFactory::make("appsrc")
-			.name(&format!("src_{}", i))
-			.build()
-			.map_err(|e| anyhow::anyhow!("Failed to create appsrc. Error: {}", e))?
-			.dynamic_cast::<AppSrc>()
-			.unwrap();
-
-		configure_appsrc(&appsrc);
+		let appsrc = make_appsrc(&format!("src_{}", i))?;
 
 		pipeline.add(&appsrc)?;
 
@@ -546,18 +456,7 @@ pub fn run_composite_encoding_pipeline(
 			.recv()
 			.map_err(|_| anyhow::anyhow!("Failed to receive initial format"))?;
 
-		let gst_format = match frame_format.format {
-			PixelFormat::Argb8888 => gstreamer_video::VideoFormat::Bgra,
-			PixelFormat::Xrgb8888 => gstreamer_video::VideoFormat::Bgrx,
-			PixelFormat::Abgr8888 => gstreamer_video::VideoFormat::Rgba,
-			PixelFormat::Xbgr8888 => gstreamer_video::VideoFormat::Rgbx,
-			_ => {
-				return Err(anyhow::anyhow!(
-					"Unsupported pixel format for recording: {:?}",
-					frame_format.format
-				));
-			}
-		};
+		let gst_format = gst_video_format(frame_format.format)?;
 
 		let caps = gstreamer_video::VideoCapsBuilder::new()
 			.format(gst_format)
@@ -592,13 +491,9 @@ pub fn run_composite_encoding_pipeline(
 			if let Ok((mmap, buffer_idx, pts, _frame_format)) = oper.recv(&frame_receivers[i]) {
 				let (appsrc, _) = &appsrcs[i];
 
-				if start_pts.is_none() {
-					start_pts = Some(pts);
-				}
+				let relative_pts = pts.saturating_sub(*start_pts.get_or_insert(pts));
 
-				let relative_pts = pts.saturating_sub(start_pts.unwrap());
-
-				push_buffer(&appsrc, &mmap, relative_pts, previous_pts_vec[i])?;
+				push_buffer(appsrc, &mmap, relative_pts, previous_pts_vec[i])?;
 
 				let _ = return_senders[i].send(buffer_idx);
 
