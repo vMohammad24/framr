@@ -54,6 +54,7 @@ pub enum DefaultAction {
 	Copy,
 	Upload,
 	UploadAndCopy,
+	SaveAndCopy,
 }
 
 impl ConfigEnum for DefaultAction {

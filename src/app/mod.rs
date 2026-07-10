@@ -111,7 +111,11 @@ pub fn resolve_action(cli: &Cli, cfg: Option<&AppConfig>) -> DefaultAction {
 		};
 	}
 	if cli.copy {
-		return DefaultAction::Copy;
+		return if cli.output.is_some() {
+			DefaultAction::SaveAndCopy
+		} else {
+			DefaultAction::Copy
+		};
 	}
 	if cli.output.is_some() {
 		return DefaultAction::Save;

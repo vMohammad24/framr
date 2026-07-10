@@ -170,7 +170,7 @@ fn run(cli: Cli) -> Result<()> {
 				)?;
 			}
 		}
-		DefaultAction::Save => {
+		DefaultAction::Save | DefaultAction::SaveAndCopy => {
 			if let Some(parent) = path.parent() {
 				std::fs::create_dir_all(parent)?;
 			}
@@ -180,10 +180,19 @@ fn run(cli: Cli) -> Result<()> {
 
 			println!("{}", path.display());
 
-			let title = if is_image {
-				"Screenshot Saved"
-			} else {
-				"Recording Saved"
+			let copied = action == DefaultAction::SaveAndCopy;
+			if copied {
+				match &bytes_opt {
+					Some(bytes) => copy_to_clipboard(bytes.clone(), mime_type)?,
+					None => copy_file_uri(&path)?,
+				}
+			}
+
+			let title = match (is_image, copied) {
+				(true, true) => "Screenshot Saved & Copied",
+				(true, false) => "Screenshot Saved",
+				(false, true) => "Recording Saved & Copied",
+				(false, false) => "Recording Saved",
 			};
 			send_notification(
 				title,
