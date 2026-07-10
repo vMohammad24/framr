@@ -1,6 +1,5 @@
-use std::fs::OpenOptions;
+use std::fs::{OpenOptions, TryLockError};
 use std::io::{Read, Write};
-use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
@@ -34,15 +33,14 @@ pub fn try_acquire_lock() -> Result<RecordingLock> {
 		.open(&pid_path)
 		.with_context(|| format!("Failed to open PID file: {}", pid_path.display()))?;
 
-	let fd = file.as_raw_fd();
-	let lock_res = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) };
-	if lock_res != 0 {
-		let err = std::io::Error::last_os_error();
-
-		if err.raw_os_error() == Some(libc::EWOULDBLOCK) {
+	match file.try_lock() {
+		Ok(()) => {}
+		Err(TryLockError::WouldBlock) => {
 			return Err(anyhow::anyhow!("Recording is already running"));
 		}
-		return Err(err).context("Failed to acquire lock on PID file");
+		Err(TryLockError::Error(err)) => {
+			return Err(err).context("Failed to acquire lock on PID file");
+		}
 	}
 
 	file.set_len(0).context("Failed to truncate PID file")?;
@@ -67,18 +65,16 @@ pub fn stop_recording() -> Result<()> {
 		}
 	};
 
-	let fd = file.as_raw_fd();
-	let lock_res = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) };
-	if lock_res == 0 {
-		let _ = unsafe { libc::flock(fd, libc::LOCK_UN) };
-		drop(file);
-		let _ = std::fs::remove_file(&pid_path);
-		return Ok(());
-	}
-
-	let err = std::io::Error::last_os_error();
-	if err.raw_os_error() != Some(libc::EWOULDBLOCK) {
-		return Err(err).context("Failed to probe PID file lock");
+	match file.try_lock() {
+		Ok(()) => {
+			drop(file);
+			let _ = std::fs::remove_file(&pid_path);
+			return Ok(());
+		}
+		Err(TryLockError::WouldBlock) => {}
+		Err(TryLockError::Error(err)) => {
+			return Err(err).context("Failed to probe PID file lock");
+		}
 	}
 
 	let mut pid_content = String::new();
