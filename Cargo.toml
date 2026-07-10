@@ -1,6 +1,6 @@
 [package]
 name = "framr"
-version = "0.13.3"
+version = "0.14.0"
 edition = "2024"
 description = "Wayland screenshot, annotation and screen recording tool with ShareX-compatible uploads"
 license = "AGPL-3.0-only"
