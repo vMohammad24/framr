@@ -178,7 +178,6 @@ fn configure_appsrc(appsrc: &AppSrc) {
 	appsrc.set_format(gstreamer::Format::Time);
 	appsrc.set_is_live(false);
 	appsrc.set_do_timestamp(false);
-	appsrc.set_max_bytes(1024 * 1024 * 300);
 	appsrc.set_property("block", true);
 	appsrc.set_property("min-percent", 50u32);
 }
@@ -257,6 +256,7 @@ pub fn run_single_encoding_pipeline(
 		.build();
 
 	appsrc.set_caps(Some(&caps));
+	appsrc.set_max_bytes(format.byte_size() as u64 * 4);
 
 	let (target_width, target_height) =
 		fit_encoder_dimensions(&encoder, format.width, format.height);
@@ -466,6 +466,7 @@ pub fn run_composite_encoding_pipeline(
 			.build();
 
 		appsrcs[i].0.set_caps(Some(&caps));
+		appsrcs[i].0.set_max_bytes(frame_format.byte_size() as u64 * 4);
 	}
 
 	pipeline.set_state(gstreamer::State::Playing)?;
