@@ -44,7 +44,7 @@ jobs:
           tag_name: ${{ github.event.workflow_run.head_branch }}
           body: ${{ steps.build_changelog.outputs.changelog }}
           files: |
-            framr
+            *.tar.gz
             *.deb
             *.rpm
         env:
