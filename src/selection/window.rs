@@ -56,7 +56,7 @@ pub fn get_hypr_windows() -> Result<Vec<Window>> {
 		workspace: HyprWorkspaceRef,
 		floating: bool,
 		fullscreen: u8,
-		#[serde(rename = "overFullscreen")]
+		#[serde(rename = "overFullscreen", alias = "allowedOverFullscreen", default)]
 		over_fullscreen: bool,
 		visible: bool,
 		#[serde(rename = "focusHistoryID")]
