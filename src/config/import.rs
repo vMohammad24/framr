@@ -89,9 +89,11 @@ pub fn parse_from_url(url: &str) -> Result<UploadConfig> {
 }
 
 pub fn parse_from_deeplink(deeplink: &str) -> Result<UploadConfig> {
-	let data = deeplink
+	let data = &deeplink
 		.strip_prefix("framr://")
-		.ok_or_else(|| anyhow::anyhow!("Invalid deeplink"))?;
+		.ok_or_else(|| anyhow::anyhow!("Invalid deeplink"))?
+		.replace("https//", "https://")
+		.replace("http//", "http://");
 
 	if data.starts_with("http://") || data.starts_with("https://") {
 		return parse_from_url(data);
