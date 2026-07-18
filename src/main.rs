@@ -37,16 +37,15 @@ fn main() -> std::process::ExitCode {
 }
 
 fn run(cli: Cli) -> Result<()> {
-	if let Some(ref uri) = cli.uri {
-		return config::import_uploader(uri);
-	}
-
 	let cfg = config::load_config().ok();
+	if let Some(ref uri) = cli.uri {
+		return config::import_uploader(uri, cli.silent);
+	}
 
 	match cli.command {
 		Some(Commands::Config { action }) => {
 			return match action {
-				Some(ConfigAction::Import { source }) => config::import_uploader(&source),
+				Some(ConfigAction::Import { source }) => config::import_uploader(&source, true),
 				Some(ConfigAction::List) => config::list_uploaders(),
 				Some(ConfigAction::Show { uploader }) => config::show_uploader(&uploader),
 				Some(ConfigAction::Create) => config::create_uploader(),

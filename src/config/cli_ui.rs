@@ -2,6 +2,7 @@ use crate::config::core::{load_config, load_overrides, save_config};
 use crate::config::types::{
 	AppConfig, BodyType, ConfigEnum, DefaultAction, DefaultCaptureMethod, UploadConfig,
 };
+use crate::utils::notify::send_notification;
 use anyhow::{Result, bail};
 use console::{Term, style};
 use std::thread;
@@ -188,8 +189,7 @@ pub fn manage_kv_pairs(label: &str, pairs: &mut Vec<(String, String)>) -> Result
 	}
 	Ok(())
 }
-
-pub fn import_uploader(source: &str) -> Result<()> {
+pub fn import_uploader(source: &str, silent: bool) -> Result<()> {
 	let mut cfg = load_config()?;
 
 	println!("{}", header("Import Uploader"));
@@ -217,9 +217,11 @@ pub fn import_uploader(source: &str) -> Result<()> {
 	);
 	display_uploader_details(&uploader);
 
+	let notification_message = format!("Imported {}", uploader.name);
 	cfg.uploaders.push(uploader);
 	save_config(&cfg)?;
 	print_success("Configuration saved.");
+	let _ = send_notification("framr success", &notification_message, None, silent);
 	Ok(())
 }
 
@@ -767,7 +769,7 @@ pub fn run_config_wizard() -> Result<()> {
 		match selection {
 			0 => {
 				let source: String = super::prompt_input("Path to file or URL", None)?;
-				import_uploader(&source)?;
+				import_uploader(&source, true)?;
 				thread::sleep(Duration::from_secs(1));
 			}
 			1 => {
