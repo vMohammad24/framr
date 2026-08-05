@@ -580,7 +580,7 @@ checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
 name = "framr"
-version = "0.14.2"
+version = "0.14.3"
 dependencies = [
  "anyhow",
  "base64",
