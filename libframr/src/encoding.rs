@@ -183,9 +183,8 @@ fn configure_appsrc(appsrc: &AppSrc) {
 }
 
 pub fn run_single_encoding_pipeline(
-	transform: Transform,
 	output_path: std::path::PathBuf,
-	frame_receiver: crossbeam_channel::Receiver<(Arc<Mmap>, usize, u64, FrameFormat)>,
+	frame_receiver: crossbeam_channel::Receiver<(Arc<Mmap>, usize, u64, FrameFormat, Transform)>,
 	return_sender: crossbeam_channel::Sender<usize>,
 	recording_config: RecordingConfig,
 ) -> Result<()> {
@@ -199,19 +198,6 @@ pub fn run_single_encoding_pipeline(
 	videorate.set_property("skip-to-first", true);
 
 	let videoflip = make_element("videoflip")?;
-
-	let direction_nick = match transform {
-		Transform::Normal => "identity",
-		Transform::_90 => "90r",
-		Transform::_180 => "180",
-		Transform::_270 => "90l",
-		Transform::Flipped => "horiz",
-		Transform::Flipped90 => "urd",
-		Transform::Flipped180 => "vert",
-		Transform::Flipped270 => "uld",
-	};
-
-	videoflip.set_property_from_str("video-direction", direction_nick);
 
 	let videoscale = make_element("videoscale")?;
 
@@ -244,7 +230,20 @@ pub fn run_single_encoding_pipeline(
 
 	pipeline.set_state(gstreamer::State::Ready)?;
 
-	let (_, _, _, format) = frame_receiver.recv()?;
+	let (mmap, buffer_idx, pts, format, transform) = frame_receiver.recv()?;
+
+	let direction_nick = match transform {
+		Transform::Normal => "identity",
+		Transform::_90 => "90r",
+		Transform::_180 => "180",
+		Transform::_270 => "90l",
+		Transform::Flipped => "horiz",
+		Transform::Flipped90 => "urd",
+		Transform::Flipped180 => "vert",
+		Transform::Flipped270 => "uld",
+	};
+
+	videoflip.set_property_from_str("video-direction", direction_nick);
 
 	let gst_format = gst_video_format(format.format)?;
 
@@ -268,9 +267,12 @@ pub fn run_single_encoding_pipeline(
 
 	pipeline.set_state(gstreamer::State::Playing)?;
 
-	let mut previous_pts = None;
+	push_buffer(&appsrc, &mmap, pts, None)?;
+	let _ = return_sender.send(buffer_idx);
 
-	while let Ok((mmap, buffer_idx, pts, _format)) = frame_receiver.recv() {
+	let mut previous_pts = Some(pts);
+
+	while let Ok((mmap, buffer_idx, pts, _format, _transform)) = frame_receiver.recv() {
 		push_buffer(&appsrc, &mmap, pts, previous_pts)?;
 		let _ = return_sender.send(buffer_idx);
 		previous_pts = Some(pts);
@@ -380,8 +382,10 @@ pub fn run_composite_encoding_pipeline(
 	region: LogicalRegion,
 	max_scale: i32,
 	intersecting_outputs: Vec<OutputInfo>,
-	frame_receivers: Vec<crossbeam_channel::Receiver<(Arc<Mmap>, usize, u64, FrameFormat)>>,
-	format_receivers: Vec<crossbeam_channel::Receiver<FrameFormat>>,
+	frame_receivers: Vec<
+		crossbeam_channel::Receiver<(Arc<Mmap>, usize, u64, FrameFormat, Transform)>,
+	>,
+	format_receivers: Vec<crossbeam_channel::Receiver<(FrameFormat, Transform)>>,
 	return_senders: Vec<crossbeam_channel::Sender<usize>>,
 	stop_receiver: crossbeam_channel::Receiver<()>,
 	recording_config: RecordingConfig,
@@ -393,6 +397,7 @@ pub fn run_composite_encoding_pipeline(
 	let pipeline = gstreamer::Pipeline::new();
 
 	let mut appsrcs = Vec::with_capacity(num_outputs);
+	let mut videoflips = Vec::with_capacity(num_outputs);
 	let compositor = make_element("compositor")?;
 
 	compositor.set_property("background", 0u32);
@@ -424,14 +429,17 @@ pub fn run_composite_encoding_pipeline(
 
 	for (i, output) in intersecting_outputs.iter().enumerate() {
 		let appsrc = make_appsrc(&format!("src_{}", i))?;
+		let stream_convert = make_element("videoconvert")?;
+		let videoflip = make_element("videoflip")?;
 
-		pipeline.add(&appsrc)?;
+		pipeline.add_many(&[&appsrc.upcast_ref(), &stream_convert, &videoflip])?;
+		gstreamer::Element::link_many(&[&appsrc.upcast_ref(), &stream_convert, &videoflip])?;
 
 		let sink_pad = compositor
 			.request_pad_simple(&format!("sink_{}", i))
 			.ok_or_else(|| anyhow::anyhow!("Failed to get sink pad"))?;
 
-		let src_pad = appsrc
+		let src_pad = videoflip
 			.static_pad("src")
 			.ok_or_else(|| anyhow::anyhow!("Failed to get src pad"))?;
 
@@ -447,14 +455,28 @@ pub fn run_composite_encoding_pipeline(
 		sink_pad.set_property("zorder", 0i32);
 
 		appsrcs.push((appsrc, output));
+		videoflips.push(videoflip);
 	}
 
 	pipeline.set_state(gstreamer::State::Ready)?;
 
 	for (i, format_receiver) in format_receivers.iter().enumerate() {
-		let frame_format = format_receiver
+		let (frame_format, transform) = format_receiver
 			.recv()
 			.map_err(|_| anyhow::anyhow!("Failed to receive initial format"))?;
+
+		let direction_nick = match transform {
+			Transform::Normal => "identity",
+			Transform::_90 => "90r",
+			Transform::_180 => "180",
+			Transform::_270 => "90l",
+			Transform::Flipped => "horiz",
+			Transform::Flipped90 => "urd",
+			Transform::Flipped180 => "vert",
+			Transform::Flipped270 => "uld",
+		};
+
+		videoflips[i].set_property_from_str("video-direction", direction_nick);
 
 		let gst_format = gst_video_format(frame_format.format)?;
 
@@ -491,7 +513,9 @@ pub fn run_composite_encoding_pipeline(
 			break;
 		} else {
 			let i = index;
-			if let Ok((mmap, buffer_idx, pts, _frame_format)) = oper.recv(&frame_receivers[i]) {
+			if let Ok((mmap, buffer_idx, pts, _frame_format, _transform)) =
+				oper.recv(&frame_receivers[i])
+			{
 				let (appsrc, _) = &appsrcs[i];
 
 				let relative_pts = pts.saturating_sub(*start_pts.get_or_insert(pts));

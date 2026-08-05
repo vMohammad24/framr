@@ -9,16 +9,24 @@ use crate::backend::wlr::shm::{
 	WlBufferGuard, WlFrameGuard, allocate_shm_buffer, pixel_format_to_wl_shm,
 };
 use crate::error::FramrError;
-use crate::output::FrameFormat;
+use crate::output::{FrameFormat, Transform};
 
 impl WlrBackend {
 	pub(crate) fn capture_output_raw(
 		&self,
 		wl_output: &WlOutput,
+		output_transform: Transform,
+		hardware_size: (i32, i32),
 		region: Option<(i32, i32, i32, i32)>,
 		include_cursor: bool,
-	) -> Result<(memmap2::Mmap, FrameFormat)> {
-		let mut state = CaptureState::default();
+	) -> Result<(memmap2::Mmap, FrameFormat, Transform)> {
+		let is_region = region.is_some();
+		let mut state = CaptureState {
+			output_transform,
+			hardware_size,
+			is_region,
+			..Default::default()
+		};
 		let mut event_queue = self.conn.new_event_queue::<CaptureState>();
 		let qh = event_queue.handle();
 
@@ -67,6 +75,6 @@ impl WlrBackend {
 			return Err(FramrError::FrameCaptureFailed.into());
 		}
 
-		Ok((mmap, frame_format))
+		Ok((mmap, frame_format, state.transform))
 	}
 }

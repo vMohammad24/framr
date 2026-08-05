@@ -13,7 +13,7 @@ use crate::backend::wlr::shm::{
 use crate::backend::{CaptureBackend, RecordingHandle};
 use crate::convert::convert_to_rgba;
 use crate::error::FramrError;
-use crate::output::{FrameFormat, LogicalRegion, OutputInfo};
+use crate::output::{FrameFormat, LogicalRegion, OutputInfo, Transform};
 use crate::transform::apply_transform;
 
 impl CaptureBackend for WlrBackend {
@@ -41,8 +41,17 @@ impl CaptureBackend for WlrBackend {
 			)
 		});
 
-		let (mmap, frame_format) =
-			self.capture_output_raw(wl_output, region_raw, include_cursor)?;
+		let hw_size = (
+			output.physical_size.width as i32,
+			output.physical_size.height as i32,
+		);
+		let (mmap, frame_format, transform) = self.capture_output_raw(
+			wl_output,
+			output.transform,
+			hw_size,
+			region_raw,
+			include_cursor,
+		)?;
 
 		let mut raw: Vec<u8> = mmap.to_vec();
 
@@ -55,7 +64,7 @@ impl CaptureBackend for WlrBackend {
 		let image = ImageBuffer::<Rgba<u8>, Vec<u8>>::from_raw(width, height, raw)
 			.ok_or_else(|| anyhow::anyhow!("failed to create image buffer"))?;
 
-		Ok(apply_transform(image, output.transform))
+		Ok(apply_transform(image, transform))
 	}
 
 	fn capture_all_outputs(&self, include_cursor: bool) -> Result<RgbaImage> {
@@ -67,7 +76,7 @@ impl CaptureBackend for WlrBackend {
 		let total_width = bounds.size.width;
 		let total_height = bounds.size.height;
 
-		let mut state = MultiCaptureState::new(outputs.len());
+		let mut state = MultiCaptureState::new(outputs);
 		let mut event_queue = self.conn.new_event_queue::<MultiCaptureState>();
 		let qh = event_queue.handle();
 
@@ -142,7 +151,7 @@ impl CaptureBackend for WlrBackend {
 			let image = ImageBuffer::<Rgba<u8>, Vec<u8>>::from_raw(width, height, raw)
 				.ok_or_else(|| anyhow::anyhow!("failed to create image buffer"))?;
 
-			let image = apply_transform(image, output.transform);
+			let image = apply_transform(image, state.slots[i].transform);
 
 			let x = (output.logical_position.x - min_x) as i64;
 			let y = (output.logical_position.y - min_y) as i64;
@@ -164,10 +173,13 @@ impl CaptureBackend for WlrBackend {
 		gstreamer::init()?;
 
 		let (stop_sender, stop_receiver) = crossbeam_channel::bounded(1);
-		let (frame_sender, frame_receiver) =
-			crossbeam_channel::bounded::<(std::sync::Arc<memmap2::Mmap>, usize, u64, FrameFormat)>(
-				3,
-			);
+		let (frame_sender, frame_receiver) = crossbeam_channel::bounded::<(
+			std::sync::Arc<memmap2::Mmap>,
+			usize,
+			u64,
+			FrameFormat,
+			Transform,
+		)>(3);
 		let (return_sender, return_receiver) = crossbeam_channel::bounded::<usize>(3);
 
 		let conn = self.conn.clone();
@@ -193,10 +205,8 @@ impl CaptureBackend for WlrBackend {
 			)
 		});
 
-		let transform = output.transform;
 		let pipeline_thread = std::thread::spawn(move || -> Result<()> {
 			crate::encoding::run_single_encoding_pipeline(
-				transform,
 				output_path,
 				frame_receiver,
 				return_sender,
@@ -256,14 +266,18 @@ impl CaptureBackend for WlrBackend {
 		let (stop_sender, stop_receiver) = crossbeam_channel::bounded(1);
 		let frame_senders: Vec<_> = (0..num_outputs)
 			.map(|_| {
-				crossbeam_channel::bounded::<(std::sync::Arc<memmap2::Mmap>, usize, u64, FrameFormat)>(
-					3,
-				)
+				crossbeam_channel::bounded::<(
+					std::sync::Arc<memmap2::Mmap>,
+					usize,
+					u64,
+					FrameFormat,
+					Transform,
+				)>(3)
 			})
 			.collect();
 		let frame_receivers: Vec<_> = frame_senders.iter().map(|s| s.1.clone()).collect();
 		let (format_senders, format_receivers): (Vec<_>, Vec<_>) = (0..num_outputs)
-			.map(|_| crossbeam_channel::bounded::<FrameFormat>(1))
+			.map(|_| crossbeam_channel::bounded::<(FrameFormat, Transform)>(1))
 			.unzip();
 		let (return_senders, return_receivers): (Vec<_>, Vec<_>) = (0..num_outputs)
 			.map(|_| crossbeam_channel::bounded::<usize>(3))
@@ -329,9 +343,10 @@ impl WlrBackend {
 			usize,
 			u64,
 			FrameFormat,
+			Transform,
 		)>,
 		return_receiver: crossbeam_channel::Receiver<usize>,
-		format_sender: Option<crossbeam_channel::Sender<FrameFormat>>,
+		format_sender: Option<crossbeam_channel::Sender<(FrameFormat, Transform)>>,
 		use_relative_pts: bool,
 	) -> Result<()> {
 		let (globals, mut event_queue) = registry_queue_init::<CaptureState>(conn)
@@ -360,7 +375,16 @@ impl WlrBackend {
 				}
 			}
 
-			let mut state = CaptureState::default();
+			let is_region = region.is_some();
+			let mut state = CaptureState {
+				output_transform: output_info.transform,
+				hardware_size: (
+					output_info.physical_size.width as i32,
+					output_info.physical_size.height as i32,
+				),
+				is_region,
+				..Default::default()
+			};
 			let frame = WlFrameGuard(if let Some(region) = region {
 				let local_x = region.position.x - output_info.logical_position.x;
 				let local_y = region.position.y - output_info.logical_position.y;
@@ -397,7 +421,10 @@ impl WlrBackend {
 				}
 			} else {
 				if let Some(ref sender) = format_sender {
-					if sender.send(frame_format.clone()).is_err() {
+					if sender
+						.send((frame_format.clone(), state.transform))
+						.is_err()
+					{
 						return Ok(());
 					}
 				}
@@ -454,7 +481,13 @@ impl WlrBackend {
 			};
 
 			if frame_sender
-				.send((slot.mmap.clone(), buffer_idx, final_pts, frame_format))
+				.send((
+					slot.mmap.clone(),
+					buffer_idx,
+					final_pts,
+					frame_format,
+					state.transform,
+				))
 				.is_err()
 			{
 				break;

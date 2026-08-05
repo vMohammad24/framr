@@ -12,7 +12,7 @@ use wayland_protocols::xdg::xdg_output::zv1::client::zxdg_output_v1::ZxdgOutputV
 use wayland_protocols_wlr::screencopy::v1::client::zwlr_screencopy_frame_v1::ZwlrScreencopyFrameV1;
 use wayland_protocols_wlr::screencopy::v1::client::zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1;
 
-use crate::output::{FrameFormat, PixelFormat, Position, Size, Transform};
+use crate::output::{FrameFormat, OutputInfo, PixelFormat, Position, Size, Transform};
 
 pub(crate) struct RegistryState;
 
@@ -189,11 +189,36 @@ pub(crate) enum FrameState {
 	Failed,
 }
 
+pub(crate) fn compute_frame_transform(
+	buffer_width: i32,
+	buffer_height: i32,
+	hardware_width: i32,
+	hardware_height: i32,
+	is_region: bool,
+	output_transform: Transform,
+) -> Transform {
+	if is_region {
+		Transform::Normal
+	} else if hardware_width > 0
+		&& hardware_height > 0
+		&& buffer_width == hardware_width
+		&& buffer_height == hardware_height
+	{
+		output_transform
+	} else {
+		Transform::Normal
+	}
+}
+
 #[derive(Default)]
 pub(crate) struct CaptureState {
 	pub(crate) formats: Vec<FrameFormat>,
 	pub(crate) buffer_done: bool,
 	pub(crate) frame_state: FrameState,
+	pub(crate) transform: Transform,
+	pub(crate) output_transform: Transform,
+	pub(crate) hardware_size: (i32, i32),
+	pub(crate) is_region: bool,
 	pub(crate) tv_sec_hi: u32,
 	pub(crate) tv_sec_lo: u32,
 	pub(crate) tv_nsec: u32,
@@ -245,6 +270,14 @@ impl Dispatch<ZwlrScreencopyFrameV1, ()> for CaptureState {
 						stride: stride as i32,
 					});
 				}
+				state.transform = compute_frame_transform(
+					width as i32,
+					height as i32,
+					state.hardware_size.0,
+					state.hardware_size.1,
+					state.is_region,
+					state.output_transform,
+				);
 			}
 			FrameEvent::BufferDone => {
 				state.buffer_done = true;
@@ -271,14 +304,22 @@ pub(crate) struct CaptureSlot {
 	pub(crate) formats: Vec<FrameFormat>,
 	pub(crate) buffer_done: bool,
 	pub(crate) frame_state: FrameState,
+	pub(crate) transform: Transform,
+	pub(crate) output_transform: Transform,
+	pub(crate) hardware_size: (i32, i32),
+	pub(crate) is_region: bool,
 }
 
 impl CaptureSlot {
-	fn new() -> Self {
+	fn new(output_transform: Transform, hardware_size: (i32, i32)) -> Self {
 		Self {
 			formats: Vec::new(),
 			buffer_done: false,
 			frame_state: FrameState::Pending,
+			transform: Transform::default(),
+			output_transform,
+			hardware_size,
+			is_region: false,
 		}
 	}
 }
@@ -288,9 +329,17 @@ pub(crate) struct MultiCaptureState {
 }
 
 impl MultiCaptureState {
-	pub(crate) fn new(count: usize) -> Self {
+	pub(crate) fn new(outputs: &[OutputInfo]) -> Self {
 		Self {
-			slots: (0..count).map(|_| CaptureSlot::new()).collect(),
+			slots: outputs
+				.iter()
+				.map(|o| {
+					CaptureSlot::new(
+						o.transform,
+						(o.physical_size.width as i32, o.physical_size.height as i32),
+					)
+				})
+				.collect(),
 		}
 	}
 
@@ -354,6 +403,14 @@ impl Dispatch<ZwlrScreencopyFrameV1, usize> for MultiCaptureState {
 						stride: stride as i32,
 					});
 				}
+				slot.transform = compute_frame_transform(
+					width as i32,
+					height as i32,
+					slot.hardware_size.0,
+					slot.hardware_size.1,
+					slot.is_region,
+					slot.output_transform,
+				);
 			}
 			FrameEvent::BufferDone => {
 				slot.buffer_done = true;
