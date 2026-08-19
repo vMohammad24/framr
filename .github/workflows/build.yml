@@ -15,7 +15,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Install System Dependencies
-        run: pacman -Syu --noconfirm pkg-config wayland wayland-protocols libxkbcommon cairo pango libxcursor mesa libdrm pipewire ffmpeg dbus gstreamer gst-plugins-base-libs gst-plugins-base gst-plugins-good
+        run: pacman -Syu --noconfirm pkg-config clang wayland wayland-protocols libxkbcommon cairo pango libxcursor mesa libdrm pipewire ffmpeg alsa-lib dbus
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -50,7 +50,7 @@ jobs:
       - name: Install System Dependencies
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends build-essential pkg-config curl ca-certificates git libwayland-dev libxkbcommon-dev libcairo2-dev libpango1.0-dev libdbus-1-dev libxcursor-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libavcodec-dev libavfilter-dev libavformat-dev libavutil-dev libswscale-dev libpipewire-0.3-dev libgbm-dev libdrm-dev
+          apt-get install -y --no-install-recommends build-essential pkg-config curl ca-certificates git libclang-dev libwayland-dev libxkbcommon-dev libcairo2-dev libpango1.0-dev libdbus-1-dev libxcursor-dev libasound2-dev libavcodec-dev libavfilter-dev libavformat-dev libavutil-dev libswscale-dev libpipewire-0.3-dev libgbm-dev libdrm-dev
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable

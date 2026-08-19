@@ -9,7 +9,7 @@ license=('AGPL3')
 conflicts=("$pkgname-bin")
 options=('!lto')
 depends=('wayland' 'libxkbcommon' 'dbus' 'cairo' 'libxcursor' 'alsa-lib' 'ffmpeg' 'pipewire' 'libdrm' 'mesa')
-makedepends=('cargo' 'pkgconf')
+makedepends=('cargo' 'pkgconf' 'clang')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
 sha256sums=('sha256-aR1pBF6g0FusZiottTcpPln6bnnCdOSlYAt/yWKOhus=')
 
