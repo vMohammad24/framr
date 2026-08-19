@@ -122,8 +122,6 @@ pub(crate) fn start_zkde_recording(
 		));
 	};
 
-	gstreamer::init()?;
-
 	let (stop_sender, stop_receiver) = crossbeam_channel::bounded(1);
 	let conn = conn.clone();
 	let pipeline_thread = std::thread::spawn(move || -> Result<()> {

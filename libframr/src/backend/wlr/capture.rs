@@ -3,13 +3,14 @@ use wayland_client::protocol::wl_output::WlOutput;
 use wayland_client::protocol::wl_shm::WlShm;
 use wayland_protocols_wlr::screencopy::v1::client::zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1;
 
+use crate::Frame;
 use crate::backend::wlr::core::WlrBackend;
 use crate::backend::wlr::dispatch::{CaptureState, FrameState};
 use crate::backend::wlr::shm::{
 	WlBufferGuard, WlFrameGuard, allocate_shm_buffer, pixel_format_to_wl_shm,
 };
 use crate::error::FramrError;
-use crate::output::{FrameFormat, Transform};
+use crate::output::Transform;
 
 impl WlrBackend {
 	pub(crate) fn capture_output_raw(
@@ -19,7 +20,7 @@ impl WlrBackend {
 		hardware_size: (i32, i32),
 		region: Option<(i32, i32, i32, i32)>,
 		include_cursor: bool,
-	) -> Result<(memmap2::Mmap, FrameFormat, Transform)> {
+	) -> Result<Frame> {
 		let is_region = region.is_some();
 		let mut state = CaptureState {
 			output_transform,
@@ -75,6 +76,13 @@ impl WlrBackend {
 			return Err(FramrError::FrameCaptureFailed.into());
 		}
 
-		Ok((mmap, frame_format, state.transform))
+		let seconds = (u64::from(state.tv_sec_hi) << 32) | u64::from(state.tv_sec_lo);
+		let timestamp = std::time::Duration::new(seconds, state.tv_nsec);
+		Ok(Frame::from_shm(
+			std::sync::Arc::new(mmap),
+			frame_format,
+			state.transform,
+			timestamp,
+		))
 	}
 }

@@ -1,5 +1,6 @@
 pub use connection::FramrConnection;
 pub use error::FramrError;
+pub use frame::{DmaBuf, DmaBufPlane, Frame, FrameBytes, FrameData};
 pub use output::{FrameFormat, LogicalRegion, OutputInfo, PixelFormat, Position, Size, Transform};
 pub mod backend;
 mod buffer;
@@ -7,6 +8,8 @@ mod connection;
 mod convert;
 mod encoding;
 mod error;
+mod frame;
+mod gpu;
 mod output;
 mod transform;
 
@@ -24,7 +27,8 @@ pub struct RecordingConfig {
 	pub threads: Option<u32>,
 	pub tune: H264Tune,
 	pub speed: EncoderSpeed,
-	pub hw_encoder: Option<String>,
+	pub backend: EncoderBackend,
+	pub vaapi_device: Option<std::path::PathBuf>,
 }
 
 impl Default for RecordingConfig {
@@ -38,7 +42,8 @@ impl Default for RecordingConfig {
 			threads: None,
 			tune: H264Tune::Zerolatency,
 			speed: EncoderSpeed::Ultrafast,
-			hw_encoder: None,
+			backend: EncoderBackend::Auto,
+			vaapi_device: None,
 		}
 	}
 }
@@ -75,14 +80,29 @@ impl ContainerFormat {
 			Self::WebM => "webm",
 		}
 	}
+}
 
-	pub fn gst_muxer(&self) -> &'static str {
-		match self {
-			Self::Mp4 => "mp4mux",
-			Self::Matroska => "matroskamux",
-			Self::WebM => "webmmux",
-		}
-	}
+#[derive(
+	Debug,
+	Serialize,
+	Deserialize,
+	Default,
+	PartialEq,
+	Eq,
+	Clone,
+	Copy,
+	strum::AsRefStr,
+	strum::Display,
+	strum::EnumString,
+	strum::EnumIter,
+	strum::IntoStaticStr,
+)]
+#[strum(serialize_all = "lowercase", ascii_case_insensitive)]
+pub enum EncoderBackend {
+	#[default]
+	Auto,
+	Software,
+	Vaapi,
 }
 
 #[derive(
@@ -172,18 +192,22 @@ pub enum EncoderSpeed {
 }
 
 impl EncoderSpeed {
-	pub fn to_gst_value(&self) -> i32 {
+	pub fn software_preset(self) -> &'static str {
+		self.into()
+	}
+
+	pub fn av1_preset(self) -> u8 {
 		match self {
-			Self::Ultrafast => 1,
-			Self::Superfast => 2,
-			Self::Veryfast => 3,
-			Self::Faster => 4,
-			Self::Fast => 5,
+			Self::Ultrafast => 13,
+			Self::Superfast => 12,
+			Self::Veryfast => 10,
+			Self::Faster => 9,
+			Self::Fast => 8,
 			Self::Medium => 6,
-			Self::Slow => 7,
-			Self::Slower => 8,
-			Self::Veryslow => 9,
-			Self::Placebo => 10,
+			Self::Slow => 4,
+			Self::Slower => 3,
+			Self::Veryslow => 2,
+			Self::Placebo => 0,
 		}
 	}
 }
@@ -262,39 +286,4 @@ impl FromStr for OutputImageFormat {
 			)),
 		}
 	}
-}
-
-pub fn find_hardware_encoder(
-	encoder_type: VideoEncoder,
-	preferred: Option<&str>,
-) -> Option<String> {
-	if let Some(p) = preferred {
-		if gstreamer::ElementFactory::find(p).is_some() {
-			return Some(p.to_string());
-		}
-	}
-
-	let candidates = match encoder_type {
-		VideoEncoder::H264 => vec![
-			"amfh264enc",   // AMF
-			"vah264enc",    // VA
-			"nvh264enc",    // NVIDIA
-			"msdkh264enc",  // Intel
-			"vaapih264enc", // VA (Old)
-		],
-		VideoEncoder::AV1 => vec![
-			"amfav1enc",   // AMF
-			"vaav1enc",    // VAAPI
-			"nvav1enc",    // NVIDIA
-			"msdkav1enc",  // Intel
-			"vaapiav1enc", // VA (Old)
-		],
-	};
-
-	for name in candidates {
-		if gstreamer::ElementFactory::find(name).is_some() {
-			return Some(name.to_string());
-		}
-	}
-	None
 }

@@ -22,7 +22,8 @@ pub fn get_recording_config(cli: &Cli, cfg: Option<&AppConfig>) -> RecordingConf
 		threads: cli.threads.filter(|&t| t != 0).or(base_config.threads),
 		tune: cli.tune.unwrap_or(base_config.tune),
 		speed: cli.speed.unwrap_or(base_config.speed),
-		hw_encoder: cli.hw_encoder.clone().or(base_config.hw_encoder),
+		backend: cli.encoder_backend.unwrap_or(base_config.backend),
+		vaapi_device: cli.vaapi_device.clone().or(base_config.vaapi_device),
 	}
 }
 

@@ -23,6 +23,19 @@ pub enum PixelFormat {
 	Xbgr2101010,
 }
 
+impl PixelFormat {
+	pub const fn bytes_per_pixel(self) -> usize {
+		match self {
+			Self::Argb8888
+			| Self::Xrgb8888
+			| Self::Abgr8888
+			| Self::Xbgr8888
+			| Self::Abgr2101010
+			| Self::Xbgr2101010 => 4,
+		}
+	}
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Position {
 	pub x: i32,

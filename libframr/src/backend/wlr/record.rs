@@ -2,19 +2,34 @@ use anyhow::Result;
 use image::{ImageBuffer, Rgba, RgbaImage};
 use wayland_client::globals::registry_queue_init;
 use wayland_client::protocol::wl_shm::WlShm;
+use wayland_protocols::wp::linux_dmabuf::zv1::client::zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1;
 use wayland_protocols_wlr::screencopy::v1::client::zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1;
 
 use crate::RecordingConfig;
 use crate::backend::wlr::core::WlrBackend;
 use crate::backend::wlr::dispatch::{CaptureState, FrameState, MultiCaptureState};
+use crate::backend::wlr::dmabuf::DmaBufPool;
 use crate::backend::wlr::shm::{
 	ShmPool, ShmPoolError, WlBufferGuard, WlFrameGuard, allocate_shm_buffer, pixel_format_to_wl_shm,
 };
 use crate::backend::{CaptureBackend, RecordingHandle};
 use crate::convert::convert_to_rgba;
+use crate::encoding::FrameMessage;
 use crate::error::FramrError;
-use crate::output::{FrameFormat, LogicalRegion, OutputInfo, Transform};
+use crate::output::{FrameFormat, LogicalRegion, OutputInfo};
 use crate::transform::apply_transform;
+use crate::{Frame, FrameData};
+
+fn select_recording_device(mut config: RecordingConfig) -> Result<RecordingConfig> {
+	if config.backend != crate::EncoderBackend::Software {
+		match crate::gpu::render_node(config.vaapi_device.as_deref()) {
+			Ok(path) => config.vaapi_device = Some(path),
+			Err(error) if config.backend == crate::EncoderBackend::Vaapi => return Err(error),
+			Err(_) => config.vaapi_device = None,
+		}
+	}
+	Ok(config)
+}
 
 impl CaptureBackend for WlrBackend {
 	fn get_outputs(&self) -> Result<Vec<OutputInfo>> {
@@ -45,7 +60,7 @@ impl CaptureBackend for WlrBackend {
 			output.physical_size.width as i32,
 			output.physical_size.height as i32,
 		);
-		let (mmap, frame_format, transform) = self.capture_output_raw(
+		let frame = self.capture_output_raw(
 			wl_output,
 			output.transform,
 			hw_size,
@@ -53,18 +68,28 @@ impl CaptureBackend for WlrBackend {
 			include_cursor,
 		)?;
 
-		let mut raw: Vec<u8> = mmap.to_vec();
+		let bytes = frame.bytes()?;
+		let stride = frame.format.stride as usize;
+		let row_size = frame.format.width as usize * frame.format.format.bytes_per_pixel();
+		let mut raw = Vec::with_capacity(row_size * frame.format.height as usize);
+		for row in bytes
+			.as_ref()
+			.chunks_exact(stride)
+			.take(frame.format.height as usize)
+		{
+			raw.extend_from_slice(&row[..row_size]);
+		}
 
-		convert_to_rgba(&mut raw, frame_format.format)
+		convert_to_rgba(&mut raw, frame.format.format)
 			.ok_or_else(|| anyhow::anyhow!("unsupported pixel format"))?;
 
-		let width = frame_format.width as u32;
-		let height = frame_format.height as u32;
+		let width = frame.format.width as u32;
+		let height = frame.format.height as u32;
 
 		let image = ImageBuffer::<Rgba<u8>, Vec<u8>>::from_raw(width, height, raw)
 			.ok_or_else(|| anyhow::anyhow!("failed to create image buffer"))?;
 
-		Ok(apply_transform(image, transform))
+		Ok(apply_transform(image, frame.transform))
 	}
 
 	fn capture_all_outputs(&self, include_cursor: bool) -> Result<RgbaImage> {
@@ -170,16 +195,15 @@ impl CaptureBackend for WlrBackend {
 		output_path: std::path::PathBuf,
 		recording_config: RecordingConfig,
 	) -> Result<RecordingHandle> {
-		gstreamer::init()?;
-
+		let recording_config = select_recording_device(recording_config)?;
 		let (stop_sender, stop_receiver) = crossbeam_channel::bounded(1);
-		let (frame_sender, frame_receiver) = crossbeam_channel::bounded::<(
-			std::sync::Arc<memmap2::Mmap>,
-			usize,
-			u64,
-			FrameFormat,
-			Transform,
-		)>(3);
+		let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+		let stop_for_signal = stop.clone();
+		std::thread::spawn(move || {
+			let _ = stop_receiver.recv();
+			stop_for_signal.store(true, std::sync::atomic::Ordering::Release);
+		});
+		let (frame_sender, frame_receiver) = crossbeam_channel::bounded::<FrameMessage>(3);
 		let (return_sender, return_receiver) = crossbeam_channel::bounded::<usize>(3);
 
 		let conn = self.conn.clone();
@@ -189,20 +213,28 @@ impl CaptureBackend for WlrBackend {
 			.ok_or_else(|| anyhow::anyhow!("WlOutput not found for id {}", output.id))?
 			.clone();
 		let output_info = output.clone();
+		let dmabuf_device = recording_config.vaapi_device.clone();
+		let enable_dmabuf = recording_config.backend != crate::EncoderBackend::Software
+			&& output.transform == crate::Transform::Normal;
 
-		std::thread::spawn(move || -> Result<()> {
-			WlrBackend::run_capture_loop(
+		let error_sender = frame_sender.clone();
+		std::thread::spawn(move || {
+			let result = WlrBackend::run_capture_loop(
 				&conn,
 				&wl_output,
 				&output_info,
 				region,
 				include_cursor,
-				stop_receiver,
+				stop,
 				frame_sender,
 				return_receiver,
-				None,
-				true,
-			)
+				dmabuf_device,
+				enable_dmabuf,
+			);
+			if let Err(error) = &result {
+				let _ = error_sender.send(FrameMessage::Error(format!("{error:#}")));
+			}
+			result
 		});
 
 		let pipeline_thread = std::thread::spawn(move || -> Result<()> {
@@ -239,8 +271,7 @@ impl CaptureBackend for WlrBackend {
 		output_path: std::path::PathBuf,
 		recording_config: RecordingConfig,
 	) -> Result<RecordingHandle> {
-		gstreamer::init()?;
-
+		let recording_config = select_recording_device(recording_config)?;
 		let conn = self.conn.clone();
 		let outputs = self.outputs.clone();
 		let wl_outputs = self.wl_outputs.clone();
@@ -263,22 +294,19 @@ impl CaptureBackend for WlrBackend {
 			.unwrap_or(1);
 
 		let num_outputs = intersecting.len();
+		let dmabuf_device = recording_config.vaapi_device.clone();
+		let enable_dmabuf = false;
 		let (stop_sender, stop_receiver) = crossbeam_channel::bounded(1);
+		let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+		let stop_for_signal = stop.clone();
+		std::thread::spawn(move || {
+			let _ = stop_receiver.recv();
+			stop_for_signal.store(true, std::sync::atomic::Ordering::Release);
+		});
 		let frame_senders: Vec<_> = (0..num_outputs)
-			.map(|_| {
-				crossbeam_channel::bounded::<(
-					std::sync::Arc<memmap2::Mmap>,
-					usize,
-					u64,
-					FrameFormat,
-					Transform,
-				)>(3)
-			})
+			.map(|_| crossbeam_channel::bounded::<FrameMessage>(3))
 			.collect();
 		let frame_receivers: Vec<_> = frame_senders.iter().map(|s| s.1.clone()).collect();
-		let (format_senders, format_receivers): (Vec<_>, Vec<_>) = (0..num_outputs)
-			.map(|_| crossbeam_channel::bounded::<(FrameFormat, Transform)>(1))
-			.unzip();
 		let (return_senders, return_receivers): (Vec<_>, Vec<_>) = (0..num_outputs)
 			.map(|_| crossbeam_channel::bounded::<usize>(3))
 			.unzip();
@@ -286,26 +314,31 @@ impl CaptureBackend for WlrBackend {
 		for (output_idx, output) in intersecting.iter().enumerate() {
 			let conn = conn.clone();
 			let wl_outputs = wl_outputs.clone();
-			let stop_receiver = stop_receiver.clone();
+			let stop = stop.clone();
 			let frame_sender = frame_senders[output_idx].0.clone();
 			let return_receiver = return_receivers[output_idx].clone();
-			let format_sender = format_senders[output_idx].clone();
 			let wl_output = wl_outputs[output.id].clone();
 			let output_info = output.clone();
+			let dmabuf_device = dmabuf_device.clone();
 
-			std::thread::spawn(move || -> Result<()> {
-				WlrBackend::run_capture_loop(
+			let error_sender = frame_sender.clone();
+			std::thread::spawn(move || {
+				let result = WlrBackend::run_capture_loop(
 					&conn,
 					&wl_output,
 					&output_info,
 					None,
 					include_cursor,
-					stop_receiver,
+					stop,
 					frame_sender,
 					return_receiver,
-					Some(format_sender),
-					false,
-				)
+					dmabuf_device,
+					enable_dmabuf,
+				);
+				if let Err(error) = &result {
+					let _ = error_sender.send(FrameMessage::Error(format!("{error:#}")));
+				}
+				result
 			});
 		}
 
@@ -316,9 +349,8 @@ impl CaptureBackend for WlrBackend {
 				max_scale,
 				intersecting,
 				frame_receivers,
-				format_receivers,
 				return_senders,
-				stop_receiver,
+				stop,
 				recording_config,
 			)
 		});
@@ -337,17 +369,11 @@ impl WlrBackend {
 		output_info: &OutputInfo,
 		region: Option<LogicalRegion>,
 		include_cursor: bool,
-		stop_receiver: crossbeam_channel::Receiver<()>,
-		frame_sender: crossbeam_channel::Sender<(
-			std::sync::Arc<memmap2::Mmap>,
-			usize,
-			u64,
-			FrameFormat,
-			Transform,
-		)>,
+		stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+		frame_sender: crossbeam_channel::Sender<FrameMessage>,
 		return_receiver: crossbeam_channel::Receiver<usize>,
-		format_sender: Option<crossbeam_channel::Sender<(FrameFormat, Transform)>>,
-		use_relative_pts: bool,
+		dmabuf_device: Option<std::path::PathBuf>,
+		enable_dmabuf: bool,
 	) -> Result<()> {
 		let (globals, mut event_queue) = registry_queue_init::<CaptureState>(conn)
 			.map_err(|e| FramrError::ConnectionFailed(format!("{e}")))?;
@@ -358,19 +384,35 @@ impl WlrBackend {
 			.map_err(|_| FramrError::ProtocolNotSupported("wlr-screencopy".into()))?;
 
 		let shm: WlShm = globals.bind(&qh, 1..=1, ())?;
+		let linux_dmabuf: Option<ZwpLinuxDmabufV1> = if enable_dmabuf {
+			globals.bind(&qh, 3..=3, ()).ok()
+		} else {
+			None
+		};
 		let cursor_val = if include_cursor { 1 } else { 0 };
 
-		let mut pool = ShmPool::new(3);
+		let mut shm_pool = ShmPool::new(3);
+		let mut dmabuf_pool = linux_dmabuf
+			.as_ref()
+			.and_then(|_| DmaBufPool::new(dmabuf_device.as_deref(), 3).ok());
+		let mut use_dmabuf = None;
+		let mut dmabuf_modifiers = Vec::new();
 		let mut pool_format: Option<FrameFormat> = None;
-		let mut first_pts = None;
 
 		loop {
-			if stop_receiver.try_recv().is_ok() {
+			if stop.load(std::sync::atomic::Ordering::Acquire) {
 				break;
 			}
 
 			while let Ok(idx) = return_receiver.try_recv() {
-				if let Some(slot) = pool.slots.get_mut(idx) {
+				if use_dmabuf == Some(true) {
+					if let Some(slot) = dmabuf_pool
+						.as_mut()
+						.and_then(|pool| pool.slots.get_mut(idx))
+					{
+						slot.in_use = false;
+					}
+				} else if let Some(slot) = shm_pool.slots.get_mut(idx) {
 					slot.in_use = false;
 				}
 			}
@@ -383,6 +425,7 @@ impl WlrBackend {
 					output_info.physical_size.height as i32,
 				),
 				is_region,
+				dmabuf_modifiers: dmabuf_modifiers.clone(),
 				..Default::default()
 			};
 			let frame = WlFrameGuard(if let Some(region) = region {
@@ -406,11 +449,26 @@ impl WlrBackend {
 				event_queue.blocking_dispatch(&mut state)?;
 			}
 
-			let frame_format = state
-				.formats
-				.first()
-				.ok_or(FramrError::NoSupportedBufferFormat)?
-				.clone();
+			dmabuf_modifiers = state.dmabuf_modifiers.clone();
+			let dmabuf_format = state.dmabuf_formats.iter().find(|format| {
+				dmabuf_modifiers.iter().any(|(fourcc, modifier)| {
+					drm_fourcc::DrmFourcc::try_from(*fourcc)
+						.ok()
+						.and_then(crate::backend::wlr::dmabuf::convert_format)
+						== Some(format.format)
+						&& *modifier == 0
+				})
+			});
+			let use_dma = *use_dmabuf.get_or_insert_with(|| {
+				dmabuf_format.is_some() && dmabuf_pool.is_some() && linux_dmabuf.is_some()
+			});
+			let frame_format = if use_dma {
+				dmabuf_format
+			} else {
+				state.formats.first()
+			}
+			.ok_or(FramrError::NoSupportedBufferFormat)?
+			.clone();
 
 			if let Some(ref f) = pool_format {
 				if f.format != frame_format.format
@@ -420,43 +478,63 @@ impl WlrBackend {
 					return Err(FramrError::ResolutionChanged.into());
 				}
 			} else {
-				if let Some(ref sender) = format_sender {
-					if sender
-						.send((frame_format.clone(), state.transform))
-						.is_err()
-					{
-						return Ok(());
-					}
-				}
 				pool_format = Some(frame_format.clone());
 			}
 
-			let wl_fmt = pixel_format_to_wl_shm(frame_format.format);
-			let buffer_idx = match pool.get_slot(
-				&shm,
-				&qh,
-				frame_format.width,
-				frame_format.height,
-				frame_format.stride,
-				wl_fmt,
-			) {
-				Ok(idx) => idx,
-				Err(ShmPoolError::PoolFull) => match return_receiver.recv() {
-					Ok(idx) => {
-						if let Some(slot) = pool.slots.get_mut(idx) {
-							slot.in_use = false;
+			let buffer_idx = if use_dma {
+				let pool = dmabuf_pool
+					.as_mut()
+					.ok_or_else(|| anyhow::anyhow!("DMA-BUF pool unavailable"))?;
+				if let Some(index) = pool.slots.iter().position(|slot| !slot.in_use) {
+					pool.slots[index].in_use = true;
+					index
+				} else if pool.slots.len() < 3 {
+					pool.get_slot(
+						linux_dmabuf
+							.as_ref()
+							.ok_or_else(|| anyhow::anyhow!("linux-dmabuf unavailable"))?,
+						&qh,
+						frame_format,
+					)?
+				} else {
+					let index = return_receiver.recv()?;
+					pool.slots[index].in_use = true;
+					index
+				}
+			} else {
+				let wl_fmt = pixel_format_to_wl_shm(frame_format.format);
+				match shm_pool.get_slot(
+					&shm,
+					&qh,
+					frame_format.width,
+					frame_format.height,
+					frame_format.stride,
+					wl_fmt,
+				) {
+					Ok(idx) => idx,
+					Err(ShmPoolError::PoolFull) => match return_receiver.recv() {
+						Ok(idx) => {
+							if let Some(slot) = shm_pool.slots.get_mut(idx) {
+								slot.in_use = false;
+							}
+							idx
 						}
-						idx
-					}
-					Err(_) => break,
-				},
-				Err(e) => return Err(e.into()),
+						Err(_) => break,
+					},
+					Err(e) => return Err(e.into()),
+				}
 			};
 
-			let slot = &mut pool.slots[buffer_idx];
-			slot.in_use = true;
-
-			frame.copy(&slot.buffer);
+			if use_dma {
+				let pool = dmabuf_pool
+					.as_ref()
+					.ok_or_else(|| anyhow::anyhow!("DMA-BUF pool unavailable"))?;
+				frame.copy(&pool.slots[buffer_idx].buffer);
+			} else {
+				let slot = &mut shm_pool.slots[buffer_idx];
+				slot.in_use = true;
+				frame.copy(&slot.buffer);
+			}
 
 			while state.frame_state == FrameState::Pending {
 				event_queue.blocking_dispatch(&mut state)?;
@@ -469,25 +547,31 @@ impl WlrBackend {
 			let pts_nanos = (state.tv_sec_hi as u64) << 32 | (state.tv_sec_lo as u64);
 			let pts = pts_nanos * 1_000_000_000 + (state.tv_nsec as u64);
 
-			let final_pts = if use_relative_pts {
-				if let Some(first) = first_pts {
-					pts.saturating_sub(first)
-				} else {
-					first_pts = Some(pts);
-					0
+			let captured_frame = if use_dma {
+				let slot = &dmabuf_pool
+					.as_ref()
+					.ok_or_else(|| anyhow::anyhow!("DMA-BUF pool unavailable"))?
+					.slots[buffer_idx];
+				Frame {
+					format: slot.format,
+					transform: state.transform,
+					timestamp: std::time::Duration::from_nanos(pts),
+					data: FrameData::DmaBuf(slot.data.clone()),
 				}
 			} else {
-				pts
-			};
-
-			if frame_sender
-				.send((
+				let slot = &shm_pool.slots[buffer_idx];
+				Frame::from_shm(
 					slot.mmap.clone(),
-					buffer_idx,
-					final_pts,
 					frame_format,
 					state.transform,
-				))
+					std::time::Duration::from_nanos(pts),
+				)
+			};
+			if frame_sender
+				.send(FrameMessage::Frame {
+					frame: captured_frame,
+					slot: buffer_idx,
+				})
 				.is_err()
 			{
 				break;

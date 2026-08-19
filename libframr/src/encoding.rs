@@ -1,538 +1,511 @@
-use std::sync::Arc;
+mod converter;
+mod pipewire;
+mod vaapi;
 
-use anyhow::Result;
-use gstreamer::prelude::*;
-use gstreamer_app::AppSrc;
-use memmap2::Mmap;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
-use crate::RecordingConfig;
-use crate::output::{FrameFormat, LogicalRegion, OutputInfo, PixelFormat, Transform};
+use anyhow::{Context, Result, anyhow};
+use ffmpeg::codec;
+use ffmpeg::format::Pixel;
+use ffmpeg::{Dictionary, Packet, Rational};
+use ffmpeg_next as ffmpeg;
 
-pub fn wait_for_gstreamer_eos(pipeline: &gstreamer::Pipeline) -> Result<()> {
-	let bus = pipeline
-		.bus()
-		.ok_or_else(|| anyhow::anyhow!("Pipeline has no bus"))?;
-	for msg in bus.iter_timed(gstreamer::ClockTime::NONE) {
-		use gstreamer::MessageView;
-		match msg.view() {
-			MessageView::Eos(..) => break,
-			MessageView::Error(err) => {
-				return Err(anyhow::anyhow!(
-					"GStreamer error: {} ({})",
-					err.error(),
-					err.debug().unwrap_or_else(|| "no debug info".into())
-				));
-			}
-			_ => (),
+use crate::{
+	EncoderBackend, Frame, FrameData, LogicalRegion, OutputInfo, RecordingConfig, VideoEncoder,
+};
+use converter::{FrameConverter, is_ten_bit, output_size, packed_format, packed_frame};
+use vaapi::VaapiFrames;
+
+pub(crate) enum FrameMessage {
+	Frame { frame: Frame, slot: usize },
+	Error(String),
+}
+
+impl FrameMessage {
+	fn into_frame(self) -> Result<(Frame, usize)> {
+		match self {
+			Self::Frame { frame, slot } => Ok((frame, slot)),
+			Self::Error(error) => Err(anyhow!(error)),
 		}
 	}
-	pipeline.set_state(gstreamer::State::Null)?;
+}
+
+struct TimestampTimeline {
+	origin: Option<Duration>,
+	last_pts: Option<i64>,
+	fps: u32,
+}
+
+impl TimestampTimeline {
+	fn new(fps: u32) -> Self {
+		Self {
+			origin: None,
+			last_pts: None,
+			fps,
+		}
+	}
+
+	fn pts(&mut self, timestamp: Duration) -> Option<i64> {
+		let origin = *self.origin.get_or_insert(timestamp);
+		let elapsed = timestamp.saturating_sub(origin).as_nanos();
+		let pts = elapsed.saturating_mul(u128::from(self.fps)) / 1_000_000_000;
+		let pts = i64::try_from(pts).unwrap_or(i64::MAX);
+		if self.last_pts.is_some_and(|last| pts <= last) {
+			return None;
+		}
+		self.last_pts = Some(pts);
+		Some(pts)
+	}
+}
+
+enum ActiveBackend {
+	Software(FrameConverter),
+	Vaapi(VaapiFrames),
+}
+
+struct VideoWriter {
+	output: ffmpeg::format::context::Output,
+	encoder: ffmpeg::encoder::video::Encoder,
+	backend: ActiveBackend,
+	stream_index: usize,
+	encoder_time_base: Rational,
+	stream_time_base: Rational,
+}
+
+impl VideoWriter {
+	fn new(path: &Path, first_frame: &Frame, config: &RecordingConfig) -> Result<Self> {
+		if config.fps == 0 {
+			return Err(anyhow!("recording FPS must be greater than zero"));
+		}
+		ffmpeg::init().context("failed to initialize FFmpeg")?;
+		match config.backend {
+			EncoderBackend::Software => Self::new_with_backend(path, first_frame, config, false),
+			EncoderBackend::Vaapi => Self::new_with_backend(path, first_frame, config, true),
+			EncoderBackend::Auto => Self::new_with_backend(path, first_frame, config, true)
+				.or_else(|_| Self::new_with_backend(path, first_frame, config, false)),
+		}
+	}
+
+	fn new_with_backend(
+		path: &Path,
+		first_frame: &Frame,
+		config: &RecordingConfig,
+		use_vaapi: bool,
+	) -> Result<Self> {
+		let (visible_width, visible_height) = output_size(first_frame);
+		let visible_width = visible_width.max(1);
+		let visible_height = visible_height.max(1);
+		let width = align_chroma(visible_width.max(2));
+		let height = align_chroma(visible_height.max(2));
+		let ten_bit = is_ten_bit(first_frame.format.format);
+		let vaapi_format = if ten_bit { Pixel::P010LE } else { Pixel::NV12 };
+		let encoder_format = match (use_vaapi, config.encoder, ten_bit) {
+			(true, _, _) => Pixel::VAAPI,
+			(false, VideoEncoder::H264, false) => Pixel::NV12,
+			(false, VideoEncoder::H264, true) => Pixel::YUV420P10LE,
+			(false, VideoEncoder::AV1, false) => Pixel::YUV420P,
+			(false, VideoEncoder::AV1, true) => Pixel::YUV420P10LE,
+		};
+		let codec_name = match (use_vaapi, config.encoder) {
+			(true, VideoEncoder::H264) => "h264_vaapi",
+			(true, VideoEncoder::AV1) => "av1_vaapi",
+			(false, VideoEncoder::H264) => "libx264",
+			(false, VideoEncoder::AV1) => ["libsvtav1", "librav1e", "libaom-av1"]
+				.into_iter()
+				.find(|name| ffmpeg::encoder::find_by_name(name).is_some())
+				.ok_or_else(|| anyhow!("no FFmpeg AV1 software encoder is available"))?,
+		};
+		let codec = ffmpeg::encoder::find_by_name(codec_name)
+			.ok_or_else(|| anyhow!("FFmpeg encoder {codec_name} is unavailable"))?;
+		let mut output = ffmpeg::format::output(path)
+			.with_context(|| format!("failed to create output {}", path.display()))?;
+		let global_header = output
+			.format()
+			.flags()
+			.contains(ffmpeg::format::Flags::GLOBAL_HEADER);
+		let encoder_time_base = Rational(1, config.fps as i32);
+		let mut encoder = codec::context::Context::new_with_codec(codec)
+			.encoder()
+			.video()?;
+		encoder.set_width(width);
+		encoder.set_height(height);
+		encoder.set_format(encoder_format);
+		encoder.set_time_base(encoder_time_base);
+		encoder.set_frame_rate(Some(Rational(config.fps as i32, 1)));
+		encoder.set_bit_rate(config.bitrate as usize * 1000);
+		encoder.set_gop(config.keyframe_interval);
+		encoder.set_max_b_frames(0);
+		if global_header {
+			encoder.set_flags(codec::Flags::GLOBAL_HEADER);
+		}
+		if let Some(threads) = config.threads {
+			encoder.set_threading(codec::threading::Config::count(threads as usize));
+		}
+
+		let mut options = Dictionary::new();
+		if !use_vaapi {
+			match config.encoder {
+				VideoEncoder::H264 => {
+					options.set("preset", config.speed.software_preset());
+					options.set("tune", config.tune.as_ref());
+				}
+				VideoEncoder::AV1 => match codec_name {
+					"libsvtav1" => options.set("preset", &config.speed.av1_preset().to_string()),
+					"librav1e" => {
+						options.set("speed", &config.speed.av1_preset().min(10).to_string())
+					}
+					_ => options.set("cpu-used", &config.speed.av1_preset().min(8).to_string()),
+				},
+			}
+		}
+
+		let backend = if use_vaapi {
+			let frames = VaapiFrames::new(
+				&mut encoder,
+				config.vaapi_device.as_deref(),
+				vaapi_format,
+				width,
+				height,
+				visible_width,
+				visible_height,
+				packed_format(first_frame),
+				visible_width,
+				visible_height,
+				config.fps,
+				matches!(&first_frame.data, FrameData::DmaBuf(_))
+					&& first_frame.transform == crate::Transform::Normal,
+			)?;
+			ActiveBackend::Vaapi(frames)
+		} else {
+			ActiveBackend::Software(FrameConverter::new_padded(
+				visible_width,
+				visible_height,
+				width,
+				height,
+				encoder_format,
+			))
+		};
+		let encoder = encoder.open_as_with(codec, options).with_context(|| {
+			format!("failed to open FFmpeg encoder {codec_name} for {width}x{height}")
+		})?;
+		let stream_index = {
+			let mut stream = output.add_stream(codec)?;
+			stream.set_time_base(encoder_time_base);
+			stream.set_parameters(&encoder);
+			set_stream_cropping(&mut stream, height - visible_height, width - visible_width)?;
+			stream.index()
+		};
+		output.write_header()?;
+		let stream_time_base = output
+			.stream(stream_index)
+			.ok_or_else(|| anyhow!("FFmpeg output stream disappeared"))?
+			.time_base();
+
+		Ok(Self {
+			output,
+			encoder,
+			backend,
+			stream_index,
+			encoder_time_base,
+			stream_time_base,
+		})
+	}
+
+	fn write_frame(&mut self, frame: &Frame, pts: i64) -> Result<()> {
+		match &mut self.backend {
+			ActiveBackend::Software(converter) => {
+				let mut converted = converter.convert(frame)?;
+				converted.set_pts(Some(pts));
+				self.encoder.send_frame(&converted)?;
+			}
+			ActiveBackend::Vaapi(frames) => {
+				let source = if frames.uses_dmabuf() {
+					frames.import_dmabuf(frame, pts)?
+				} else {
+					let mut source = packed_frame(frame)?;
+					source.set_pts(Some(pts));
+					source
+				};
+				let hardware = frames.process(&source)?;
+				self.encoder.send_frame(&hardware)?;
+			}
+		}
+		self.write_packets()
+	}
+
+	fn write_packets(&mut self) -> Result<()> {
+		let mut packet = Packet::empty();
+		loop {
+			match self.encoder.receive_packet(&mut packet) {
+				Ok(()) => {
+					packet.set_stream(self.stream_index);
+					packet.rescale_ts(self.encoder_time_base, self.stream_time_base);
+					packet.write_interleaved(&mut self.output)?;
+				}
+				Err(ffmpeg::Error::Other {
+					errno: ffmpeg::error::EAGAIN,
+				})
+				| Err(ffmpeg::Error::Eof) => break,
+				Err(error) => return Err(error.into()),
+			}
+		}
+		Ok(())
+	}
+
+	fn finish(mut self) -> Result<()> {
+		self.encoder.send_eof()?;
+		self.write_packets()?;
+		self.output.write_trailer()?;
+		Ok(())
+	}
+}
+
+fn align_chroma(value: u32) -> u32 {
+	(value + 1) & !1
+}
+
+fn set_stream_cropping(
+	stream: &mut ffmpeg::format::stream::StreamMut<'_>,
+	bottom: u32,
+	right: u32,
+) -> Result<()> {
+	if bottom == 0 && right == 0 {
+		return Ok(());
+	}
+	let side_data = unsafe {
+		let parameters = (*stream.as_mut_ptr()).codecpar;
+		ffmpeg::ffi::av_packet_side_data_new(
+			&mut (*parameters).coded_side_data,
+			&mut (*parameters).nb_coded_side_data,
+			ffmpeg::ffi::AVPacketSideDataType::AV_PKT_DATA_FRAME_CROPPING,
+			16,
+			0,
+		)
+	};
+	if side_data.is_null() {
+		return Err(anyhow!(
+			"failed to allocate encoded frame cropping metadata"
+		));
+	}
+	let values = [0_u32, bottom, 0, right];
+	let data = unsafe { std::slice::from_raw_parts_mut((*side_data).data, 16) };
+	for (chunk, value) in data.chunks_exact_mut(4).zip(values) {
+		chunk.copy_from_slice(&value.to_le_bytes());
+	}
 	Ok(())
 }
 
-fn encoder_min_dimensions(encoder: &gstreamer::Element) -> (i32, i32) {
-	let (mut min_w, mut min_h) = (2, 2);
-	if let Some(tmpl) = encoder.pad_template("sink") {
-		for s in tmpl.caps().iter() {
-			if let Ok(r) = s.get::<gstreamer::IntRange<i32>>("width") {
-				min_w = min_w.max(r.min());
-			}
-			if let Ok(r) = s.get::<gstreamer::IntRange<i32>>("height") {
-				min_h = min_h.max(r.min());
-			}
-		}
+pub(crate) fn run_single_encoding_pipeline(
+	output_path: PathBuf,
+	frame_receiver: crossbeam_channel::Receiver<FrameMessage>,
+	return_sender: crossbeam_channel::Sender<usize>,
+	recording_config: RecordingConfig,
+) -> Result<()> {
+	let (first, first_slot) = frame_receiver
+		.recv()
+		.map_err(|_| anyhow!("capture ended before the first frame"))?
+		.into_frame()?;
+	let mut writer = VideoWriter::new(&output_path, &first, &recording_config)?;
+	let mut timeline = TimestampTimeline::new(recording_config.fps);
+	if let Some(pts) = timeline.pts(first.timestamp) {
+		writer.write_frame(&first, pts)?;
 	}
-	(min_w, min_h)
-}
+	let _ = return_sender.send(first_slot);
 
-fn fit_encoder_dimensions(encoder: &gstreamer::Element, width: i32, height: i32) -> (i32, i32) {
-	let (min_w, min_h) = encoder_min_dimensions(encoder);
-	let scale = (min_w as f64 / width as f64)
-		.max(min_h as f64 / height as f64)
-		.max(1.0);
-	let scaled_w = (width as f64 * scale).ceil() as i32;
-	let scaled_h = (height as f64 * scale).ceil() as i32;
-	let even_w = ((scaled_w + 1) / 2 * 2).max(min_w);
-	let even_h = ((scaled_h + 1) / 2 * 2).max(min_h);
-	(even_w, even_h)
-}
-
-fn apply_encoder_config(encoder: &gstreamer::Element, config: &RecordingConfig) {
-	let Some(factory) = encoder.factory() else {
-		return;
-	};
-	let name = factory.name();
-
-	if name == "x264enc" {
-		encoder.set_property("bitrate", config.bitrate);
-		encoder.set_property_from_str("speed-preset", config.speed.as_ref());
-		encoder.set_property("key-int-max", config.keyframe_interval);
-		if config.tune.is_psy_tune() {
-			encoder.set_property_from_str("psy-tune", config.tune.as_ref());
+	while let Ok(message) = frame_receiver.recv() {
+		let (frame, slot) = message.into_frame()?;
+		let result = if let Some(pts) = timeline.pts(frame.timestamp) {
+			writer.write_frame(&frame, pts)
 		} else {
-			encoder.set_property_from_str("tune", config.tune.as_ref());
-		}
-	} else if name == "rav1enc" {
-		let speed = 11 - config.speed.to_gst_value();
-		encoder.set_property("speed-preset", speed as u32);
-		encoder.set_property("bitrate", (config.bitrate * 1000) as i32);
-		encoder.set_property("max-key-frame-interval", config.keyframe_interval as u64);
-	} else {
-		encoder.set_property("bitrate", config.bitrate);
-		if name.starts_with("va") {
-			if encoder.has_property("keyframe-period") {
-				encoder.set_property("keyframe-period", config.keyframe_interval as i32);
-			}
-			if encoder.has_property("rate-control") {
-				encoder.set_property_from_str("rate-control", "cbr");
-			}
-		} else if name.starts_with("nv") {
-			if encoder.has_property("gop-size") {
-				encoder.set_property("gop-size", config.keyframe_interval as i32);
-			}
-			if encoder.has_property("rc-mode") {
-				encoder.set_property_from_str("rc-mode", "cbr");
-			}
+			Ok(())
+		};
+		let _ = return_sender.send(slot);
+		result?;
+	}
+	writer.finish()
+}
+
+fn run_frame_encoding_pipeline(
+	output_path: PathBuf,
+	frame_receiver: crossbeam_channel::Receiver<Frame>,
+	recording_config: RecordingConfig,
+) -> Result<()> {
+	let first = frame_receiver
+		.recv()
+		.map_err(|_| anyhow!("capture ended before the first frame"))?;
+	let mut writer = VideoWriter::new(&output_path, &first, &recording_config)?;
+	let mut timeline = TimestampTimeline::new(recording_config.fps);
+	if let Some(pts) = timeline.pts(first.timestamp) {
+		writer.write_frame(&first, pts)?;
+	}
+	while let Ok(frame) = frame_receiver.recv() {
+		if let Some(pts) = timeline.pts(frame.timestamp) {
+			writer.write_frame(&frame, pts)?;
 		}
 	}
+	writer.finish()
+}
 
-	if encoder.has_property("threads") {
-		encoder.set_property("threads", config.threads.unwrap_or(0));
+pub(crate) use pipewire::run_pipewire_encoding_pipeline;
+
+pub(crate) fn run_composite_encoding_pipeline(
+	output_path: PathBuf,
+	region: LogicalRegion,
+	max_scale: i32,
+	intersecting_outputs: Vec<OutputInfo>,
+	frame_receivers: Vec<crossbeam_channel::Receiver<FrameMessage>>,
+	return_senders: Vec<crossbeam_channel::Sender<usize>>,
+	stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+	recording_config: RecordingConfig,
+) -> Result<()> {
+	let width = region.size.width * max_scale as u32;
+	let height = region.size.height * max_scale as u32;
+	let mut composite_outputs: Vec<CompositeOutput> = intersecting_outputs
+		.iter()
+		.map(|output| {
+			CompositeOutput::new(
+				output.logical_size.width * max_scale as u32,
+				output.logical_size.height * max_scale as u32,
+			)
+		})
+		.collect();
+	let mut pending: Vec<Option<(Frame, usize)>> =
+		(0..frame_receivers.len()).map(|_| None).collect();
+	let mut writer = None;
+	let mut timeline = TimestampTimeline::new(recording_config.fps);
+	let mut select = crossbeam_channel::Select::new();
+	for receiver in &frame_receivers {
+		select.recv(receiver);
 	}
-}
 
-fn make_element(name: &str) -> Result<gstreamer::Element> {
-	gstreamer::ElementFactory::make(name)
-		.build()
-		.map_err(|e| anyhow::anyhow!("Failed to create {}. Error: {}", name, e))
-}
+	loop {
+		if stop.load(std::sync::atomic::Ordering::Acquire) {
+			break;
+		}
+		let operation = match select.select_timeout(Duration::from_millis(100)) {
+			Ok(operation) => operation,
+			Err(_) => continue,
+		};
+		let index = operation.index();
+		let Ok(message) = operation.recv(&frame_receivers[index]) else {
+			break;
+		};
+		let (frame, slot) = message.into_frame()?;
+		let timestamp = frame.timestamp;
+		if let Some((_, previous_slot)) = pending[index].replace((frame, slot)) {
+			let _ = return_senders[index].send(previous_slot);
+		}
+		let Some(pts) = timeline.pts(timestamp) else {
+			continue;
+		};
+		for (index, pending_frame) in pending.iter_mut().enumerate() {
+			if let Some((frame, slot)) = pending_frame.take() {
+				let update_result = composite_outputs[index].update(&frame);
+				let _ = return_senders[index].send(slot);
+				update_result?;
+			}
+		}
+		if composite_outputs
+			.iter()
+			.any(|output| output.image.is_none())
+		{
+			continue;
+		}
+		let composite = composite_frame(
+			&composite_outputs,
+			&intersecting_outputs,
+			region,
+			max_scale,
+			width,
+			height,
+			timestamp,
+		)?;
+		let writer = match &mut writer {
+			Some(writer) => writer,
+			None => writer.insert(VideoWriter::new(
+				&output_path,
+				&composite,
+				&recording_config,
+			)?),
+		};
+		writer.write_frame(&composite, pts)?;
+	}
 
-fn make_appsrc(name: &str) -> Result<AppSrc> {
-	let appsrc = gstreamer::ElementFactory::make("appsrc")
-		.name(name)
-		.build()
-		.map_err(|e| anyhow::anyhow!("Failed to create appsrc. Error: {}", e))?
-		.dynamic_cast::<AppSrc>()
-		.map_err(|_| anyhow::anyhow!("appsrc element is not an AppSrc"))?;
-	configure_appsrc(&appsrc);
-	Ok(appsrc)
-}
-
-fn make_encoder(config: &RecordingConfig) -> Result<gstreamer::Element> {
-	let hw_encoder = crate::find_hardware_encoder(config.encoder, config.hw_encoder.as_deref());
-	let name = hw_encoder.as_deref().unwrap_or(match config.encoder {
-		crate::VideoEncoder::H264 => "x264enc",
-		crate::VideoEncoder::AV1 => "rav1enc",
-	});
-	let encoder = make_element(name)?;
-	apply_encoder_config(&encoder, config);
-	Ok(encoder)
-}
-
-fn make_parser(encoder: crate::VideoEncoder) -> Option<gstreamer::Element> {
-	let name = match encoder {
-		crate::VideoEncoder::H264 => "h264parse",
-		crate::VideoEncoder::AV1 => "av1parse",
-	};
-	gstreamer::ElementFactory::make(name).build().ok()
-}
-
-fn gst_video_format(format: PixelFormat) -> Result<gstreamer_video::VideoFormat> {
-	match format {
-		PixelFormat::Argb8888 => Ok(gstreamer_video::VideoFormat::Bgra),
-		PixelFormat::Xrgb8888 => Ok(gstreamer_video::VideoFormat::Bgrx),
-		PixelFormat::Abgr8888 => Ok(gstreamer_video::VideoFormat::Rgba),
-		PixelFormat::Xbgr8888 => Ok(gstreamer_video::VideoFormat::Rgbx),
-		_ => Err(anyhow::anyhow!(
-			"Unsupported pixel format for recording: {:?}",
-			format
+	for (index, pending_frame) in pending.into_iter().enumerate() {
+		if let Some((_, slot)) = pending_frame {
+			let _ = return_senders[index].send(slot);
+		}
+	}
+	match writer {
+		Some(writer) => writer.finish(),
+		None => Err(anyhow!(
+			"capture ended before a composite frame was available"
 		)),
 	}
 }
 
-fn push_buffer(appsrc: &AppSrc, data: &[u8], pts: u64, previous_pts: Option<u64>) -> Result<()> {
-	let mut buffer = gstreamer::Buffer::with_size(data.len())
-		.map_err(|_| anyhow::anyhow!("Failed to create buffer"))?;
-
-	{
-		let buffer_mut = buffer.get_mut().unwrap();
-		buffer_mut.set_pts(gstreamer::ClockTime::from_nseconds(pts));
-
-		if let Some(prev) = previous_pts {
-			if pts > prev {
-				let duration = gstreamer::ClockTime::from_nseconds(pts - prev);
-				buffer_mut.set_duration(Some(duration));
-			}
-		}
-
-		buffer_mut
-			.copy_from_slice(0, data)
-			.map_err(|e| anyhow::anyhow!("copy_from_slice failed: {e}"))?;
-	}
-
-	appsrc.push_buffer(buffer)?;
-	Ok(())
+struct CompositeOutput {
+	converter: FrameConverter,
+	image: Option<image::RgbaImage>,
+	width: u32,
+	height: u32,
 }
 
-fn configure_appsrc(appsrc: &AppSrc) {
-	appsrc.set_format(gstreamer::Format::Time);
-	appsrc.set_is_live(false);
-	appsrc.set_do_timestamp(false);
-	appsrc.set_property("block", true);
-	appsrc.set_property("min-percent", 50u32);
-}
-
-pub fn run_single_encoding_pipeline(
-	output_path: std::path::PathBuf,
-	frame_receiver: crossbeam_channel::Receiver<(Arc<Mmap>, usize, u64, FrameFormat, Transform)>,
-	return_sender: crossbeam_channel::Sender<usize>,
-	recording_config: RecordingConfig,
-) -> Result<()> {
-	let pipeline = gstreamer::Pipeline::new();
-
-	let appsrc = make_appsrc("src")?;
-
-	let videoconvert = make_element("videoconvert")?;
-
-	let videorate = make_element("videorate")?;
-	videorate.set_property("skip-to-first", true);
-
-	let videoflip = make_element("videoflip")?;
-
-	let videoscale = make_element("videoscale")?;
-
-	let capsfilter = make_element("capsfilter")?;
-
-	let encoder = make_encoder(&recording_config)?;
-
-	let parser = make_parser(recording_config.encoder);
-
-	let muxer = make_element(recording_config.container.gst_muxer())?;
-
-	let sink = make_element("filesink")?;
-
-	sink.set_property("location", output_path.to_string_lossy().as_ref());
-
-	let mut elements: Vec<&gstreamer::Element> = vec![
-		appsrc.upcast_ref(),
-		&videoconvert,
-		&videorate,
-		&videoflip,
-		&videoscale,
-		&capsfilter,
-		&encoder,
-	];
-	elements.extend(&parser);
-	elements.push(&muxer);
-	elements.push(&sink);
-	pipeline.add_many(&elements)?;
-	gstreamer::Element::link_many(&elements)?;
-
-	pipeline.set_state(gstreamer::State::Ready)?;
-
-	let (mmap, buffer_idx, pts, format, transform) = frame_receiver.recv()?;
-
-	let direction_nick = match transform {
-		Transform::Normal => "identity",
-		Transform::_90 => "90r",
-		Transform::_180 => "180",
-		Transform::_270 => "90l",
-		Transform::Flipped => "horiz",
-		Transform::Flipped90 => "urd",
-		Transform::Flipped180 => "vert",
-		Transform::Flipped270 => "uld",
-	};
-
-	videoflip.set_property_from_str("video-direction", direction_nick);
-
-	let gst_format = gst_video_format(format.format)?;
-
-	let caps = gstreamer_video::VideoCapsBuilder::new()
-		.format(gst_format)
-		.width(format.width)
-		.height(format.height)
-		.framerate(gstreamer::Fraction::new(recording_config.fps as i32, 1))
-		.build();
-
-	appsrc.set_caps(Some(&caps));
-	appsrc.set_max_bytes(format.byte_size() as u64 * 4);
-
-	let (target_width, target_height) =
-		fit_encoder_dimensions(&encoder, format.width, format.height);
-	let scaled_caps = gstreamer_video::VideoCapsBuilder::new()
-		.width(target_width)
-		.height(target_height)
-		.build();
-	capsfilter.set_property("caps", &scaled_caps);
-
-	pipeline.set_state(gstreamer::State::Playing)?;
-
-	push_buffer(&appsrc, &mmap, pts, None)?;
-	let _ = return_sender.send(buffer_idx);
-
-	let mut previous_pts = Some(pts);
-
-	while let Ok((mmap, buffer_idx, pts, _format, _transform)) = frame_receiver.recv() {
-		push_buffer(&appsrc, &mmap, pts, previous_pts)?;
-		let _ = return_sender.send(buffer_idx);
-		previous_pts = Some(pts);
-	}
-
-	appsrc.end_of_stream()?;
-	wait_for_gstreamer_eos(&pipeline)?;
-	Ok(())
-}
-
-pub fn run_pipewire_encoding_pipeline(
-	node_id: u32,
-	output_path: std::path::PathBuf,
-	stop_receiver: crossbeam_channel::Receiver<()>,
-	recording_config: RecordingConfig,
-) -> Result<()> {
-	let pipeline = gstreamer::Pipeline::new();
-
-	let src = gstreamer::ElementFactory::make("pipewiresrc")
-		.build()
-		.map_err(|e| {
-			anyhow::anyhow!(
-				"Failed to create pipewiresrc (is the GStreamer PipeWire plugin installed?). Error: {}",
-				e
-			)
-		})?;
-
-	src.set_property("path", node_id.to_string());
-	if src.has_property("do-timestamp") {
-		src.set_property("do-timestamp", true);
-	}
-
-	let queue = make_element("queue")?;
-
-	let videoconvert = make_element("videoconvert")?;
-
-	let videorate = make_element("videorate")?;
-	videorate.set_property("skip-to-first", true);
-
-	let capsfilter = make_element("capsfilter")?;
-	let rate_caps = gstreamer_video::VideoCapsBuilder::new()
-		.framerate(gstreamer::Fraction::new(recording_config.fps as i32, 1))
-		.build();
-	capsfilter.set_property("caps", &rate_caps);
-
-	let encoder = make_encoder(&recording_config)?;
-
-	let parser = make_parser(recording_config.encoder);
-
-	let muxer = make_element(recording_config.container.gst_muxer())?;
-
-	let sink = make_element("filesink")?;
-	sink.set_property("location", output_path.to_string_lossy().as_ref());
-
-	let mut elements = vec![
-		&src,
-		&queue,
-		&videoconvert,
-		&videorate,
-		&capsfilter,
-		&encoder,
-	];
-	elements.extend(&parser);
-	elements.push(&muxer);
-	elements.push(&sink);
-	pipeline.add_many(&elements)?;
-	gstreamer::Element::link_many(&elements)?;
-
-	pipeline.set_state(gstreamer::State::Playing)?;
-
-	let bus = pipeline
-		.bus()
-		.ok_or_else(|| anyhow::anyhow!("Pipeline has no bus"))?;
-
-	loop {
-		match stop_receiver.recv_timeout(std::time::Duration::from_millis(100)) {
-			Ok(_) | Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
-			Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
-		}
-		while let Some(msg) = bus.pop() {
-			use gstreamer::MessageView;
-			match msg.view() {
-				MessageView::Error(err) => {
-					let _ = pipeline.set_state(gstreamer::State::Null);
-					return Err(anyhow::anyhow!(
-						"GStreamer error: {} ({})",
-						err.error(),
-						err.debug().unwrap_or_else(|| "no debug info".into())
-					));
-				}
-				MessageView::Eos(..) => {
-					pipeline.set_state(gstreamer::State::Null)?;
-					return Ok(());
-				}
-				_ => (),
-			}
+impl CompositeOutput {
+	fn new(width: u32, height: u32) -> Self {
+		Self {
+			converter: FrameConverter::new(width, height, Pixel::RGBA),
+			image: None,
+			width,
+			height,
 		}
 	}
 
-	pipeline.send_event(gstreamer::event::Eos::new());
-	wait_for_gstreamer_eos(&pipeline)?;
-	Ok(())
+	fn update(&mut self, frame: &Frame) -> Result<()> {
+		let video = self.converter.convert(frame)?;
+		let image = self
+			.image
+			.get_or_insert_with(|| image::RgbaImage::new(self.width, self.height));
+		let row_size = self.width as usize * 4;
+		for row in 0..self.height as usize {
+			let source_start = row * video.stride(0);
+			let destination_start = row * row_size;
+			image.as_mut()[destination_start..destination_start + row_size]
+				.copy_from_slice(&video.data(0)[source_start..source_start + row_size]);
+		}
+		Ok(())
+	}
 }
 
-pub fn run_composite_encoding_pipeline(
-	output_path: std::path::PathBuf,
+fn composite_frame(
+	frames: &[CompositeOutput],
+	outputs: &[OutputInfo],
 	region: LogicalRegion,
 	max_scale: i32,
-	intersecting_outputs: Vec<OutputInfo>,
-	frame_receivers: Vec<
-		crossbeam_channel::Receiver<(Arc<Mmap>, usize, u64, FrameFormat, Transform)>,
-	>,
-	format_receivers: Vec<crossbeam_channel::Receiver<(FrameFormat, Transform)>>,
-	return_senders: Vec<crossbeam_channel::Sender<usize>>,
-	stop_receiver: crossbeam_channel::Receiver<()>,
-	recording_config: RecordingConfig,
-) -> Result<()> {
-	let num_outputs = intersecting_outputs.len();
-	let composite_width = (region.size.width as i32 * max_scale + 1) / 2 * 2;
-	let composite_height = (region.size.height as i32 * max_scale + 1) / 2 * 2;
-
-	let pipeline = gstreamer::Pipeline::new();
-
-	let mut appsrcs = Vec::with_capacity(num_outputs);
-	let mut videoflips = Vec::with_capacity(num_outputs);
-	let compositor = make_element("compositor")?;
-
-	compositor.set_property("background", 0u32);
-
-	compositor.set_property("width", composite_width);
-	compositor.set_property("height", composite_height);
-
-	let videoconvert = make_element("videoconvert")?;
-
-	let videorate = make_element("videorate")?;
-	videorate.set_property("skip-to-first", true);
-
-	let encoder = make_encoder(&recording_config)?;
-
-	let parser = make_parser(recording_config.encoder);
-
-	let muxer = make_element(recording_config.container.gst_muxer())?;
-
-	let sink = make_element("filesink")?;
-
-	sink.set_property("location", output_path.to_string_lossy().as_ref());
-
-	let mut elements = vec![&compositor, &videoconvert, &videorate, &encoder];
-	elements.extend(&parser);
-	elements.push(&muxer);
-	elements.push(&sink);
-	pipeline.add_many(&elements)?;
-	gstreamer::Element::link_many(&elements)?;
-
-	for (i, output) in intersecting_outputs.iter().enumerate() {
-		let appsrc = make_appsrc(&format!("src_{}", i))?;
-		let stream_convert = make_element("videoconvert")?;
-		let videoflip = make_element("videoflip")?;
-
-		pipeline.add_many(&[&appsrc.upcast_ref(), &stream_convert, &videoflip])?;
-		gstreamer::Element::link_many(&[&appsrc.upcast_ref(), &stream_convert, &videoflip])?;
-
-		let sink_pad = compositor
-			.request_pad_simple(&format!("sink_{}", i))
-			.ok_or_else(|| anyhow::anyhow!("Failed to get sink pad"))?;
-
-		let src_pad = videoflip
-			.static_pad("src")
-			.ok_or_else(|| anyhow::anyhow!("Failed to get src pad"))?;
-
-		src_pad.link(&sink_pad)?;
-
-		let rel_x = output.logical_position.x - region.position.x;
-		let rel_y = output.logical_position.y - region.position.y;
-
-		sink_pad.set_property("xpos", rel_x * max_scale);
-		sink_pad.set_property("ypos", rel_y * max_scale);
-		sink_pad.set_property("width", output.logical_size.width as i32 * max_scale);
-		sink_pad.set_property("height", output.logical_size.height as i32 * max_scale);
-		sink_pad.set_property("zorder", 0i32);
-
-		appsrcs.push((appsrc, output));
-		videoflips.push(videoflip);
+	width: u32,
+	height: u32,
+	timestamp: Duration,
+) -> Result<Frame> {
+	let mut composite = image::RgbaImage::new(width, height);
+	for (frame, output) in frames.iter().zip(outputs) {
+		let rgba = frame
+			.image
+			.as_ref()
+			.ok_or_else(|| anyhow!("missing composite frame"))?;
+		let x = (output.logical_position.x - region.position.x) as i64 * i64::from(max_scale);
+		let y = (output.logical_position.y - region.position.y) as i64 * i64::from(max_scale);
+		image::imageops::overlay(&mut composite, rgba, x, y);
 	}
-
-	pipeline.set_state(gstreamer::State::Ready)?;
-
-	for (i, format_receiver) in format_receivers.iter().enumerate() {
-		let (frame_format, transform) = format_receiver
-			.recv()
-			.map_err(|_| anyhow::anyhow!("Failed to receive initial format"))?;
-
-		let direction_nick = match transform {
-			Transform::Normal => "identity",
-			Transform::_90 => "90r",
-			Transform::_180 => "180",
-			Transform::_270 => "90l",
-			Transform::Flipped => "horiz",
-			Transform::Flipped90 => "urd",
-			Transform::Flipped180 => "vert",
-			Transform::Flipped270 => "uld",
-		};
-
-		videoflips[i].set_property_from_str("video-direction", direction_nick);
-
-		let gst_format = gst_video_format(frame_format.format)?;
-
-		let caps = gstreamer_video::VideoCapsBuilder::new()
-			.format(gst_format)
-			.width(frame_format.width)
-			.height(frame_format.height)
-			.framerate(gstreamer::Fraction::new(recording_config.fps as i32, 1))
-			.build();
-
-		appsrcs[i].0.set_caps(Some(&caps));
-		appsrcs[i]
-			.0
-			.set_max_bytes(frame_format.byte_size() as u64 * 4);
-	}
-
-	pipeline.set_state(gstreamer::State::Playing)?;
-
-	let mut start_pts = None;
-	let mut previous_pts_vec: Vec<Option<u64>> = vec![None; num_outputs];
-
-	let mut select = crossbeam_channel::Select::new();
-	for i in 0..num_outputs {
-		select.recv(&frame_receivers[i]);
-	}
-	select.recv(&stop_receiver);
-
-	loop {
-		let oper = select.select();
-		let index = oper.index();
-
-		if index == num_outputs {
-			let _ = oper.recv(&stop_receiver);
-			break;
-		} else {
-			let i = index;
-			if let Ok((mmap, buffer_idx, pts, _frame_format, _transform)) =
-				oper.recv(&frame_receivers[i])
-			{
-				let (appsrc, _) = &appsrcs[i];
-
-				let relative_pts = pts.saturating_sub(*start_pts.get_or_insert(pts));
-
-				push_buffer(appsrc, &mmap, relative_pts, previous_pts_vec[i])?;
-
-				let _ = return_senders[i].send(buffer_idx);
-
-				previous_pts_vec[i] = Some(relative_pts);
-			}
-		}
-	}
-
-	for (appsrc, _) in &appsrcs {
-		appsrc.end_of_stream()?;
-	}
-
-	wait_for_gstreamer_eos(&pipeline)?;
-	Ok(())
+	Ok(Frame::from_owned(
+		composite.into_raw(),
+		crate::FrameFormat {
+			format: crate::PixelFormat::Abgr8888,
+			width: width as i32,
+			height: height as i32,
+			stride: width as i32 * 4,
+		},
+		crate::Transform::Normal,
+		timestamp,
+	))
 }

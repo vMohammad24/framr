@@ -65,9 +65,13 @@ pub struct Cli {
 	#[arg(long)]
 	pub container: Option<libframr::ContainerFormat>,
 
-	/// Preferred hardware encoder element using gstreamer (e.g. nvh264enc, vaapiav1enc)
+	/// Encoder backend (auto, software, vaapi)
 	#[arg(long)]
-	pub hw_encoder: Option<String>,
+	pub encoder_backend: Option<libframr::EncoderBackend>,
+
+	/// VAAPI render node (for example /dev/dri/renderD128)
+	#[arg(long)]
+	pub vaapi_device: Option<PathBuf>,
 
 	/// Recording bitrate in kbps
 	#[arg(long)]

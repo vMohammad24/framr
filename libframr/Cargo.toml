@@ -12,11 +12,12 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 memmap2 = "0.9"
 rustix = { version = "1", features = ["fs", "shm", "pipe"] }
 anyhow = "1.0"
+libc = "0.2"
 drm-fourcc = "2"
 dbus = "0.9"
-gstreamer = "0.25"
-gstreamer-app = "0.25"
-gstreamer-video = "0.25"
+ffmpeg-next = { version = "9", default-features = false, features = ["codec", "filter", "format", "software-scaling"] }
+gbm = "0.18"
+pipewire = "0.9"
 crossbeam-channel = "0.5"
 serde = { version = "1.0", features = ["derive"] }
 strum = { version = "0.28", features = ["derive"] }

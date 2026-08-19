@@ -162,9 +162,15 @@ impl ConfigEnum for RequestMethod {
 impl ConfigEnum for libframr::VideoEncoder {
 	fn label(self) -> &'static str {
 		match self {
-			Self::H264 => "H.264 (x264)",
-			Self::AV1 => "AV1 (rav1)",
+			Self::H264 => "H.264",
+			Self::AV1 => "AV1",
 		}
+	}
+}
+
+impl ConfigEnum for libframr::EncoderBackend {
+	fn label(self) -> &'static str {
+		self.into()
 	}
 }
 

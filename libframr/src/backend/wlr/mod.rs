@@ -1,6 +1,7 @@
 pub(crate) mod capture;
 pub(crate) mod core;
 pub(crate) mod dispatch;
+pub(crate) mod dmabuf;
 pub(crate) mod record;
 pub(crate) mod shm;
 

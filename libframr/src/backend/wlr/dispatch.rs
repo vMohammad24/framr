@@ -7,6 +7,8 @@ use wayland_client::protocol::wl_shm::Format as WlFormat;
 use wayland_client::protocol::wl_shm::WlShm;
 use wayland_client::protocol::wl_shm_pool::WlShmPool;
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle};
+use wayland_protocols::wp::linux_dmabuf::zv1::client::zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1;
+use wayland_protocols::wp::linux_dmabuf::zv1::client::zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1;
 use wayland_protocols::xdg::xdg_output::zv1::client::zxdg_output_manager_v1::ZxdgOutputManagerV1;
 use wayland_protocols::xdg::xdg_output::zv1::client::zxdg_output_v1::ZxdgOutputV1;
 use wayland_protocols_wlr::screencopy::v1::client::zwlr_screencopy_frame_v1::ZwlrScreencopyFrameV1;
@@ -213,6 +215,8 @@ pub(crate) fn compute_frame_transform(
 #[derive(Default)]
 pub(crate) struct CaptureState {
 	pub(crate) formats: Vec<FrameFormat>,
+	pub(crate) dmabuf_formats: Vec<FrameFormat>,
+	pub(crate) dmabuf_modifiers: Vec<(u32, u64)>,
 	pub(crate) buffer_done: bool,
 	pub(crate) frame_state: FrameState,
 	pub(crate) transform: Transform,
@@ -229,6 +233,7 @@ wayland_client::delegate_noop!(CaptureState: ignore WlShmPool);
 wayland_client::delegate_noop!(CaptureState: ignore WlBuffer);
 wayland_client::delegate_noop!(CaptureState: ignore WlRegistry);
 wayland_client::delegate_noop!(CaptureState: ignore ZwlrScreencopyManagerV1);
+wayland_client::delegate_noop!(CaptureState: ignore ZwpLinuxBufferParamsV1);
 
 impl Dispatch<WlRegistry, GlobalListContents> for CaptureState {
 	fn event(
@@ -239,6 +244,31 @@ impl Dispatch<WlRegistry, GlobalListContents> for CaptureState {
 		_: &Connection,
 		_: &QueueHandle<Self>,
 	) {
+	}
+}
+
+impl Dispatch<ZwpLinuxDmabufV1, ()> for CaptureState {
+	fn event(
+		state: &mut Self,
+		_: &ZwpLinuxDmabufV1,
+		event: <ZwpLinuxDmabufV1 as Proxy>::Event,
+		_: &(),
+		_: &Connection,
+		_: &QueueHandle<Self>,
+	) {
+		use wayland_protocols::wp::linux_dmabuf::zv1::client::zwp_linux_dmabuf_v1::Event;
+		match event {
+			Event::Format { format } => state.dmabuf_modifiers.push((format, u64::MAX)),
+			Event::Modifier {
+				format,
+				modifier_hi,
+				modifier_lo,
+			} => state.dmabuf_modifiers.push((
+				format,
+				(u64::from(modifier_hi) << 32) | u64::from(modifier_lo),
+			)),
+			_ => {}
+		}
 	}
 }
 
@@ -281,6 +311,22 @@ impl Dispatch<ZwlrScreencopyFrameV1, ()> for CaptureState {
 			}
 			FrameEvent::BufferDone => {
 				state.buffer_done = true;
+			}
+			FrameEvent::LinuxDmabuf {
+				format,
+				width,
+				height,
+			} => {
+				if let Ok(fourcc) = drm_fourcc::DrmFourcc::try_from(format)
+					&& let Some(pixel_format) = crate::backend::wlr::dmabuf::convert_format(fourcc)
+				{
+					state.dmabuf_formats.push(FrameFormat {
+						format: pixel_format,
+						width: width as i32,
+						height: height as i32,
+						stride: width as i32 * pixel_format.bytes_per_pixel() as i32,
+					});
+				}
 			}
 			FrameEvent::Ready {
 				tv_sec_hi,

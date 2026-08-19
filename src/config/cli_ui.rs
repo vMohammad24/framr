@@ -42,7 +42,7 @@ pub fn uploader_list_entry(index: usize, uploader: &UploadConfig, is_default: bo
 		style(format!("{:>2}.", index + 1)).dim(),
 		default_marker,
 		style(&uploader.name).green().bold(),
-		style(format!("[{}]", &uploader.request_method)).magenta(),
+		style(format!("[{}]", uploader.request_method)).magenta(),
 		style(&uploader.request_url).blue()
 	)
 }
@@ -301,7 +301,7 @@ pub fn show_uploader(name_or_index: &str) -> Result<()> {
 
 	println!(
 		"{}",
-		header(&format!("Uploader: {}", &cfg.uploaders[idx].name))
+		header(&format!("Uploader: {}", cfg.uploaders[idx].name))
 	);
 	display_uploader_details(&cfg.uploaders[idx]);
 	Ok(())
@@ -575,6 +575,7 @@ pub fn display_recording_settings(cfg: &AppConfig) {
 	println!();
 	println!("{}", style("Recording Settings:").cyan().bold());
 	print_setting("Video Encoder:", cfg.recording.encoder.as_ref());
+	print_setting("Encoder Backend:", cfg.recording.backend.as_ref());
 	print_setting("Bitrate:", format!("{} kbps", cfg.recording.bitrate));
 	print_setting("Keyframe Interval:", cfg.recording.keyframe_interval);
 	print_setting(
@@ -893,6 +894,7 @@ pub fn modify_recording_config(cfg: &mut AppConfig) -> Result<()> {
 		cfg.recording,
 		[
 			encoder: "Video Encoder" => enum,
+			backend: "Encoder Backend" => enum,
 			bitrate: "Bitrate (kbps)" => nonzero_num,
 			keyframe_interval: "Keyframe Interval" => nonzero_num,
 			threads: "Threads" => opt_num,
