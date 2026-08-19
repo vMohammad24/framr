@@ -646,7 +646,7 @@ Terminal=false
 MimeType=x-scheme-handler/framr;
 NoDisplay=true
 X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2
-X-KDE-Wayland-Interfaces=zkde_screencast_unstable_v1
+X-KDE-Wayland-Interfaces=zkde_screencast_unstable_v1,org_kde_plasma_window_management
 Comment=Handle framr:// deeplinks for importing uploaders
 "#,
 		exe_str

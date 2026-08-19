@@ -734,6 +734,7 @@ dependencies = [
  "console",
  "csscolorparser",
  "ctrlc",
+ "dbus",
  "dialoguer",
  "dirs",
  "fastblur",

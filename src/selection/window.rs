@@ -1,8 +1,23 @@
 use anyhow::{Context, Result};
 use serde::Deserialize;
+use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use swayipc::{Connection, Node, NodeType};
+use wayland_client::globals::{GlobalListContents, registry_queue_init};
+use wayland_client::protocol::wl_registry::WlRegistry;
+use wayland_client::{Connection as WaylandConnection, Dispatch, Proxy, QueueHandle};
+use wayland_protocols_plasma::plasma_virtual_desktop::client::{
+	org_kde_plasma_virtual_desktop::{Event as VirtualDesktopEvent, OrgKdePlasmaVirtualDesktop},
+	org_kde_plasma_virtual_desktop_management::{
+		Event as VirtualDesktopManagementEvent, OrgKdePlasmaVirtualDesktopManagement,
+	},
+};
+use wayland_protocols_plasma::plasma_window_management::client::{
+	org_kde_plasma_stacking_order::{Event as StackingOrderEvent, OrgKdePlasmaStackingOrder},
+	org_kde_plasma_window::{Event as PlasmaWindowEvent, OrgKdePlasmaWindow},
+	org_kde_plasma_window_management::{OrgKdePlasmaWindowManagement, State as PlasmaWindowState},
+};
 
 #[derive(Clone, Debug)]
 pub struct Window {
@@ -19,7 +34,7 @@ pub fn get_windows() -> Result<Vec<Window>> {
 
 	match desktop.as_str() {
 		"Hyprland" => get_hypr_windows().context("Error fetching Hyprland windows"),
-		"KDE" => get_kde_windows(),
+		"KDE" => get_kde_windows().context("Error fetching KDE windows"),
 		"sway" => get_sway_windows().context("Error fetching Sway windows"),
 		"mango" => get_mango_windows().context("Error fetching Mango windows"),
 		_ => Ok(vec![]),
@@ -232,7 +247,185 @@ pub fn get_mango_windows() -> Result<Vec<Window>> {
 
 	Ok(windows)
 }
-// TODO: implement this
+
+#[derive(Default)]
+struct KdeWindowQuery {
+	windows: HashMap<String, PartialKdeWindow>,
+	stacking_order: Vec<String>,
+	active_desktops: HashSet<String>,
+}
+
+#[derive(Default)]
+struct PartialKdeWindow {
+	title: String,
+	geometry: Option<(i32, i32, u32, u32)>,
+	state: u32,
+	virtual_desktops: HashSet<String>,
+	unmapped: bool,
+}
+
+impl Dispatch<WlRegistry, GlobalListContents> for KdeWindowQuery {
+	fn event(
+		_: &mut Self,
+		_: &WlRegistry,
+		_: <WlRegistry as Proxy>::Event,
+		_: &GlobalListContents,
+		_: &WaylandConnection,
+		_: &QueueHandle<Self>,
+	) {
+	}
+}
+
+impl Dispatch<OrgKdePlasmaWindowManagement, ()> for KdeWindowQuery {
+	fn event(
+		_: &mut Self,
+		_: &OrgKdePlasmaWindowManagement,
+		_: <OrgKdePlasmaWindowManagement as Proxy>::Event,
+		_: &(),
+		_: &WaylandConnection,
+		_: &QueueHandle<Self>,
+	) {
+	}
+}
+
+impl Dispatch<OrgKdePlasmaWindow, String> for KdeWindowQuery {
+	fn event(
+		state: &mut Self,
+		_: &OrgKdePlasmaWindow,
+		event: PlasmaWindowEvent,
+		uuid: &String,
+		_: &WaylandConnection,
+		_: &QueueHandle<Self>,
+	) {
+		let window = state.windows.entry(uuid.clone()).or_default();
+		match event {
+			PlasmaWindowEvent::TitleChanged { title } => window.title = title,
+			PlasmaWindowEvent::StateChanged { flags } => window.state = flags,
+			PlasmaWindowEvent::Geometry {
+				x,
+				y,
+				width,
+				height,
+			} => window.geometry = Some((x, y, width, height)),
+			PlasmaWindowEvent::VirtualDesktopEntered { id } => {
+				window.virtual_desktops.insert(id);
+			}
+			PlasmaWindowEvent::VirtualDesktopLeft { is: id } => {
+				window.virtual_desktops.remove(&id);
+			}
+			PlasmaWindowEvent::Unmapped => window.unmapped = true,
+			_ => {}
+		}
+	}
+}
+
+impl Dispatch<OrgKdePlasmaStackingOrder, ()> for KdeWindowQuery {
+	fn event(
+		state: &mut Self,
+		_: &OrgKdePlasmaStackingOrder,
+		event: StackingOrderEvent,
+		_: &(),
+		_: &WaylandConnection,
+		_: &QueueHandle<Self>,
+	) {
+		if let StackingOrderEvent::Window { uuid } = event {
+			state.stacking_order.push(uuid);
+		}
+	}
+}
+
+impl Dispatch<OrgKdePlasmaVirtualDesktopManagement, ()> for KdeWindowQuery {
+	fn event(
+		_: &mut Self,
+		manager: &OrgKdePlasmaVirtualDesktopManagement,
+		event: VirtualDesktopManagementEvent,
+		_: &(),
+		_: &WaylandConnection,
+		qh: &QueueHandle<Self>,
+	) {
+		if let VirtualDesktopManagementEvent::DesktopCreated { desktop_id, .. } = event {
+			manager.get_virtual_desktop(desktop_id.clone(), qh, desktop_id);
+		}
+	}
+}
+
+impl Dispatch<OrgKdePlasmaVirtualDesktop, String> for KdeWindowQuery {
+	fn event(
+		state: &mut Self,
+		_: &OrgKdePlasmaVirtualDesktop,
+		event: VirtualDesktopEvent,
+		desktop_id: &String,
+		_: &WaylandConnection,
+		_: &QueueHandle<Self>,
+	) {
+		match event {
+			VirtualDesktopEvent::Activated => {
+				state.active_desktops.insert(desktop_id.clone());
+			}
+			VirtualDesktopEvent::Deactivated | VirtualDesktopEvent::Removed => {
+				state.active_desktops.remove(desktop_id);
+			}
+			_ => {}
+		}
+	}
+}
+
 pub fn get_kde_windows() -> Result<Vec<Window>> {
-	Ok(vec![])
+	let connection = WaylandConnection::connect_to_env()
+		.context("Failed to connect to the Wayland compositor")?;
+	let (globals, mut queue) = registry_queue_init::<KdeWindowQuery>(&connection)
+		.context("Failed to initialize the Wayland registry")?;
+	let qh = queue.handle();
+
+	let window_manager: OrgKdePlasmaWindowManagement = globals
+		.bind(&qh, 17..=18, ())
+		.context("KDE Plasma window management protocol is unavailable")?;
+	let _desktop_manager: Option<OrgKdePlasmaVirtualDesktopManagement> =
+		globals.bind(&qh, 1..=2, ()).ok();
+
+	window_manager.get_stacking_order(&qh, ());
+
+	let mut state = KdeWindowQuery::default();
+	queue.roundtrip(&mut state)?;
+	for uuid in &state.stacking_order {
+		state.windows.entry(uuid.clone()).or_default();
+		window_manager.get_window_by_uuid(uuid.clone(), &qh, uuid.clone());
+	}
+	queue.roundtrip(&mut state)?;
+
+	let minimized = PlasmaWindowState::Minimized as u32;
+	let skip_taskbar = PlasmaWindowState::Skiptaskbar as u32;
+	let windows = state
+		.stacking_order
+		.into_iter()
+		.enumerate()
+		.filter_map(|(z_index, uuid)| {
+			let window = state.windows.remove(&uuid)?;
+			let (x, y, width, height) = window.geometry?;
+			let on_active_desktop = state.active_desktops.is_empty()
+				|| window.virtual_desktops.is_empty()
+				|| window
+					.virtual_desktops
+					.iter()
+					.any(|id| state.active_desktops.contains(id));
+
+			if window.unmapped
+				|| window.state & (minimized | skip_taskbar) != 0
+				|| !on_active_desktop
+			{
+				return None;
+			}
+
+			Some(Window {
+				title: window.title,
+				x,
+				y,
+				width: i32::try_from(width).ok()?,
+				height: i32::try_from(height).ok()?,
+				z_index: i32::try_from(z_index).unwrap_or(i32::MAX),
+			})
+		})
+		.collect();
+
+	Ok(windows)
 }

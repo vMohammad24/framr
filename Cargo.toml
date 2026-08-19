@@ -33,7 +33,9 @@ cairo-rs = { version = "0.22", default-features = false }
 fastblur = "0.1"
 wayland-client = "0.31"
 wayland-protocols = "0.32"
+wayland-protocols-plasma = { version = "0.3.12", features = ["client"] }
 smithay-client-toolkit = "0.20"
+dbus = "0.9"
 strum = { version = "0.28", features = ["derive"] }
 csscolorparser = "0.8"
 gstreamer = "0.25"
