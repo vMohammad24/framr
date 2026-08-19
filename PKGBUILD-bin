@@ -9,7 +9,7 @@ license=('AGPL3')
 provides=('framr')
 conflicts=('framr')
 options=('!lto')
-depends=('wayland' 'libxkbcommon' 'dbus' 'cairo' 'libxcursor' 'gstreamer' 'gst-plugins-base-libs' 'gst-plugins-base' 'gst-plugins-good' 'ffmpeg' 'pipewire' 'libdrm' 'mesa')
+depends=('wayland' 'libxkbcommon' 'dbus' 'cairo' 'libxcursor' 'alsa-lib' 'ffmpeg' 'pipewire' 'libdrm' 'mesa')
 source=("$pkgname-$pkgver.tar.gz::$url/releases/download/v$pkgver/framr-v$pkgver-x86_64-linux.tar.gz"
     "framr-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
 sha256sums=('18664b9701d4a993bebbe15c1e88ebef139a757c94976cd15afc1dfaf539126d' '173567ac9f50a3823f389d9933c28b7d581274e081ac405102cb9d938faec651')

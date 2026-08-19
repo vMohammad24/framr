@@ -44,19 +44,14 @@
             libgbm
             libdrm
             ffmpeg
-            gst_all_1.gstreamer.dev
-            gst_all_1.gst-plugins-base.dev
-            gst_all_1.gst-plugins-good
+            alsa-lib
             pipewire
           ];
 
           nativeBuildInputs = with pkgs; [
             pkg-config
             rustPlatform.bindgenHook
-            makeWrapper
             installShellFiles
-            gst_all_1.gstreamer.dev
-            gst_all_1.gst-plugins-base.dev
           ];
         };
 
@@ -84,9 +79,6 @@
 
               $out/bin/framr man man-pages
               installManPage man-pages/*.1
-
-              wrapProgram $out/bin/framr \
-                --prefix GST_PLUGIN_SYSTEM_PATH_1_0 : "$GST_PLUGIN_SYSTEM_PATH_1_0"
             '';
           });
       in {

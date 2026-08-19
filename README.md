@@ -135,7 +135,7 @@ Linux x86_64 binaries, `.deb` and `.rpm` packages on the [Releases](https://gith
 
 ### Dependencies
 
-Building or running the raw binary needs: `wayland`, `libxkbcommon`, `cairo`, `pango`, `dbus`, `libxcursor`, FFmpeg, PipeWire, GBM, DRM, and GStreamer. Package manager installs pull these in automatically.
+Building or running the raw binary needs: `wayland`, `libxkbcommon`, `cairo`, `pango`, `dbus`, `libxcursor`, FFmpeg, PipeWire, ALSA, GBM, and DRM. Package manager installs pull these in automatically.
 
 ## Uploaders & deeplinks
 

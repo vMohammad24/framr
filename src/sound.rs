@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
-use gstreamer as gst;
-use gstreamer::prelude::*;
+use ffmpeg_next as ffmpeg;
+use rodio::{DeviceSinkBuilder, Player, buffer::SamplesBuffer};
 use std::io::Read;
+use std::num::{NonZeroU16, NonZeroU32};
 use std::path::{Path, PathBuf};
 
 const SOUND_URL: &str = "https://cdn.nest.rip/uploads/20ec5f7b-5b80-4fe0-abca-a8beb4453743.wav";
@@ -48,6 +49,111 @@ pub fn init_sound() {
 	let _ = ensure_sound_file();
 }
 
+fn append_decoded_frames(
+	decoder: &mut ffmpeg::codec::decoder::Audio,
+	resampler: &mut ffmpeg::software::resampling::Context,
+	samples: &mut Vec<f32>,
+) -> Result<()> {
+	let mut decoded = ffmpeg::frame::Audio::empty();
+
+	loop {
+		match decoder.receive_frame(&mut decoded) {
+			Ok(()) => {
+				let mut converted = ffmpeg::frame::Audio::empty();
+				resampler
+					.run(&decoded, &mut converted)
+					.context("Failed to convert decoded audio")?;
+				samples.extend_from_slice(converted.plane::<f32>(0));
+			}
+			Err(ffmpeg::Error::Eof) => break,
+			Err(ffmpeg::Error::Other { errno }) if errno == ffmpeg::error::EAGAIN => break,
+			Err(error) => return Err(error).context("Failed to decode audio frame"),
+		}
+	}
+
+	Ok(())
+}
+
+fn flush_resampler(
+	resampler: &mut ffmpeg::software::resampling::Context,
+	samples: &mut Vec<f32>,
+) -> Result<()> {
+	while let Some(delay) = resampler.delay() {
+		let output = *resampler.output();
+		let output_samples = usize::try_from(delay.output).context("Invalid resampler delay")?;
+		let mut converted =
+			ffmpeg::frame::Audio::new(output.format, output_samples, output.channel_layout);
+		let remaining = resampler
+			.flush(&mut converted)
+			.context("Failed to flush converted audio")?;
+		samples.extend_from_slice(converted.plane::<f32>(0));
+
+		if remaining.is_none() {
+			break;
+		}
+	}
+
+	Ok(())
+}
+
+fn decode_sound(path: &Path) -> Result<SamplesBuffer> {
+	ffmpeg::init().context("Failed to initialize FFmpeg")?;
+
+	let mut input = ffmpeg::format::input(path).context("Failed to open sound file")?;
+	let stream = input
+		.streams()
+		.best(ffmpeg::media::Type::Audio)
+		.context("Sound file contains no audio stream")?;
+	let stream_index = stream.index();
+	let decoder_context = ffmpeg::codec::context::Context::from_parameters(stream.parameters())
+		.context("Failed to create audio decoder")?;
+	let mut decoder = decoder_context
+		.decoder()
+		.audio()
+		.context("Failed to open audio decoder")?;
+
+	let channels = decoder.channels();
+	let channel_layout = if decoder.channel_layout().is_empty() {
+		ffmpeg::ChannelLayout::default(i32::from(channels))
+	} else {
+		decoder.channel_layout()
+	};
+	let sample_rate = decoder.rate();
+	let output_format = ffmpeg::format::Sample::F32(ffmpeg::format::sample::Type::Packed);
+	let mut resampler = ffmpeg::software::resampling::Context::get(
+		decoder.format(),
+		channel_layout,
+		sample_rate,
+		output_format,
+		channel_layout,
+		sample_rate,
+	)
+	.context("Failed to create audio sample converter")?;
+	let mut samples = Vec::new();
+
+	for (stream, packet) in input.packets() {
+		if stream.index() != stream_index {
+			continue;
+		}
+
+		decoder
+			.send_packet(&packet)
+			.context("Failed to send audio packet to decoder")?;
+		append_decoded_frames(&mut decoder, &mut resampler, &mut samples)?;
+	}
+
+	decoder
+		.send_eof()
+		.context("Failed to finish audio decoding")?;
+	append_decoded_frames(&mut decoder, &mut resampler, &mut samples)?;
+	flush_resampler(&mut resampler, &mut samples)?;
+
+	let channels = NonZeroU16::new(channels).context("Audio stream has no channels")?;
+	let sample_rate = NonZeroU32::new(sample_rate).context("Audio stream has no sample rate")?;
+
+	Ok(SamplesBuffer::new(channels, sample_rate, samples))
+}
+
 pub fn play_sound(sound_path: &str) -> Result<()> {
 	let path = Path::new(sound_path);
 
@@ -55,44 +161,17 @@ pub fn play_sound(sound_path: &str) -> Result<()> {
 		return Ok(());
 	}
 
-	let abs_path = std::fs::canonicalize(path).context("Failed to get absolute path")?;
+	let sound = decode_sound(path)?;
 
-	gst::init().context("Failed to initialize GStreamer")?;
+	let mut sink =
+		DeviceSinkBuilder::open_default_sink().context("Failed to open default audio output")?;
 
-	let path_str = abs_path
-		.to_str()
-		.ok_or_else(|| anyhow::anyhow!("Invalid path"))?;
+	sink.log_on_drop(false);
 
-	let pipeline = gst::parse::launch(&format!(
-		"filesrc location=\"{}\" ! decodebin ! audioconvert ! audioresample ! autoaudiosink",
-		path_str
-	))
-	.context("Failed to create GStreamer pipeline")?;
+	let player = Player::connect_new(sink.mixer());
+	player.append(sound);
 
-	pipeline
-		.set_state(gst::State::Playing)
-		.context("Failed to set pipeline to playing")?;
-
-	let bus = pipeline.bus().context("Failed to get bus")?;
-
-	for msg in bus.iter_timed(gst::ClockTime::NONE) {
-		use gst::MessageView;
-
-		match msg.view() {
-			MessageView::Eos(..) => break,
-			MessageView::Error(err) => {
-				pipeline.set_state(gst::State::Null)?;
-				anyhow::bail!(
-					"GStreamer error: {} ({})",
-					err.error(),
-					err.debug().map(|s| s.to_string()).unwrap_or_default()
-				);
-			}
-			_ => (),
-		}
-	}
-
-	pipeline.set_state(gst::State::Null)?;
+	player.sleep_until_end();
 
 	Ok(())
 }
