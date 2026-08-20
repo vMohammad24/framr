@@ -30,7 +30,7 @@ Area selection, annotations, recording, and uploads.
 
 - **Record** your entire screen, monitor or area, running it again will stop the recording with support for `--duration`.
 
-- **Upload**: images using any ShareX/iShare compatiable uploader, [nest.rip](https://nest.rip/) is recommended.
+- **Upload** images using any ShareX/iShare compatiable uploader, [nest.rip](https://nest.rip/) is recommended.
 
 ## Quick start
 
