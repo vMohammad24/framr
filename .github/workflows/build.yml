@@ -41,7 +41,7 @@ jobs:
   package:
     runs-on: ubuntu-latest
     container:
-      image: debian:bookworm
+      image: debian:sid
 
     steps:
       - name: Checkout code
