@@ -12,27 +12,25 @@ Screenshot, annotate, record, upload.
 
 </div>
 
-FramR is a screenshot and screen-recording CLI for Wayland, written in Rust. Select an area, blur out your secrets, and the link ends up in your clipboard when you're done.
+FramR is a screenshot and screen-recording tool for Wayland, written in Rust.
 
-Works on wlroots/scenefx compositors (Hyprland, Sway, River, ...) and KDE Plasma on Wayland. No X11, no GNOME.
+Works on wlroots/scenefx compositors (Hyprland, Sway, River, ...) and KDE Plasma on Wayland.
 
 ## Demo
 
 https://github.com/user-attachments/assets/f2244b75-c37a-4a73-a58d-81b44587577b
 
-Area selection, annotations, recording, and instant uploads.
+Area selection, annotations, recording, and uploads.
 
 ## Features
 
-**Capture.** Full screen, a specific monitor, or area selection across multiple monitors. Re-shoot the last selected region with `--last`.
+- **Capture** your screen, monitor (-s) or area (-a).
 
-**Annotate.** Arrows, text, highlights, circles, rectangles, numbered markers, blur and pixelate for sensitive info. Undo/redo and custom colors work in the selection overlay itself, no separate editor or program.
+- **Annotate** your images before it is even captured, with abilities for: blurring, pixelating, drawing and more.
 
-**Record.** Run once to start, again to stop, or set a fixed length with `--duration`. Encodes to H.264, AV1 or VP9, outputs MP4, MKV or WebM, and supports VA-API and NVIDIA NVENC hardware encoding.
+- **Record** your entire screen, monitor or area, running it again will stop the recording with support for `--duration`.
 
-**Upload.** Any ShareX (`.sxcu`) or iShare (`.iscu`) compatible host works. Import configs from a file, URL, or a `framr://` deeplink. The URL lands in your clipboard when the upload finishes.
-
-**Script.** CLI with straightforward flags. Pipe files or stdin to `framr upload`. Bind it to a key and boom, it works. Clipboard copy, desktop notifications, upload sounds, PNG/JPEG/WebP output, filenames with patterns, and an interactive config wizard to easily configure everything.
+- **Upload**: images using any ShareX/iShare compatiable uploader, [nest.rip](https://nest.rip/) is recommended.
 
 ## Quick start
 
@@ -40,9 +38,9 @@ Area selection, annotations, recording, and instant uploads.
 framr -a                    # select an area, annotate, save
 framr -a -c                 # select an area, copy to clipboard
 framr -a -c -o ~/Pictures   # select an area, save it there and copy it
-framr -l                    # re-shoot the last selected region
+framr -l                    # re-take last selected region
 framr -s 0                  # shoot monitor 0
-framr -r                    # record a selected region (run again to stop)
+framr -r                    # record a region (run again to stop)
 framr -s 0 -r               # record monitor 0
 framr -s 0 -r --duration 10 # record monitor 0 for 10 seconds
 framr --delay 3 -o -        # wait 3 seconds, write the PNG to stdout
@@ -74,8 +72,6 @@ nix.settings = {
 ```
 
 #### Home Manager
-
-FramR ships a Home Manager module so your whole setup, uploaders included, all living in your Nix config:
 
 ```nix
 # flake.nix
@@ -142,8 +138,8 @@ Building or running the raw binary needs: `wayland`, `libxkbcommon`, `cairo`, `p
 Bring your existing ShareX/iShare host config:
 
 ```bash
-framr config import my-host.sxcu                  # from a file
-framr config import https://example.com/host.sxcu # from a URL
+framr config import my-host.sxcu                    # from a file
+framr config import https://example.com/host.sxcu   # from a URL
 ```
 
 Or if you own a host, one-click imports via `framr://` deeplinks: either a direct link to a config or the config itself, base64-encoded.
@@ -162,7 +158,7 @@ framr config protocol
 
 ## Contributing
 
-Want to report a bug or implement a new feature? Open an issue or send a pull request.
+Want to report a bug or implement a new feature? Open an issue or a pull request.
 
 ## License
 
