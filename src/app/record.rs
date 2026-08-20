@@ -51,9 +51,11 @@ pub fn record(
 	let conn = FramrConnection::new()?;
 	let recording_config = get_recording_config(cli, cfg);
 	if recording_config.container == libframr::ContainerFormat::WebM
-		&& recording_config.encoder != libframr::VideoEncoder::AV1
-	{
-		anyhow::bail!("The webm container only supports the av1 encoder (use --encoder av1)");
+		&& !matches!(
+			recording_config.encoder,
+			libframr::VideoEncoder::AV1 | libframr::VideoEncoder::VP9
+		) {
+		anyhow::bail!("webm only supports av1 or vp9 encoder (use --encoder av1/vp9)");
 	}
 
 	let ext = recording_config.container.as_str();

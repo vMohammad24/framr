@@ -164,6 +164,7 @@ impl ConfigEnum for libframr::VideoEncoder {
 		match self {
 			Self::H264 => "H.264",
 			Self::AV1 => "AV1",
+			Self::VP9 => "VP9",
 		}
 	}
 }

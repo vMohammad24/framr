@@ -28,7 +28,7 @@ Area selection, annotations, recording, and instant uploads.
 
 **Annotate.** Arrows, text, highlights, circles, rectangles, numbered markers, blur and pixelate for sensitive info. Undo/redo and custom colors work in the selection overlay itself, no separate editor or program.
 
-**Record.** Run once to start, again to stop, or set a fixed length with `--duration`. Encodes to H264 or AV1, outputs MP4, MKV or WebM, and supports VAAPI hardware encoding.
+**Record.** Run once to start, again to stop, or set a fixed length with `--duration`. Encodes to H.264, AV1 or VP9, outputs MP4, MKV or WebM, and supports VA-API and NVIDIA NVENC hardware encoding.
 
 **Upload.** Any ShareX (`.sxcu`) or iShare (`.iscu`) compatible host works. Import configs from a file, URL, or a `framr://` deeplink. The URL lands in your clipboard when the upload finishes.
 

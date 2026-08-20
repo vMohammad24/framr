@@ -21,7 +21,7 @@ use crate::transform::apply_transform;
 use crate::{Frame, FrameData};
 
 fn select_recording_device(mut config: RecordingConfig) -> Result<RecordingConfig> {
-	if config.backend != crate::EncoderBackend::Software {
+	if matches!(config.backend, crate::EncoderBackend::Vaapi | crate::EncoderBackend::Auto) {
 		match crate::gpu::render_node(config.vaapi_device.as_deref()) {
 			Ok(path) => config.vaapi_device = Some(path),
 			Err(error) if config.backend == crate::EncoderBackend::Vaapi => return Err(error),
@@ -214,7 +214,10 @@ impl CaptureBackend for WlrBackend {
 			.clone();
 		let output_info = output.clone();
 		let dmabuf_device = recording_config.vaapi_device.clone();
-		let enable_dmabuf = recording_config.backend != crate::EncoderBackend::Software
+		let enable_dmabuf = matches!(
+			recording_config.backend,
+			crate::EncoderBackend::Vaapi | crate::EncoderBackend::Auto
+		)
 			&& output.transform == crate::Transform::Normal;
 
 		let error_sender = frame_sender.clone();

@@ -80,10 +80,36 @@ impl VideoWriter {
 		}
 		ffmpeg::init().context("failed to initialize FFmpeg")?;
 		match config.backend {
-			EncoderBackend::Software => Self::new_with_backend(path, first_frame, config, false),
-			EncoderBackend::Vaapi => Self::new_with_backend(path, first_frame, config, true),
-			EncoderBackend::Auto => Self::new_with_backend(path, first_frame, config, true)
-				.or_else(|_| Self::new_with_backend(path, first_frame, config, false)),
+			EncoderBackend::Software => {
+				Self::new_with_backend(path, first_frame, config, EncoderBackend::Software)
+			}
+			EncoderBackend::Vaapi => {
+				Self::new_with_backend(path, first_frame, config, EncoderBackend::Vaapi)
+			}
+			EncoderBackend::Nvenc => {
+				Self::new_with_backend(path, first_frame, config, EncoderBackend::Nvenc)
+			}
+			EncoderBackend::Auto => Self::new_with_backend(
+				path,
+				first_frame,
+				config,
+				EncoderBackend::Vaapi,
+			)
+			.or_else(|_| {
+				if config.encoder == VideoEncoder::VP9 {
+					Self::new_with_backend(path, first_frame, config, EncoderBackend::Software)
+				} else {
+					Self::new_with_backend(path, first_frame, config, EncoderBackend::Nvenc)
+						.or_else(|_| {
+							Self::new_with_backend(
+								path,
+								first_frame,
+								config,
+								EncoderBackend::Software,
+							)
+						})
+				}
+			}),
 		}
 	}
 
@@ -91,8 +117,9 @@ impl VideoWriter {
 		path: &Path,
 		first_frame: &Frame,
 		config: &RecordingConfig,
-		use_vaapi: bool,
+		backend: EncoderBackend,
 	) -> Result<Self> {
+		let use_vaapi = backend == EncoderBackend::Vaapi;
 		let (visible_width, visible_height) = output_size(first_frame);
 		let visible_width = visible_width.max(1);
 		let visible_height = visible_height.max(1);
@@ -100,21 +127,38 @@ impl VideoWriter {
 		let height = align_chroma(visible_height.max(2));
 		let ten_bit = is_ten_bit(first_frame.format.format);
 		let vaapi_format = if ten_bit { Pixel::P010LE } else { Pixel::NV12 };
-		let encoder_format = match (use_vaapi, config.encoder, ten_bit) {
-			(true, _, _) => Pixel::VAAPI,
-			(false, VideoEncoder::H264, false) => Pixel::NV12,
-			(false, VideoEncoder::H264, true) => Pixel::YUV420P10LE,
-			(false, VideoEncoder::AV1, false) => Pixel::YUV420P,
-			(false, VideoEncoder::AV1, true) => Pixel::YUV420P10LE,
+		let encoder_format = match (backend, config.encoder, ten_bit) {
+			(EncoderBackend::Vaapi, _, _) => Pixel::VAAPI,
+			(EncoderBackend::Nvenc, _, false) => Pixel::NV12,
+			(EncoderBackend::Nvenc, _, true) => Pixel::P010LE,
+			(EncoderBackend::Software, VideoEncoder::H264, false) => Pixel::NV12,
+			(EncoderBackend::Software, VideoEncoder::H264, true) => Pixel::YUV420P10LE,
+			(EncoderBackend::Software, VideoEncoder::AV1, false) => Pixel::YUV420P,
+			(EncoderBackend::Software, VideoEncoder::AV1, true) => Pixel::YUV420P10LE,
+			(EncoderBackend::Software, VideoEncoder::VP9, false) => Pixel::YUV420P,
+			(EncoderBackend::Software, VideoEncoder::VP9, true) => Pixel::YUV420P10LE,
+			(EncoderBackend::Auto, _, _) => {
+				return Err(anyhow!("automatic backend must be resolved before configuring encoder"));
+			}
 		};
-		let codec_name = match (use_vaapi, config.encoder) {
-			(true, VideoEncoder::H264) => "h264_vaapi",
-			(true, VideoEncoder::AV1) => "av1_vaapi",
-			(false, VideoEncoder::H264) => "libx264",
-			(false, VideoEncoder::AV1) => ["libsvtav1", "librav1e", "libaom-av1"]
+		let codec_name = match (backend, config.encoder) {
+			(EncoderBackend::Vaapi, VideoEncoder::H264) => "h264_vaapi",
+			(EncoderBackend::Vaapi, VideoEncoder::AV1) => "av1_vaapi",
+			(EncoderBackend::Vaapi, VideoEncoder::VP9) => "vp9_vaapi",
+			(EncoderBackend::Nvenc, VideoEncoder::H264) => "h264_nvenc",
+			(EncoderBackend::Nvenc, VideoEncoder::AV1) => "av1_nvenc",
+			(EncoderBackend::Nvenc, VideoEncoder::VP9) => {
+				return Err(anyhow!("NVENC does not support VP9 encoding"));
+			}
+			(EncoderBackend::Software, VideoEncoder::H264) => "libx264",
+			(EncoderBackend::Software, VideoEncoder::AV1) => ["libsvtav1", "librav1e", "libaom-av1"]
 				.into_iter()
 				.find(|name| ffmpeg::encoder::find_by_name(name).is_some())
 				.ok_or_else(|| anyhow!("no FFmpeg AV1 software encoder is available"))?,
+			(EncoderBackend::Software, VideoEncoder::VP9) => "libvpx-vp9",
+			(EncoderBackend::Auto, _) => {
+				return Err(anyhow!("automatic backend must be resolved before opening encoder"));
+			}
 		};
 		let codec = ffmpeg::encoder::find_by_name(codec_name)
 			.ok_or_else(|| anyhow!("FFmpeg encoder {codec_name} is unavailable"))?;
@@ -144,20 +188,26 @@ impl VideoWriter {
 		}
 
 		let mut options = Dictionary::new();
-		if !use_vaapi {
-			match config.encoder {
-				VideoEncoder::H264 => {
-					options.set("preset", config.speed.software_preset());
-					options.set("tune", config.tune.as_ref());
-				}
-				VideoEncoder::AV1 => match codec_name {
-					"libsvtav1" => options.set("preset", &config.speed.av1_preset().to_string()),
-					"librav1e" => {
-						options.set("speed", &config.speed.av1_preset().min(10).to_string())
-					}
-					_ => options.set("cpu-used", &config.speed.av1_preset().min(8).to_string()),
-				},
+		match (backend, config.encoder) {
+			(EncoderBackend::Nvenc, VideoEncoder::H264 | VideoEncoder::AV1) => {
+				options.set("preset", config.speed.nvenc_preset());
 			}
+			(EncoderBackend::Software, VideoEncoder::H264) => {
+				options.set("preset", config.speed.software_preset());
+				options.set("tune", config.tune.as_ref());
+			}
+			(EncoderBackend::Software, VideoEncoder::AV1) => match codec_name {
+				"libsvtav1" => options.set("preset", &config.speed.av1_preset().to_string()),
+				"librav1e" => {
+					options.set("speed", &config.speed.av1_preset().min(10).to_string())
+				}
+				_ => options.set("cpu-used", &config.speed.av1_preset().min(8).to_string()),
+			},
+			(EncoderBackend::Software, VideoEncoder::VP9) => {
+				options.set("deadline", "good");
+				options.set("cpu-used", &config.speed.vp9_cpu_used().to_string());
+			}
+			_ => {}
 		}
 
 		let backend = if use_vaapi {

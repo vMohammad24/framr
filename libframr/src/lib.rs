@@ -103,6 +103,7 @@ pub enum EncoderBackend {
 	Auto,
 	Software,
 	Vaapi,
+	Nvenc,
 }
 
 #[derive(
@@ -127,6 +128,7 @@ pub enum VideoEncoder {
 	H264,
 	#[strum(to_string = "av1", serialize = "rav1")]
 	AV1,
+	VP9,
 }
 
 #[derive(
@@ -192,6 +194,32 @@ pub enum EncoderSpeed {
 }
 
 impl EncoderSpeed {
+	pub fn vp9_cpu_used(self) -> u8 {
+		match self {
+			Self::Ultrafast => 8,
+			Self::Superfast => 7,
+			Self::Veryfast => 6,
+			Self::Faster => 5,
+			Self::Fast => 4,
+			Self::Medium => 3,
+			Self::Slow => 2,
+			Self::Slower => 1,
+			Self::Veryslow | Self::Placebo => 0,
+		}
+	}
+
+	pub fn nvenc_preset(self) -> &'static str {
+		match self {
+			Self::Ultrafast => "p1",
+			Self::Superfast => "p2",
+			Self::Veryfast => "p3",
+			Self::Faster => "p4",
+			Self::Fast => "p5",
+			Self::Medium => "p6",
+			Self::Slow | Self::Slower | Self::Veryslow | Self::Placebo => "p7",
+		}
+	}
+
 	pub fn software_preset(self) -> &'static str {
 		self.into()
 	}

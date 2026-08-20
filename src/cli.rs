@@ -57,7 +57,7 @@ pub struct Cli {
 	#[arg(short, long)]
 	pub record: bool,
 
-	/// Video encoder (h264/x264, av1/rav1)
+	/// Video encoder (h264/x264, av1/rav1, vp9)
 	#[arg(long)]
 	pub encoder: Option<VideoEncoder>,
 
@@ -65,7 +65,7 @@ pub struct Cli {
 	#[arg(long)]
 	pub container: Option<libframr::ContainerFormat>,
 
-	/// Encoder backend (auto, software, vaapi)
+	/// Encoder backend (auto, software, vaapi, nvenc)
 	#[arg(long)]
 	pub encoder_backend: Option<libframr::EncoderBackend>,
 
