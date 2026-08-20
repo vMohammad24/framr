@@ -168,6 +168,12 @@ impl ConfigEnum for libframr::VideoEncoder {
 	}
 }
 
+impl ConfigEnum for libframr::ContainerFormat {
+	fn label(self) -> &'static str {
+		self.as_str()
+	}
+}
+
 impl ConfigEnum for libframr::EncoderBackend {
 	fn label(self) -> &'static str {
 		self.into()

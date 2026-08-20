@@ -575,6 +575,7 @@ pub fn display_recording_settings(cfg: &AppConfig) {
 	println!();
 	println!("{}", style("Recording Settings:").cyan().bold());
 	print_setting("Video Encoder:", cfg.recording.encoder.as_ref());
+	print_setting("Container:", cfg.recording.container.as_str());
 	print_setting("Encoder Backend:", cfg.recording.backend.as_ref());
 	print_setting("Bitrate:", format!("{} kbps", cfg.recording.bitrate));
 	print_setting("Keyframe Interval:", cfg.recording.keyframe_interval);
@@ -894,6 +895,7 @@ pub fn modify_recording_config(cfg: &mut AppConfig) -> Result<()> {
 		cfg.recording,
 		[
 			encoder: "Video Encoder" => enum,
+			container: "Container" => enum,
 			backend: "Encoder Backend" => enum,
 			bitrate: "Bitrate (kbps)" => nonzero_num,
 			keyframe_interval: "Keyframe Interval" => nonzero_num,
