@@ -138,7 +138,9 @@ impl VideoWriter {
 			(EncoderBackend::Software, VideoEncoder::VP9, false) => Pixel::YUV420P,
 			(EncoderBackend::Software, VideoEncoder::VP9, true) => Pixel::YUV420P10LE,
 			(EncoderBackend::Auto, _, _) => {
-				return Err(anyhow!("automatic backend must be resolved before configuring encoder"));
+				return Err(anyhow!(
+					"automatic backend must be resolved before configuring encoder"
+				));
 			}
 		};
 		let codec_name = match (backend, config.encoder) {
@@ -151,13 +153,17 @@ impl VideoWriter {
 				return Err(anyhow!("NVENC does not support VP9 encoding"));
 			}
 			(EncoderBackend::Software, VideoEncoder::H264) => "libx264",
-			(EncoderBackend::Software, VideoEncoder::AV1) => ["libsvtav1", "librav1e", "libaom-av1"]
-				.into_iter()
-				.find(|name| ffmpeg::encoder::find_by_name(name).is_some())
-				.ok_or_else(|| anyhow!("no FFmpeg AV1 software encoder is available"))?,
+			(EncoderBackend::Software, VideoEncoder::AV1) => {
+				["libsvtav1", "librav1e", "libaom-av1"]
+					.into_iter()
+					.find(|name| ffmpeg::encoder::find_by_name(name).is_some())
+					.ok_or_else(|| anyhow!("no FFmpeg AV1 software encoder is available"))?
+			}
 			(EncoderBackend::Software, VideoEncoder::VP9) => "libvpx-vp9",
 			(EncoderBackend::Auto, _) => {
-				return Err(anyhow!("automatic backend must be resolved before opening encoder"));
+				return Err(anyhow!(
+					"automatic backend must be resolved before opening encoder"
+				));
 			}
 		};
 		let codec = ffmpeg::encoder::find_by_name(codec_name)
@@ -198,9 +204,7 @@ impl VideoWriter {
 			}
 			(EncoderBackend::Software, VideoEncoder::AV1) => match codec_name {
 				"libsvtav1" => options.set("preset", &config.speed.av1_preset().to_string()),
-				"librav1e" => {
-					options.set("speed", &config.speed.av1_preset().min(10).to_string())
-				}
+				"librav1e" => options.set("speed", &config.speed.av1_preset().min(10).to_string()),
 				_ => options.set("cpu-used", &config.speed.av1_preset().min(8).to_string()),
 			},
 			(EncoderBackend::Software, VideoEncoder::VP9) => {
@@ -399,6 +403,7 @@ fn run_frame_encoding_pipeline(
 
 pub(crate) use pipewire::run_pipewire_encoding_pipeline;
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_composite_encoding_pipeline(
 	output_path: PathBuf,
 	region: LogicalRegion,

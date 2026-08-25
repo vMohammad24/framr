@@ -22,6 +22,7 @@ pub(crate) struct VaapiFrames {
 }
 
 impl VaapiFrames {
+	#[allow(clippy::too_many_arguments)]
 	pub(crate) fn new(
 		encoder: &mut ffmpeg::encoder::video::Video,
 		device_path: Option<&Path>,
@@ -176,6 +177,7 @@ impl VaapiFrames {
 		Ok(())
 	}
 
+	#[allow(clippy::too_many_arguments)]
 	fn configure_vpp(
 		&mut self,
 		source_format: Pixel,

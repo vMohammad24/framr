@@ -51,8 +51,8 @@ impl WlrBackend {
 		let frame_format = state
 			.formats
 			.first()
-			.ok_or(FramrError::NoSupportedBufferFormat)?
-			.clone();
+			.ok_or(FramrError::NoSupportedBufferFormat)?;
+		let frame_format = *frame_format;
 
 		let shm: WlShm = self.globals.bind(&qh, 1..=1, ())?;
 		let wl_fmt = pixel_format_to_wl_shm(frame_format.format);

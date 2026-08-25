@@ -21,7 +21,10 @@ use crate::transform::apply_transform;
 use crate::{Frame, FrameData};
 
 fn select_recording_device(mut config: RecordingConfig) -> Result<RecordingConfig> {
-	if matches!(config.backend, crate::EncoderBackend::Vaapi | crate::EncoderBackend::Auto) {
+	if matches!(
+		config.backend,
+		crate::EncoderBackend::Vaapi | crate::EncoderBackend::Auto
+	) {
 		match crate::gpu::render_node(config.vaapi_device.as_deref()) {
 			Ok(path) => config.vaapi_device = Some(path),
 			Err(error) if config.backend == crate::EncoderBackend::Vaapi => return Err(error),
@@ -133,8 +136,8 @@ impl CaptureBackend for WlrBackend {
 			let frame_format = slot
 				.formats
 				.first()
-				.ok_or(FramrError::NoSupportedBufferFormat)?
-				.clone();
+				.ok_or(FramrError::NoSupportedBufferFormat)?;
+			let frame_format = *frame_format;
 
 			let wl_fmt = pixel_format_to_wl_shm(frame_format.format);
 			let (buffer, file, _) = allocate_shm_buffer(
@@ -217,8 +220,7 @@ impl CaptureBackend for WlrBackend {
 		let enable_dmabuf = matches!(
 			recording_config.backend,
 			crate::EncoderBackend::Vaapi | crate::EncoderBackend::Auto
-		)
-			&& output.transform == crate::Transform::Normal;
+		) && output.transform == crate::Transform::Normal;
 
 		let error_sender = frame_sender.clone();
 		std::thread::spawn(move || {
@@ -366,6 +368,10 @@ impl CaptureBackend for WlrBackend {
 }
 
 impl WlrBackend {
+	#[expect(
+		clippy::too_many_arguments,
+		reason = "capture loop inputs mirror the Wayland request and its channel endpoints"
+	)]
 	fn run_capture_loop(
 		conn: &wayland_client::Connection,
 		wl_output: &wayland_client::protocol::wl_output::WlOutput,
@@ -470,8 +476,8 @@ impl WlrBackend {
 			} else {
 				state.formats.first()
 			}
-			.ok_or(FramrError::NoSupportedBufferFormat)?
-			.clone();
+			.ok_or(FramrError::NoSupportedBufferFormat)?;
+			let frame_format = *frame_format;
 
 			if let Some(ref f) = pool_format {
 				if f.format != frame_format.format
@@ -481,7 +487,7 @@ impl WlrBackend {
 					return Err(FramrError::ResolutionChanged.into());
 				}
 			} else {
-				pool_format = Some(frame_format.clone());
+				pool_format = Some(frame_format);
 			}
 
 			let buffer_idx = if use_dma {

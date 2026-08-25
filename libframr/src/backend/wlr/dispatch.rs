@@ -58,34 +58,31 @@ impl Dispatch<WlRegistry, ()> for OutputEnumState {
 		qh: &QueueHandle<Self>,
 	) {
 		use wayland_client::protocol::wl_registry::Event as RegistryEvent;
-		match event {
-			RegistryEvent::Global {
-				name,
-				interface,
-				version,
-			} => {
-				if interface == "wl_output" && version >= 2 {
-					let idx = state.outputs.len();
-					let output = registry.bind::<WlOutput, _, Self>(name, version.min(4), qh, idx);
-					state.outputs.push(PartialOutput {
-						wl_output: output,
-						name: String::new(),
-						description: String::new(),
-						physical_size: Size {
-							width: 0,
-							height: 0,
-						},
-						transform: WlTransform::Normal,
-						scale: 1,
-						logical_position: Position { x: 0, y: 0 },
-						logical_size: Size {
-							width: 0,
-							height: 0,
-						},
-					});
-				}
-			}
-			_ => {}
+		if let RegistryEvent::Global {
+			name,
+			interface,
+			version,
+		} = event && interface == "wl_output"
+			&& version >= 2
+		{
+			let idx = state.outputs.len();
+			let output = registry.bind::<WlOutput, _, Self>(name, version.min(4), qh, idx);
+			state.outputs.push(PartialOutput {
+				wl_output: output,
+				name: String::new(),
+				description: String::new(),
+				physical_size: Size {
+					width: 0,
+					height: 0,
+				},
+				transform: WlTransform::Normal,
+				scale: 1,
+				logical_position: Position { x: 0, y: 0 },
+				logical_size: Size {
+					width: 0,
+					height: 0,
+				},
+			});
 		}
 	}
 }
