@@ -27,16 +27,22 @@ impl ToolBehavior for SelectTool {
 		_local_pos: (f64, f64),
 		_button: MouseButton,
 		_ctrl_pressed: bool,
-		_config: &SelectionConfig,
+		config: &SelectionConfig,
 	) {
-		let hovered_win = crate::selection::window::get_window_at_pos(global_pos, &state.windows);
-
-		if hovered_win.is_some() {
-			state.start = Some(global_pos);
+		if config.multi_region_mode
+			&& let Some(idx) = state.selected_region
+			&& let Some(handle) = state.regions[idx].handle_at(global_pos, 7.0)
+		{
+			state.begin_region_history(idx);
+			state.region_interaction = Some(RegionInteraction::Resize(handle));
+			state.original_region = Some(state.regions[idx]);
 			state.move_start_point = Some(global_pos);
-			state.end = Some(global_pos);
 			state.is_dragging = true;
-		} else {
+			return;
+		}
+
+		let hovered_win = crate::selection::window::get_window_at_pos(global_pos, &state.windows);
+		if hovered_win.is_none() {
 			let hit_idx = state
 				.annotations
 				.iter()

@@ -149,10 +149,18 @@ impl SelectionState {
 			if self.is_dragging {
 				self.is_dragging = false;
 				if self.active_tool == Tool::Select {
+					if let (Some(idx), Some(original)) =
+						(self.selected_region, self.original_region)
+					{
+						self.regions[idx] = original;
+					}
 					self.start = None;
 					self.end = None;
+					self.region_interaction = None;
+					self.original_region = None;
+					self.discard_pending_region_history();
 				} else {
-					self.annotations.pop();
+					self.discard_pending_annotation_history();
 				}
 			} else {
 				self.cancelled = true;
@@ -166,9 +174,9 @@ impl SelectionState {
 		let mouse_btn = MouseButton::from_raw(button);
 		if mouse_btn == MouseButton::Left {
 			if self.is_moving_annotation {
+				self.finish_annotation_move();
 				self.is_moving_annotation = false;
 				self.move_start_point = None;
-				self.original_points = None;
 			}
 			if self.is_dragging {
 				self.is_dragging = false;
@@ -176,6 +184,7 @@ impl SelectionState {
 				self.active_tool
 					.behavior()
 					.on_release(self, global_pos, mouse_btn, &config);
+				self.commit_annotation_history();
 			}
 		}
 		self.dirty = true;
@@ -185,11 +194,7 @@ impl SelectionState {
 		self.current = global_pos;
 
 		if self.is_moving_annotation {
-			if let (Some(start), Some(orig), Some(idx)) = (
-				self.move_start_point,
-				&self.original_points,
-				self.selected_annotation,
-			) {
+			if let (Some(start), Some(idx)) = (self.move_start_point, self.selected_annotation) {
 				let mut dx = global_pos.0 - start.0;
 				let mut dy = global_pos.1 - start.1;
 
@@ -201,10 +206,13 @@ impl SelectionState {
 					}
 				}
 
-				for (i, p) in self.annotations[idx].points.iter_mut().enumerate() {
-					p.0 = orig[i].0 + dx;
-					p.1 = orig[i].1 + dy;
+				let step_x = dx - self.annotation_move_delta.0;
+				let step_y = dy - self.annotation_move_delta.1;
+				for point in &mut self.annotations[idx].points {
+					point.0 += step_x;
+					point.1 += step_y;
 				}
+				self.annotation_move_delta = (dx, dy);
 			}
 		} else {
 			self.active_tool
@@ -214,41 +222,206 @@ impl SelectionState {
 		self.dirty = true;
 	}
 
-	pub fn push_undo(&mut self) {
-		self.undo_stack.push_back(self.annotations.clone());
-		if self.undo_stack.len() > 50 {
-			self.undo_stack.pop_front();
-		}
+	fn push_history(&mut self, action: HistoryAction) {
+		Self::push_bounded(&mut self.undo_stack, action);
 		self.redo_stack.clear();
 	}
 
 	pub fn undo(&mut self) {
-		if let Some(prev) = self.undo_stack.pop_back() {
-			self.redo_stack.push_back(self.annotations.clone());
-			if self.redo_stack.len() > 50 {
-				self.redo_stack.pop_front();
-			}
-			self.annotations = prev;
-			self.dirty = true;
+		if let Some(action) = self.undo_stack.pop_back()
+			&& let Some(inverse) = self.apply_history(action)
+		{
+			Self::push_bounded(&mut self.redo_stack, inverse);
+			self.reset_interaction_state();
 		}
 	}
 
 	pub fn redo(&mut self) {
-		if let Some(next) = self.redo_stack.pop_back() {
-			self.undo_stack.push_back(self.annotations.clone());
-			if self.undo_stack.len() > 50 {
-				self.undo_stack.pop_front();
-			}
-			self.annotations = next;
-			self.dirty = true;
+		if let Some(action) = self.redo_stack.pop_back()
+			&& let Some(inverse) = self.apply_history(action)
+		{
+			Self::push_bounded(&mut self.undo_stack, inverse);
+			self.reset_interaction_state();
 		}
+	}
+
+	pub fn begin_annotation_move(&mut self) {
+		self.annotation_move_delta = (0.0, 0.0);
+	}
+
+	fn finish_annotation_move(&mut self) {
+		let delta = self.selected_annotation.map(|index| {
+			(
+				index,
+				self.annotation_move_delta.0,
+				self.annotation_move_delta.1,
+			)
+		});
+		self.annotation_move_delta = (0.0, 0.0);
+
+		if let Some((index, dx, dy)) = delta
+			&& (dx != 0.0 || dy != 0.0)
+		{
+			self.push_history(HistoryAction::TranslateAnnotation {
+				index,
+				dx: -dx,
+				dy: -dy,
+			});
+		}
+	}
+
+	pub fn add_annotation(&mut self, annotation: Annotation) -> usize {
+		let index = self.annotations.len();
+		self.annotations.push(annotation);
+		self.push_history(HistoryAction::RemoveAnnotation { index });
+		index
+	}
+
+	pub fn begin_annotation_history(&mut self, annotation: Annotation) -> usize {
+		let index = self.annotations.len();
+		self.annotations.push(annotation);
+		self.pending_annotation_history = Some(HistoryAction::RemoveAnnotation { index });
+		index
+	}
+
+	fn commit_annotation_history(&mut self) {
+		if let Some(action) = self.pending_annotation_history.take() {
+			self.push_history(action);
+		}
+	}
+
+	fn discard_pending_annotation_history(&mut self) {
+		if let Some(HistoryAction::RemoveAnnotation { index }) =
+			self.pending_annotation_history.take()
+			&& index < self.annotations.len()
+		{
+			self.annotations.remove(index);
+			if self.selected_annotation == Some(index) {
+				self.selected_annotation = None;
+			}
+		}
+	}
+
+	pub fn remove_annotation(&mut self, index: usize) {
+		let annotation = self.annotations.remove(index);
+		self.push_history(HistoryAction::InsertAnnotation { index, annotation });
+	}
+
+	pub fn add_region(&mut self, region: SelectionRegion) -> usize {
+		let index = self.regions.len();
+		self.regions.push(region);
+		self.push_history(HistoryAction::RemoveRegion { index });
+		index
+	}
+
+	pub fn remove_region(&mut self, index: usize) {
+		let region = self.regions.remove(index);
+		self.push_history(HistoryAction::InsertRegion { index, region });
+	}
+
+	pub fn begin_region_history(&mut self, index: usize) {
+		self.pending_region_history = Some(HistoryAction::ReplaceRegion {
+			index,
+			region: self.regions[index],
+		});
+	}
+
+	pub fn commit_region_history(&mut self) {
+		if let Some(action) = self.pending_region_history.take() {
+			self.push_history(action);
+		}
+	}
+
+	pub fn discard_pending_region_history(&mut self) {
+		self.pending_region_history = None;
+	}
+
+	fn push_bounded(stack: &mut VecDeque<HistoryAction>, action: HistoryAction) {
+		stack.push_back(action);
+		if stack.len() > 50 {
+			stack.pop_front();
+		}
+	}
+
+	fn apply_history(&mut self, action: HistoryAction) -> Option<HistoryAction> {
+		match action {
+			HistoryAction::RemoveAnnotation { index } if index < self.annotations.len() => {
+				let annotation = self.annotations.remove(index);
+				Some(HistoryAction::InsertAnnotation { index, annotation })
+			}
+			HistoryAction::InsertAnnotation { index, annotation }
+				if index <= self.annotations.len() =>
+			{
+				self.annotations.insert(index, annotation);
+				Some(HistoryAction::RemoveAnnotation { index })
+			}
+			HistoryAction::TranslateAnnotation { index, dx, dy }
+				if index < self.annotations.len() =>
+			{
+				for point in &mut self.annotations[index].points {
+					point.0 += dx;
+					point.1 += dy;
+				}
+				Some(HistoryAction::TranslateAnnotation {
+					index,
+					dx: -dx,
+					dy: -dy,
+				})
+			}
+			HistoryAction::SwapAnnotations { first, second }
+				if first < self.annotations.len() && second < self.annotations.len() =>
+			{
+				self.annotations.swap(first, second);
+				Some(HistoryAction::SwapAnnotations { first, second })
+			}
+			HistoryAction::MoveAnnotation { from, to }
+				if from < self.annotations.len() && to < self.annotations.len() =>
+			{
+				let annotation = self.annotations.remove(from);
+				self.annotations.insert(to, annotation);
+				Some(HistoryAction::MoveAnnotation { from: to, to: from })
+			}
+			HistoryAction::RemoveRegion { index } if index < self.regions.len() => {
+				let region = self.regions.remove(index);
+				Some(HistoryAction::InsertRegion { index, region })
+			}
+			HistoryAction::InsertRegion { index, region } if index <= self.regions.len() => {
+				self.regions.insert(index, region);
+				Some(HistoryAction::RemoveRegion { index })
+			}
+			HistoryAction::ReplaceRegion { index, region } if index < self.regions.len() => {
+				let region = std::mem::replace(&mut self.regions[index], region);
+				Some(HistoryAction::ReplaceRegion { index, region })
+			}
+			_ => None,
+		}
+	}
+
+	fn reset_interaction_state(&mut self) {
+		self.selected_annotation = None;
+		self.selected_region = None;
+		self.is_moving_annotation = false;
+		self.region_interaction = None;
+		self.pending_annotation_history = None;
+		self.pending_region_history = None;
+		self.move_start_point = None;
+		self.annotation_move_delta = (0.0, 0.0);
+		self.original_region = None;
+		self.start = None;
+		self.end = None;
+		self.is_dragging = false;
+		self.editing_text_idx = None;
+		self.dirty = true;
 	}
 
 	pub fn move_selected_up(&mut self) {
 		if let Some(idx) = self.selected_annotation
 			&& idx < self.annotations.len() - 1
 		{
-			self.push_undo();
+			self.push_history(HistoryAction::SwapAnnotations {
+				first: idx,
+				second: idx + 1,
+			});
 			self.annotations.swap(idx, idx + 1);
 			self.selected_annotation = Some(idx + 1);
 			self.dirty = true;
@@ -259,7 +432,10 @@ impl SelectionState {
 		if let Some(idx) = self.selected_annotation
 			&& idx > 0
 		{
-			self.push_undo();
+			self.push_history(HistoryAction::SwapAnnotations {
+				first: idx,
+				second: idx - 1,
+			});
 			self.annotations.swap(idx, idx - 1);
 			self.selected_annotation = Some(idx - 1);
 			self.dirty = true;
@@ -270,7 +446,11 @@ impl SelectionState {
 		if let Some(idx) = self.selected_annotation
 			&& idx < self.annotations.len() - 1
 		{
-			self.push_undo();
+			let destination = self.annotations.len() - 1;
+			self.push_history(HistoryAction::MoveAnnotation {
+				from: destination,
+				to: idx,
+			});
 			let ann = self.annotations.remove(idx);
 			self.annotations.push(ann);
 			self.selected_annotation = Some(self.annotations.len() - 1);
@@ -282,7 +462,7 @@ impl SelectionState {
 		if let Some(idx) = self.selected_annotation
 			&& idx > 0
 		{
-			self.push_undo();
+			self.push_history(HistoryAction::MoveAnnotation { from: 0, to: idx });
 			let ann = self.annotations.remove(idx);
 			self.annotations.insert(0, ann);
 			self.selected_annotation = Some(0);
@@ -292,15 +472,29 @@ impl SelectionState {
 
 	pub fn duplicate_selected(&mut self) {
 		if let Some(idx) = self.selected_annotation {
-			self.push_undo();
 			let mut ann = self.annotations[idx].clone();
 			for p in &mut ann.points {
 				p.0 += 10.0;
 				p.1 += 10.0;
 			}
-			self.annotations.push(ann);
-			self.selected_annotation = Some(self.annotations.len() - 1);
+			self.selected_annotation = Some(self.add_annotation(ann));
 			self.dirty = true;
 		}
+	}
+
+	pub fn selection_bounds(&self) -> Option<SelectionRegion> {
+		let first = *self.regions.first()?;
+		Some(self.regions.iter().skip(1).fold(first, |bounds, region| {
+			SelectionRegion::new(
+				(
+					bounds.start.0.min(region.start.0),
+					bounds.start.1.min(region.start.1),
+				),
+				(
+					bounds.end.0.max(region.end.0),
+					bounds.end.1.max(region.end.1),
+				),
+			)
+		}))
 	}
 }

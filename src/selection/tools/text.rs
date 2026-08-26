@@ -39,16 +39,15 @@ impl ToolBehavior for TextTool {
 			return;
 		}
 
-		state.push_undo();
 		let color = state.config.annotation_color;
-		state.annotations.push(Annotation {
+		let index = state.add_annotation(Annotation {
 			tool: state.active_tool,
 			points: vec![global_pos],
 			text: Some(String::new()),
 			color,
 		});
-		state.editing_text_idx = Some(state.annotations.len() - 1);
-		state.selected_annotation = Some(state.annotations.len() - 1);
+		state.editing_text_idx = Some(index);
+		state.selected_annotation = Some(index);
 	}
 
 	fn draw(&self, cr: &Context, ann: &Annotation, output: &OutputInfo, _config: &SelectionConfig) {

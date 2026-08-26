@@ -11,11 +11,10 @@ pub(super) fn try_pick_annotation(state: &mut SelectionState, global_pos: (f64, 
 		.map(|(idx, _)| idx);
 
 	if let Some(idx) = hit_idx {
-		state.push_undo();
+		state.begin_annotation_move();
 		state.selected_annotation = Some(idx);
 		state.is_moving_annotation = true;
 		state.move_start_point = Some(global_pos);
-		state.original_points = Some(state.annotations[idx].points.clone());
 		true
 	} else {
 		false
@@ -23,9 +22,8 @@ pub(super) fn try_pick_annotation(state: &mut SelectionState, global_pos: (f64, 
 }
 
 pub(super) fn begin_annotation(state: &mut SelectionState, global_pos: (f64, f64)) {
-	state.push_undo();
 	let color = state.config.annotation_color;
-	state.annotations.push(Annotation {
+	state.begin_annotation_history(Annotation {
 		tool: state.active_tool,
 		points: vec![global_pos],
 		text: None,
