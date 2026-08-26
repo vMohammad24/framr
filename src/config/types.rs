@@ -376,6 +376,7 @@ pub struct SelectionConfig {
 	pub toolbar_item_width: f64,
 	pub toolbar_height: f64,
 	pub show_toolbar: bool,
+	pub multi_region_mode: bool,
 }
 
 impl Default for SelectionConfig {
@@ -396,6 +397,7 @@ impl Default for SelectionConfig {
 			toolbar_item_width: 50.0,
 			toolbar_height: 40.0,
 			show_toolbar: true,
+			multi_region_mode: false,
 		}
 	}
 }

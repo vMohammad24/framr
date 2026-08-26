@@ -72,19 +72,172 @@ pub struct Annotation {
 	pub color: Color,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SelectionRegion {
+	pub start: (f64, f64),
+	pub end: (f64, f64),
+}
+
+impl SelectionRegion {
+	pub fn new(start: (f64, f64), end: (f64, f64)) -> Self {
+		Self {
+			start: (start.0.min(end.0), start.1.min(end.1)),
+			end: (start.0.max(end.0), start.1.max(end.1)),
+		}
+	}
+
+	pub fn width(self) -> f64 {
+		self.end.0 - self.start.0
+	}
+
+	pub fn height(self) -> f64 {
+		self.end.1 - self.start.1
+	}
+
+	pub fn is_valid(self) -> bool {
+		self.width() > 0.0 && self.height() > 0.0
+	}
+
+	pub fn contains(self, point: (f64, f64)) -> bool {
+		point.0 >= self.start.0
+			&& point.0 <= self.end.0
+			&& point.1 >= self.start.1
+			&& point.1 <= self.end.1
+	}
+
+	pub fn translated(self, dx: f64, dy: f64) -> Self {
+		Self {
+			start: (self.start.0 + dx, self.start.1 + dy),
+			end: (self.end.0 + dx, self.end.1 + dy),
+		}
+	}
+
+	pub fn handle_positions(self) -> [(ResizeHandle, (f64, f64)); 8] {
+		let mid_x = (self.start.0 + self.end.0) / 2.0;
+		let mid_y = (self.start.1 + self.end.1) / 2.0;
+		[
+			(ResizeHandle::NorthWest, self.start),
+			(ResizeHandle::North, (mid_x, self.start.1)),
+			(ResizeHandle::NorthEast, (self.end.0, self.start.1)),
+			(ResizeHandle::East, (self.end.0, mid_y)),
+			(ResizeHandle::SouthEast, self.end),
+			(ResizeHandle::South, (mid_x, self.end.1)),
+			(ResizeHandle::SouthWest, (self.start.0, self.end.1)),
+			(ResizeHandle::West, (self.start.0, mid_y)),
+		]
+	}
+
+	pub fn handle_at(self, point: (f64, f64), radius: f64) -> Option<ResizeHandle> {
+		self.handle_positions()
+			.into_iter()
+			.find(|(_, handle)| {
+				(point.0 - handle.0).abs() <= radius && (point.1 - handle.1).abs() <= radius
+			})
+			.map(|(handle, _)| handle)
+	}
+
+	pub fn resized(self, handle: ResizeHandle, point: (f64, f64)) -> Self {
+		let (mut left, mut top) = self.start;
+		let (mut right, mut bottom) = self.end;
+
+		match handle {
+			ResizeHandle::NorthWest => {
+				left = point.0;
+				top = point.1;
+			}
+			ResizeHandle::North => top = point.1,
+			ResizeHandle::NorthEast => {
+				right = point.0;
+				top = point.1;
+			}
+			ResizeHandle::East => right = point.0,
+			ResizeHandle::SouthEast => {
+				right = point.0;
+				bottom = point.1;
+			}
+			ResizeHandle::South => bottom = point.1,
+			ResizeHandle::SouthWest => {
+				left = point.0;
+				bottom = point.1;
+			}
+			ResizeHandle::West => left = point.0,
+		}
+
+		Self::new((left, top), (right, bottom))
+	}
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResizeHandle {
+	NorthWest,
+	North,
+	NorthEast,
+	East,
+	SouthEast,
+	South,
+	SouthWest,
+	West,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegionInteraction {
+	Move,
+	Resize(ResizeHandle),
+}
+
+pub enum HistoryAction {
+	RemoveAnnotation {
+		index: usize,
+	},
+	InsertAnnotation {
+		index: usize,
+		annotation: Annotation,
+	},
+	TranslateAnnotation {
+		index: usize,
+		dx: f64,
+		dy: f64,
+	},
+	SwapAnnotations {
+		first: usize,
+		second: usize,
+	},
+	MoveAnnotation {
+		from: usize,
+		to: usize,
+	},
+	RemoveRegion {
+		index: usize,
+	},
+	InsertRegion {
+		index: usize,
+		region: SelectionRegion,
+	},
+	ReplaceRegion {
+		index: usize,
+		region: SelectionRegion,
+	},
+}
+
 pub struct SelectionState {
 	pub start: Option<(f64, f64)>,
 	pub end: Option<(f64, f64)>,
+	pub regions: Vec<SelectionRegion>,
+	pub selected_region: Option<usize>,
+	pub region_interaction: Option<RegionInteraction>,
+	pub original_region: Option<SelectionRegion>,
 	pub current: (f64, f64),
 	pub is_dragging: bool,
 	pub active_tool: Tool,
 	pub annotations: Vec<Annotation>,
-	pub undo_stack: VecDeque<Vec<Annotation>>,
-	pub redo_stack: VecDeque<Vec<Annotation>>,
+	pub undo_stack: VecDeque<HistoryAction>,
+	pub redo_stack: VecDeque<HistoryAction>,
+	pub pending_annotation_history: Option<HistoryAction>,
+	pub pending_region_history: Option<HistoryAction>,
 	pub selected_annotation: Option<usize>,
 	pub is_moving_annotation: bool,
 	pub move_start_point: Option<(f64, f64)>,
-	pub original_points: Option<Vec<(f64, f64)>>,
+	pub annotation_move_delta: (f64, f64),
 	pub finished: bool,
 	pub cancelled: bool,
 	pub last_surface_width: f64,
@@ -125,6 +278,7 @@ impl SelectionState {
 					if local_pos.0 >= tx && local_pos.0 <= tx + item_w {
 						self.active_tool = Tool::from_index(i);
 						self.selected_annotation = None;
+						self.selected_region = None;
 						self.dirty = true;
 						return;
 					}

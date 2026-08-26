@@ -885,6 +885,7 @@ pub fn modify_selection_config(cfg: &mut AppConfig) -> Result<()> {
 			toolbar_item_width: "Toolbar Item Width" => num,
 			toolbar_height: "Toolbar Height" => num,
 			show_toolbar: "Show Toolbar" => bool,
+			multi_region_mode: "Multi Region Mode" => bool,
 		]
 	)
 }

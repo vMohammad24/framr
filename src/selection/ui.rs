@@ -81,16 +81,22 @@ impl SelectionUI {
 			state: Arc::new(Mutex::new(SelectionState {
 				start: None,
 				end: None,
+				regions: Vec::new(),
+				selected_region: None,
+				region_interaction: None,
+				original_region: None,
 				current: (0.0, 0.0),
 				is_dragging: false,
 				active_tool: Tool::Select,
 				annotations: Vec::new(),
 				undo_stack: VecDeque::new(),
 				redo_stack: VecDeque::new(),
+				pending_annotation_history: None,
+				pending_region_history: None,
 				selected_annotation: None,
 				is_moving_annotation: false,
 				move_start_point: None,
-				original_points: None,
+				annotation_move_delta: (0.0, 0.0),
 				finished: false,
 				cancelled: false,
 				last_surface_width,
@@ -288,17 +294,20 @@ impl SelectionUI {
 		}
 
 		let state = self.state.lock().unwrap();
-		if state.cancelled || state.start.is_none() || state.end.is_none() {
+		if state.cancelled {
 			return Ok(None);
 		}
 
-		let (s_x, s_y) = state.start.unwrap();
-		let (e_x, e_y) = state.end.unwrap();
+		let Some(bounds) = state.selection_bounds() else {
+			return Ok(None);
+		};
 
-		let x = s_x.min(e_x) as i32;
-		let y = s_y.min(e_y) as i32;
-		let width = (s_x - e_x).abs() as u32;
-		let height = (s_y - e_y).abs() as u32;
+		let x = bounds.start.0.floor() as i32;
+		let y = bounds.start.1.floor() as i32;
+		let right = bounds.end.0.ceil() as i32;
+		let bottom = bounds.end.1.ceil() as i32;
+		let width = (right - x).max(0) as u32;
+		let height = (bottom - y).max(0) as u32;
 
 		if width == 0 || height == 0 {
 			return Ok(None);
@@ -317,35 +326,40 @@ impl SelectionUI {
 		let mut has_content = false;
 
 		for (info, img) in &self.outputs {
+			let mut base = img.clone();
+			graphics::apply_annotations(&mut base, &state.annotations, info, &state.config)?;
+
 			let out_x = info.logical_position.x;
 			let out_y = info.logical_position.y;
 			let out_w = info.logical_size.width as i32;
 			let out_h = info.logical_size.height as i32;
 
-			let intersect_x = x.max(out_x);
-			let intersect_y = y.max(out_y);
-			let intersect_x2 = (x + width as i32).min(out_x + out_w);
-			let intersect_y2 = (y + height as i32).min(out_y + out_h);
+			for selected in &state.regions {
+				let region_x = selected.start.0.floor() as i32;
+				let region_y = selected.start.1.floor() as i32;
+				let region_right = selected.end.0.ceil() as i32;
+				let region_bottom = selected.end.1.ceil() as i32;
+				let intersect_x = region_x.max(out_x);
+				let intersect_y = region_y.max(out_y);
+				let intersect_x2 = region_right.min(out_x + out_w);
+				let intersect_y2 = region_bottom.min(out_y + out_h);
 
-			if intersect_x < intersect_x2 && intersect_y < intersect_y2 {
-				let mut base = img.clone();
-				graphics::apply_annotations(&mut base, &state.annotations, info, &state.config)?;
+				if intersect_x < intersect_x2 && intersect_y < intersect_y2 {
+					let local_x = (intersect_x - out_x) as u32;
+					let local_y = (intersect_y - out_y) as u32;
+					let intersect_w = (intersect_x2 - intersect_x) as u32;
+					let intersect_h = (intersect_y2 - intersect_y) as u32;
+					let target_x = (intersect_x - x) as i64;
+					let target_y = (intersect_y - y) as i64;
 
-				let local_x = (intersect_x - out_x) as u32;
-				let local_y = (intersect_y - out_y) as u32;
-				let intersect_w = (intersect_x2 - intersect_x) as u32;
-				let intersect_h = (intersect_y2 - intersect_y) as u32;
-
-				let target_x = (intersect_x - x) as i64;
-				let target_y = (intersect_y - y) as i64;
-
-				image::imageops::replace(
-					&mut final_img,
-					&*base.view(local_x, local_y, intersect_w, intersect_h),
-					target_x,
-					target_y,
-				);
-				has_content = true;
+					image::imageops::replace(
+						&mut final_img,
+						&*base.view(local_x, local_y, intersect_w, intersect_h),
+						target_x,
+						target_y,
+					);
+					has_content = true;
+				}
 			}
 		}
 

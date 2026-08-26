@@ -36,7 +36,7 @@ use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::
 use crate::config::SelectionConfig;
 use crate::selection::{
 	graphics,
-	state::{SelectionState, Tool},
+	state::{SelectionRegion, SelectionState, Tool},
 };
 
 pub struct SurfaceData {
@@ -96,6 +96,7 @@ impl AppState {
 		{
 			let cr = Context::new(&surface_data.scratch)
 				.map_err(|e| anyhow!("failed to create context: {}", e))?;
+			cr.push_group();
 
 			if let Err(e) = cr.set_source_surface(&surface_data.cached_bg, 0.0, 0.0) {
 				eprintln!("failed to set source surface: {}", e);
@@ -152,86 +153,100 @@ impl AppState {
 				}
 			}
 
+			let scene = cr
+				.pop_group()
+				.map_err(|e| anyhow!("failed to cache selection scene: {}", e))?;
+			cr.set_source(&scene)
+				.map_err(|e| anyhow!("failed to restore selection scene: {}", e))?;
+			cr.paint()
+				.map_err(|e| anyhow!("failed to paint selection scene: {}", e))?;
+
 			graphics::set_source_color(&cr, state.config.background_color);
 			cr.rectangle(0.0, 0.0, width as f64, height as f64);
+			cr.fill()
+				.map_err(|e| anyhow!("failed to fill selection background: {}", e))?;
 
-			if let Some(start) = state.start {
-				let current = if state.is_dragging && state.active_tool == Tool::Select {
-					state.current
-				} else {
-					state.end.unwrap_or(state.current)
-				};
-
-				let offset_x = surface_data.output.logical_position.x as f64;
-				let offset_y = surface_data.output.logical_position.y as f64;
-				let s_x = start.0 - offset_x;
-				let s_y = start.1 - offset_y;
-				let c_x = current.0 - offset_x;
-				let c_y = current.1 - offset_y;
-				let x = s_x.min(c_x);
-				let y = s_y.min(c_y);
-				let w = (s_x - c_x).abs();
-				let h = (s_y - c_y).abs();
-
-				if w > 0.0 && h > 0.0 {
-					cr.rectangle(x, y, w, h);
-					cr.set_fill_rule(cairo::FillRule::EvenOdd);
-					if let Err(e) = cr.fill() {
-						eprintln!("failed to fill selection: {}", e);
-					}
-					cr.set_fill_rule(cairo::FillRule::Winding);
-
-					graphics::set_source_color(&cr, state.config.border_color);
-					cr.set_line_width(state.config.border_width);
-					cr.rectangle(x, y, w, h);
-					if let Err(e) = cr.stroke() {
-						eprintln!("failed to stroke selection: {}", e);
-					}
-
-					let dim_text = format!("{}x{}", w as u32, h as u32);
-					let layout = create_layout(&cr);
-					layout.set_text(&dim_text);
-					cr.set_source_rgb(1.0, 1.0, 1.0);
-					cr.move_to(x, y - 20.0);
-					show_layout(&cr, &layout);
-				} else {
-					if let Err(e) = cr.fill() {
-						eprintln!("failed to fill background: {}", e);
-					}
-				}
-			} else if let Some(hovered_idx) = state.hovered_window
+			let draft_region = state
+				.start
+				.map(|start| SelectionRegion::new(start, state.end.unwrap_or(state.current)));
+			let extra_region = if let Some(region) = draft_region.filter(|region| region.is_valid())
+			{
+				Some(region)
+			} else if state.active_tool == Tool::Select
+				&& !state.is_dragging
+				&& !state
+					.regions
+					.iter()
+					.any(|region| region.contains(state.current))
+				&& let Some(hovered_idx) = state.hovered_window
 				&& let Some(win) = state.windows.get(hovered_idx)
 			{
-				let offset_x = surface_data.output.logical_position.x as f64;
-				let offset_y = surface_data.output.logical_position.y as f64;
-				let win_x = win.x as f64 - offset_x;
-				let win_y = win.y as f64 - offset_y;
-				let win_w = win.width as f64;
-				let win_h = win.height as f64;
+				Some(SelectionRegion::new(
+					(win.x as f64, win.y as f64),
+					((win.x + win.width) as f64, (win.y + win.height) as f64),
+				))
+			} else {
+				None
+			};
 
-				cr.rectangle(win_x, win_y, win_w, win_h);
-				cr.set_fill_rule(cairo::FillRule::EvenOdd);
-				if let Err(e) = cr.fill() {
-					eprintln!("failed to fill hovered window: {}", e);
+			let offset_x = surface_data.output.logical_position.x as f64;
+			let offset_y = surface_data.output.logical_position.y as f64;
+			if !state.regions.is_empty() || extra_region.is_some() {
+				cr.save()
+					.map_err(|e| anyhow!("failed to save selection clipping state: {}", e))?;
+				for region in state.regions.iter().copied().chain(extra_region) {
+					cr.rectangle(
+						region.start.0 - offset_x,
+						region.start.1 - offset_y,
+						region.width(),
+						region.height(),
+					);
 				}
-				cr.set_fill_rule(cairo::FillRule::Winding);
+				cr.clip();
+				cr.set_source(&scene)
+					.map_err(|e| anyhow!("failed to set selected region source: {}", e))?;
+				cr.paint()
+					.map_err(|e| anyhow!("failed to paint selected regions: {}", e))?;
+				cr.restore()
+					.map_err(|e| anyhow!("failed to restore selection clipping state: {}", e))?;
+			}
+
+			for (idx, region) in state
+				.regions
+				.iter()
+				.copied()
+				.chain(extra_region)
+				.enumerate()
+			{
+				let x = region.start.0 - offset_x;
+				let y = region.start.1 - offset_y;
+				let w = region.width();
+				let h = region.height();
 
 				graphics::set_source_color(&cr, state.config.border_color);
 				cr.set_line_width(state.config.border_width);
-				cr.rectangle(win_x, win_y, win_w, win_h);
-				if let Err(e) = cr.stroke() {
-					eprintln!("failed to stroke hovered window: {}", e);
-				}
+				cr.rectangle(x, y, w, h);
+				cr.stroke()
+					.map_err(|e| anyhow!("failed to stroke selection: {}", e))?;
 
-				let dim_text = format!("{}x{}", win_w as u32, win_h as u32);
+				let dim_text = format!("{}x{}", w as u32, h as u32);
 				let layout = create_layout(&cr);
 				layout.set_text(&dim_text);
 				cr.set_source_rgb(1.0, 1.0, 1.0);
-				cr.move_to(win_x, win_y - 20.0);
+				cr.move_to(x, y - 20.0);
 				show_layout(&cr, &layout);
-			} else {
-				if let Err(e) = cr.fill() {
-					eprintln!("failed to fill background: {}", e);
+
+				if state.config.multi_region_mode && Some(idx) == state.selected_region {
+					for (_, handle) in region.handle_positions() {
+						let handle_x = handle.0 - offset_x;
+						let handle_y = handle.1 - offset_y;
+						graphics::set_source_color(&cr, state.config.border_color);
+						cr.rectangle(handle_x - 4.0, handle_y - 4.0, 8.0, 8.0);
+						cr.fill().ok();
+						cr.set_source_rgb(1.0, 1.0, 1.0);
+						cr.rectangle(handle_x - 2.0, handle_y - 2.0, 4.0, 4.0);
+						cr.fill().ok();
+					}
 				}
 			}
 
@@ -521,19 +536,28 @@ impl KeyboardHandler for AppState {
         }
 
         match event.keysym {
-            Keysym::Return => s.finished = true,
+            Keysym::Return => {
+                if !s.config.multi_region_mode || !s.regions.is_empty() {
+                    s.finished = true;
+                }
+            }
             Keysym::Escape => s.cancelled = true,
             Keysym::BackSpace => {
                 if !s.annotations.is_empty() {
-                    s.push_undo();
-                    s.annotations.pop();
+					let index = s.annotations.len() - 1;
+					s.remove_annotation(index);
                     s.dirty = true;
                 }
             }
             Keysym::Delete => {
-                if let Some(idx) = s.selected_annotation {
-                    s.push_undo();
-                    s.annotations.remove(idx);
+				if let Some(idx) = s.selected_region {
+					s.remove_region(idx);
+					s.selected_region = None;
+					s.region_interaction = None;
+					s.original_region = None;
+					s.dirty = true;
+				} else if let Some(idx) = s.selected_annotation {
+					s.remove_annotation(idx);
                     s.selected_annotation = None;
                     s.dirty = true;
                 }
@@ -577,6 +601,7 @@ impl KeyboardHandler for AppState {
                 if let Some(tool) = Tool::from_keysym(event.keysym) {
                     s.active_tool = tool;
                     s.selected_annotation = None;
+					s.selected_region = None;
                     s.dirty = true;
                 }
             }
