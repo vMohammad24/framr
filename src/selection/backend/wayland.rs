@@ -118,18 +118,28 @@ impl AppState {
 					cr.set_line_width(1.0);
 
 					if ann.tool == Tool::Circle && ann.points.len() >= 2 {
-						let center = (ann.points[0].0 - offset_x, ann.points[0].1 - offset_y);
-						let edge = (ann.points[1].0 - offset_x, ann.points[1].1 - offset_y);
-						let radius =
-							((center.0 - edge.0).powi(2) + (center.1 - edge.1).powi(2)).sqrt();
-						cr.arc(
-							center.0,
-							center.1,
-							radius + 2.0,
-							0.0,
-							2.0 * std::f64::consts::PI,
-						);
-						cr.stroke().ok();
+						let x1 = ann.points[0].0 - offset_x;
+						let y1 = ann.points[0].1 - offset_y;
+						let x2 = ann.points[1].0 - offset_x;
+						let y2 = ann.points[1].1 - offset_y;
+						let center = ((x1 + x2) * 0.5, (y1 + y2) * 0.5);
+						let radii = ((x2 - x1).abs() * 0.5 + 2.0, (y2 - y1).abs() * 0.5 + 2.0);
+						match cr.save() {
+							Ok(()) => {
+								cr.translate(center.0, center.1);
+								cr.scale(radii.0, radii.1);
+								cr.arc(0.0, 0.0, 1.0, 0.0, 2.0 * std::f64::consts::PI);
+								match cr.restore() {
+									Ok(()) => {
+										if let Err(e) = cr.stroke() {
+											eprintln!("failed to stroke selected ellipse: {e}");
+										}
+									}
+									Err(e) => eprintln!("failed to restore cairo state: {e}"),
+								}
+							}
+							Err(e) => eprintln!("failed to save cairo state: {e}"),
+						}
 					} else if !ann.points.is_empty() {
 						let mut min_x = ann.points[0].0;
 						let mut min_y = ann.points[0].1;
@@ -497,7 +507,7 @@ impl PointerHandler for AppState {
                     state.handle_pointer_release(global_pos, button);
                 }
                 PointerEventKind::Motion { .. } => {
-                    state.handle_pointer_motion(global_pos, self.modifiers.shift);
+                    state.handle_pointer_motion(global_pos, self.modifiers.shift, self.modifiers.alt);
                 }
                 _ => {}
             }

@@ -96,6 +96,7 @@ impl SelectionUI {
 				selected_annotation: None,
 				is_moving_annotation: false,
 				move_start_point: None,
+				annotation_draw_origin: None,
 				annotation_move_delta: (0.0, 0.0),
 				finished: false,
 				cancelled: false,

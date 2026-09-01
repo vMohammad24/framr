@@ -237,6 +237,7 @@ pub struct SelectionState {
 	pub selected_annotation: Option<usize>,
 	pub is_moving_annotation: bool,
 	pub move_start_point: Option<(f64, f64)>,
+	pub annotation_draw_origin: Option<(f64, f64)>,
 	pub annotation_move_delta: (f64, f64),
 	pub finished: bool,
 	pub cancelled: bool,
@@ -302,6 +303,7 @@ impl SelectionState {
 		if mouse_btn == MouseButton::Right {
 			if self.is_dragging {
 				self.is_dragging = false;
+				self.annotation_draw_origin = None;
 				if self.active_tool == Tool::Select {
 					if let (Some(idx), Some(original)) =
 						(self.selected_region, self.original_region)
@@ -344,7 +346,12 @@ impl SelectionState {
 		self.dirty = true;
 	}
 
-	pub fn handle_pointer_motion(&mut self, global_pos: (f64, f64), shift_pressed: bool) {
+	pub fn handle_pointer_motion(
+		&mut self,
+		global_pos: (f64, f64),
+		shift_pressed: bool,
+		alt_pressed: bool,
+	) {
 		self.current = global_pos;
 
 		if self.is_moving_annotation {
@@ -371,7 +378,7 @@ impl SelectionState {
 		} else {
 			self.active_tool
 				.behavior()
-				.on_motion(self, global_pos, shift_pressed);
+				.on_motion(self, global_pos, shift_pressed, alt_pressed);
 		}
 		self.dirty = true;
 	}
@@ -444,7 +451,7 @@ impl SelectionState {
 		}
 	}
 
-	fn discard_pending_annotation_history(&mut self) {
+	pub(crate) fn discard_pending_annotation_history(&mut self) {
 		if let Some(HistoryAction::RemoveAnnotation { index }) =
 			self.pending_annotation_history.take()
 			&& index < self.annotations.len()
@@ -559,6 +566,7 @@ impl SelectionState {
 		self.pending_annotation_history = None;
 		self.pending_region_history = None;
 		self.move_start_point = None;
+		self.annotation_draw_origin = None;
 		self.annotation_move_delta = (0.0, 0.0);
 		self.original_region = None;
 		self.start = None;

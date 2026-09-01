@@ -40,7 +40,13 @@ impl ToolBehavior for ArrowTool {
 		begin_annotation(state, global_pos);
 	}
 
-	fn on_motion(&self, state: &mut SelectionState, global_pos: (f64, f64), _shift_pressed: bool) {
+	fn on_motion(
+		&self,
+		state: &mut SelectionState,
+		global_pos: (f64, f64),
+		_shift_pressed: bool,
+		_alt_pressed: bool,
+	) {
 		two_point_motion(state, global_pos);
 	}
 

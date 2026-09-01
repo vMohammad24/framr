@@ -151,7 +151,13 @@ impl ToolBehavior for SelectTool {
 		state.move_start_point = None;
 	}
 
-	fn on_motion(&self, state: &mut SelectionState, global_pos: (f64, f64), _shift_pressed: bool) {
+	fn on_motion(
+		&self,
+		state: &mut SelectionState,
+		global_pos: (f64, f64),
+		_shift_pressed: bool,
+		_alt_pressed: bool,
+	) {
 		if let (Some(interaction), Some(original), Some(idx), Some(drag_start)) = (
 			state.region_interaction,
 			state.original_region,

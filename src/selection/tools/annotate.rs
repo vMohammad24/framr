@@ -40,7 +40,13 @@ impl ToolBehavior for AnnotateTool {
 		begin_annotation(state, global_pos);
 	}
 
-	fn on_motion(&self, state: &mut SelectionState, global_pos: (f64, f64), _shift_pressed: bool) {
+	fn on_motion(
+		&self,
+		state: &mut SelectionState,
+		global_pos: (f64, f64),
+		_shift_pressed: bool,
+		_alt_pressed: bool,
+	) {
 		if state.is_dragging
 			&& let Some(ann) = state.annotations.last_mut()
 		{

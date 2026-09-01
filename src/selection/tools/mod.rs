@@ -78,6 +78,7 @@ pub trait ToolBehavior: Send + Sync {
 		_state: &mut SelectionState,
 		_global_pos: (f64, f64),
 		_shift_pressed: bool,
+		_alt_pressed: bool,
 	) {
 	}
 
