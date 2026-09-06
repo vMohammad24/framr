@@ -109,7 +109,7 @@ pub struct Cli {
 	#[arg(value_parser = parse_framr_uri)]
 	pub uri: Option<String>,
 
-	/// Silent mode (no notifications)
+	/// Silence all notifications (overrides selective config settings)
 	#[arg(long, global = true)]
 	pub silent: bool,
 }

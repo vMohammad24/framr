@@ -345,8 +345,55 @@ pub struct AppConfig {
 	pub image_format: Option<OutputImageFormat>,
 	#[serde(default)]
 	pub image_quality: Option<u8>,
+	#[serde(default)]
+	pub silent: Option<SilentConfig>,
 	#[serde(default = "default_upload_sound")]
 	pub upload_sound: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default, Clone, Copy, PartialEq, Eq)]
+#[serde(default)]
+pub struct SilentConfig {
+	/// Silence notifications for screenshot save and copy actions.
+	pub image: Option<bool>,
+	/// Silence notifications for recording start, save, and copy actions.
+	pub video: Option<bool>,
+	/// Silence successful upload and uploader import notifications.
+	pub upload: Option<bool>,
+	/// Silence error notifications.
+	pub error: Option<bool>,
+}
+
+impl SilentConfig {
+	pub fn is_empty(self) -> bool {
+		self.image.is_none()
+			&& self.video.is_none()
+			&& self.upload.is_none()
+			&& self.error.is_none()
+	}
+}
+
+#[derive(Clone, Copy)]
+pub enum NotificationKind {
+	Image,
+	Video,
+	Upload,
+	Error,
+}
+
+impl AppConfig {
+	pub fn notification_is_silent(&self, kind: NotificationKind) -> bool {
+		let Some(silent) = self.silent else {
+			return false;
+		};
+
+		match kind {
+			NotificationKind::Image => silent.image.unwrap_or(false),
+			NotificationKind::Video => silent.video.unwrap_or(false),
+			NotificationKind::Upload => silent.upload.unwrap_or(false),
+			NotificationKind::Error => silent.error.unwrap_or(false),
+		}
+	}
 }
 
 fn default_upload_sound() -> String {

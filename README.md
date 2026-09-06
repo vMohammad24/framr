@@ -89,6 +89,13 @@ nix.settings = {
               default_action = "UploadAndCopy";
               default_capture = "Area";
               default_uploader = "nest.rip";
+              # selectively silence notifications. --silent overrides this.
+              silent = {
+                image = false;
+                video = true;
+                upload = false;
+                error = false;
+              };
               uploaders = [
                 {
                   name = "nest.rip";

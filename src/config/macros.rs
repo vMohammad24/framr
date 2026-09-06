@@ -56,6 +56,7 @@ macro_rules! interactive_menu {
     ( @display $val:expr, num)   => { console::style($val.to_string()).yellow() };
     ( @display $val:expr, nonzero_num) => { $crate::interactive_menu!( @display $val, num) };
     ( @display $val:expr, bool)  => { console::style(if $val { "Yes" } else { "No" }).yellow() };
+    ( @display $val:expr, opt_bool) => { console::style(if $val.unwrap_or(false) { "Yes" } else { "No" }).yellow() };
     ( @display $val:expr, text)  => { console::style(&$val).yellow() };
     ( @display $val:expr, enum)  => { console::style($val.label()).yellow() };
     ( @display $val:expr, opt_num) => {
@@ -75,6 +76,9 @@ macro_rules! interactive_menu {
     };
     ( @display $val:expr, custom) => {
         console::style("(custom handler)".to_string()).yellow()
+    };
+    ( @display $val:expr, silent) => {
+        console::style($crate::config::cli_ui::format_silent_notifications($val)).yellow()
     };
 
     ( @edit $s:expr, $field:ident, $label:expr, text) => {{
@@ -97,6 +101,10 @@ macro_rules! interactive_menu {
     }};
     ( @edit $s:expr, $field:ident, $label:expr, bool) => {{
         $s.$field = $crate::config::prompt_confirm($label, $s.$field)?;
+        Ok::<(), anyhow::Error>(())
+    }};
+    ( @edit $s:expr, $field:ident, $label:expr, opt_bool) => {{
+        $s.$field = Some($crate::config::prompt_confirm($label, $s.$field.unwrap_or(false))?);
         Ok::<(), anyhow::Error>(())
     }};
     ( @edit $s:expr, $field:ident, $label:expr, color) => {{

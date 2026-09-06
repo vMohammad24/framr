@@ -1,3 +1,4 @@
+use crate::config::NotificationKind;
 use crate::config::core::{load_config, load_overrides, save_config};
 use crate::config::types::{
 	AppConfig, BodyType, ConfigEnum, DefaultAction, DefaultCaptureMethod, UploadConfig,
@@ -191,6 +192,7 @@ pub fn manage_kv_pairs(label: &str, pairs: &mut Vec<(String, String)>) -> Result
 }
 pub fn import_uploader(source: &str, silent: bool) -> Result<()> {
 	let mut cfg = load_config()?;
+	let silent = silent || cfg.notification_is_silent(NotificationKind::Upload);
 
 	println!("{}", header("Import Uploader"));
 	println!("  {} {}", style("Source:").bold(), style(source).blue());
@@ -823,7 +825,49 @@ pub fn modify_app_config(cfg: &mut AppConfig) -> Result<()> {
 			default_capture: "Default Capture" => custom [edit_capture_method] display_as opt_enum,
 			image_format: "Image Format" => opt_enum [libframr::OutputImageFormat],
 			image_quality: "Image Quality" => opt_num,
+			silent: "Silent Notifications" => custom [edit_silent_notifications] display_as silent,
 			upload_sound: "Upload Sound" => text,
+		]
+	)
+}
+
+pub(crate) fn format_silent_notifications(
+	silent: Option<crate::config::types::SilentConfig>,
+) -> String {
+	let Some(silent) = silent else {
+		return "None".to_string();
+	};
+	let mut categories = Vec::new();
+	if silent.video.unwrap_or(false) {
+		categories.push("Video");
+	}
+	if silent.image.unwrap_or(false) {
+		categories.push("Image");
+	}
+	if silent.upload.unwrap_or(false) {
+		categories.push("Uploads");
+	}
+	if silent.error.unwrap_or(false) {
+		categories.push("Errors");
+	}
+
+	if categories.is_empty() {
+		"None".to_string()
+	} else {
+		categories.join(", ")
+	}
+}
+
+fn edit_silent_notifications(cfg: &mut AppConfig) -> Result<()> {
+	let silent = cfg.silent.get_or_insert_default();
+	crate::interactive_menu!(
+		"Silent Notifications",
+		silent,
+		[
+			image: "Silence Images" => opt_bool,
+			video: "Silence Videos" => opt_bool,
+			upload: "Silence Uploads" => opt_bool,
+			error: "Silence Errors" => opt_bool,
 		]
 	)
 }

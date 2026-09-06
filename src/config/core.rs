@@ -46,6 +46,21 @@ fn merge_configs(base: &mut AppConfig, over: AppConfig) {
 	if let Some(quality) = over.image_quality {
 		base.image_quality = Some(quality);
 	}
+	if let Some(silent) = over.silent {
+		let base_silent = base.silent.get_or_insert_default();
+		if silent.image.is_some() {
+			base_silent.image = silent.image;
+		}
+		if silent.video.is_some() {
+			base_silent.video = silent.video;
+		}
+		if silent.upload.is_some() {
+			base_silent.upload = silent.upload;
+		}
+		if silent.error.is_some() {
+			base_silent.error = silent.error;
+		}
+	}
 
 	base.selection = over.selection;
 	base.recording = over.recording;
@@ -156,6 +171,7 @@ pub fn load_uploader_config() -> Result<AppConfig> {
 pub fn save_config(cfg: &AppConfig) -> Result<()> {
 	let app_name = env!("CARGO_PKG_NAME");
 	let mut to_save = cfg.clone();
+	let stored: AppConfig = confy::load(app_name, None)?;
 
 	if let Some(over) = load_overrides() {
 		if to_save.default_uploader == over.default_uploader {
@@ -175,6 +191,25 @@ pub fn save_config(cfg: &AppConfig) -> Result<()> {
 		}
 		if to_save.image_quality == over.image_quality {
 			to_save.image_quality = None;
+		}
+		if let Some(over_silent) = over.silent {
+			let stored_silent = stored.silent.unwrap_or_default();
+			let to_save_silent = to_save.silent.get_or_insert_default();
+			if over_silent.image.is_some() {
+				to_save_silent.image = stored_silent.image;
+			}
+			if over_silent.video.is_some() {
+				to_save_silent.video = stored_silent.video;
+			}
+			if over_silent.upload.is_some() {
+				to_save_silent.upload = stored_silent.upload;
+			}
+			if over_silent.error.is_some() {
+				to_save_silent.error = stored_silent.error;
+			}
+			if to_save_silent.is_empty() {
+				to_save.silent = None;
+			}
 		}
 
 		to_save

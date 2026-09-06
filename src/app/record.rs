@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use crate::app::capture::resolve_output;
 use crate::cli::Cli;
-use crate::config::AppConfig;
+use crate::config::{AppConfig, NotificationKind};
 use crate::pidfile;
 use crate::selection;
 
@@ -101,7 +101,7 @@ pub fn record(
 		"Recording Started",
 		&format!("Recording to {}", filename),
 		None,
-		cli.silent,
+		cli.silent || cfg.is_some_and(|cfg| cfg.notification_is_silent(NotificationKind::Video)),
 	);
 
 	let (tx, rx) = std::sync::mpsc::channel();

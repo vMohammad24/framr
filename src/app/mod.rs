@@ -8,7 +8,7 @@ pub mod record;
 
 use crate::app::capture::resolve_output;
 use crate::cli::Cli;
-use crate::config::{AppConfig, DefaultAction};
+use crate::config::{AppConfig, DefaultAction, NotificationKind};
 use crate::utils::clipboard::copy_to_clipboard;
 use crate::utils::notify::send_notification;
 use crate::{config, sound, upload};
@@ -78,16 +78,21 @@ pub fn handle_upload(
 
 	let url = upload::upload(payload, uploader, &filename)?;
 	println!("{}", url);
+	let cfg = config::load_config().ok();
+	let upload_silent = cli.silent
+		|| cfg
+			.as_ref()
+			.is_some_and(|cfg| cfg.notification_is_silent(NotificationKind::Upload));
 
-	if !cli.silent {
+	if !upload_silent {
 		let image_data = is_image.then(|| match file {
 			Some(p) => std::fs::read(p).unwrap_or_default(),
 			None => stdin_bytes.clone(),
 		});
-		send_notification("Upload Successful", &url, image_data.as_deref(), cli.silent)?;
+		send_notification("Upload Successful", &url, image_data.as_deref(), false)?;
 	}
 
-	if let Ok(cfg) = config::load_config() {
+	if let Some(cfg) = cfg {
 		let _ = sound::play_sound(&cfg.upload_sound);
 	}
 

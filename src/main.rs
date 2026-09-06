@@ -15,14 +15,17 @@ use crate::app::capture::{capture, get_capture_path};
 use crate::app::record::record;
 use crate::app::{handle_upload, resolve_action};
 use crate::cli::{Cli, Commands, ConfigAction};
-use crate::config::DefaultAction;
+use crate::config::{DefaultAction, NotificationKind};
 use crate::utils::clipboard::{copy_file_uri, copy_to_clipboard};
 use crate::utils::notify::send_notification;
 
 fn main() -> std::process::ExitCode {
 	sound::init_sound();
 	let cli = Cli::parse();
-	let silent = cli.silent;
+	let silent = cli.silent
+		|| config::load_config()
+			.ok()
+			.is_some_and(|cfg| cfg.notification_is_silent(NotificationKind::Error));
 
 	match run(cli) {
 		Ok(()) => std::process::ExitCode::SUCCESS,
@@ -140,7 +143,15 @@ fn run(cli: Cli) -> Result<()> {
 			let url = upload::upload(payload, uploader_name, &filename)?;
 			println!("{}", url);
 
-			send_notification("Upload Successful", &url, bytes_opt.as_deref(), cli.silent)?;
+			send_notification(
+				"Upload Successful",
+				&url,
+				bytes_opt.as_deref(),
+				cli.silent
+					|| cfg
+						.as_ref()
+						.is_some_and(|cfg| cfg.notification_is_silent(NotificationKind::Upload)),
+			)?;
 
 			if action == DefaultAction::UploadAndCopy {
 				copy_to_clipboard(url.as_bytes().to_vec(), "text/plain;charset=utf-8")?;
@@ -162,7 +173,10 @@ fn run(cli: Cli) -> Result<()> {
 						"Copied to Clipboard",
 						"Screenshot copied to clipboard",
 						Some(bytes),
-						cli.silent,
+						cli.silent
+							|| cfg.as_ref().is_some_and(|cfg| {
+								cfg.notification_is_silent(NotificationKind::Image)
+							}),
 					)?;
 				}
 			} else {
@@ -171,7 +185,10 @@ fn run(cli: Cli) -> Result<()> {
 					"Recording Copied",
 					"The recording file was copied to your clipboard",
 					None,
-					cli.silent,
+					cli.silent
+						|| cfg
+							.as_ref()
+							.is_some_and(|cfg| cfg.notification_is_silent(NotificationKind::Video)),
 				)?;
 			}
 		}
@@ -213,7 +230,14 @@ fn run(cli: Cli) -> Result<()> {
 				title,
 				&path.to_string_lossy(),
 				bytes_opt.as_deref(),
-				cli.silent,
+				cli.silent
+					|| cfg.as_ref().is_some_and(|cfg| {
+						cfg.notification_is_silent(if is_image {
+							NotificationKind::Image
+						} else {
+							NotificationKind::Video
+						})
+					}),
 			)?;
 		}
 	}
