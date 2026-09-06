@@ -87,6 +87,7 @@ impl SelectionUI {
 				region_interaction: None,
 				original_region: None,
 				current: (0.0, 0.0),
+				pointer_modifiers: (false, false),
 				is_dragging: false,
 				active_tool: Tool::Select,
 				annotations: Vec::new(),
@@ -206,6 +207,7 @@ impl SelectionUI {
 				dimensions: (w, h),
 				slot: None,
 				waiting_for_frame: false,
+				redraw_pending: true,
 			});
 		}
 
@@ -280,21 +282,19 @@ impl SelectionUI {
 			}
 
 			if state.dirty {
-				let mut needs_redraw = false;
-
-				for i in 0..app.surfaces.len() {
-					if !app.surfaces[i].waiting_for_frame {
-						if let Err(e) = app.draw(i, &state, &qh) {
-							eprintln!("Draw error: {}", e);
-						}
-						app.surfaces[i].waiting_for_frame = true;
-					} else {
-						needs_redraw = true;
-					}
+				for surface in &mut app.surfaces {
+					surface.redraw_pending = true;
 				}
+				state.dirty = false;
+			}
 
-				if !needs_redraw {
-					state.dirty = false;
+			for i in 0..app.surfaces.len() {
+				if app.surfaces[i].redraw_pending && !app.surfaces[i].waiting_for_frame {
+					if let Err(e) = app.draw(i, &state, &qh) {
+						eprintln!("Draw error: {}", e);
+					}
+					app.surfaces[i].waiting_for_frame = true;
+					app.surfaces[i].redraw_pending = false;
 				}
 			}
 		}

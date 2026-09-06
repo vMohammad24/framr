@@ -267,6 +267,7 @@ pub struct SelectionState {
 	pub region_interaction: Option<RegionInteraction>,
 	pub original_region: Option<SelectionRegion>,
 	pub current: (f64, f64),
+	pub(crate) pointer_modifiers: (bool, bool),
 	pub is_dragging: bool,
 	pub active_tool: Tool,
 	pub annotations: Vec<Annotation>,
@@ -400,7 +401,12 @@ impl SelectionState {
 		shift_pressed: bool,
 		alt_pressed: bool,
 	) {
+		let modifiers = (shift_pressed, alt_pressed);
+		if self.current == global_pos && self.pointer_modifiers == modifiers {
+			return;
+		}
 		self.current = global_pos;
+		self.pointer_modifiers = modifiers;
 
 		if let (Some(handle), Some(original), Some(index)) = (
 			self.annotation_resize_handle,

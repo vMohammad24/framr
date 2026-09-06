@@ -13,10 +13,7 @@ use smithay_client_toolkit::{
 		pointer::cursor_shape::CursorShapeManager,
 		pointer::{PointerEvent, PointerEventKind, PointerHandler},
 	},
-	shell::{
-		WaylandSurface,
-		wlr_layer::{LayerShell, LayerShellHandler, LayerSurface},
-	},
+	shell::wlr_layer::{LayerShell, LayerShellHandler, LayerSurface},
 	shm::{
 		Shm, ShmHandler,
 		slot::{Buffer, SlotPool},
@@ -50,6 +47,7 @@ pub struct SurfaceData {
 	pub dimensions: (u32, u32),
 	pub slot: Option<Buffer>,
 	pub waiting_for_frame: bool,
+	pub redraw_pending: bool,
 }
 
 pub struct AppState {
@@ -447,12 +445,9 @@ impl LayerShellHandler for AppState {
     }
     fn configure(
         &mut self,_: &Connection,_: &QueueHandle<Self>,
-        layer: &LayerSurface,
+        _: &LayerSurface,
         _: smithay_client_toolkit::shell::wlr_layer::LayerSurfaceConfigure,_: u32,
-    ) {
-        layer.wl_surface().commit();
-        self.state.lock().unwrap().dirty = true;
-    }
+    ) {}
 }
 #[rustfmt::skip]
 impl SeatHandler for AppState {
