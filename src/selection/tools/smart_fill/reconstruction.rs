@@ -1,8 +1,7 @@
-use image::RgbaImage;
 use libframr::OutputInfo;
 
 use crate::config::Color;
-use crate::selection::state::{SelectionRegion, SmartFillPattern};
+use crate::selection::state::{BgraImage, SelectionRegion, SmartFillPattern};
 
 const RING_WIDTH: i64 = 3;
 const NEIGHBORHOOD_RADIUS: i64 = 3;
@@ -80,11 +79,12 @@ impl LinearColor {
 }
 
 fn sample_pixel(
-	sources: &[(OutputInfo, RgbaImage)],
+	sources: &[(OutputInfo, BgraImage)],
 	global_x: i64,
 	global_y: i64,
 ) -> Option<[u8; 3]> {
 	for (output, image) in sources {
+		let image = &image.0;
 		let local_x = global_x - output.logical_position.x as i64;
 		let local_y = global_y - output.logical_position.y as i64;
 		if local_x >= 0
@@ -93,13 +93,13 @@ fn sample_pixel(
 			&& local_y < image.height() as i64
 		{
 			let pixel = image.get_pixel(local_x as u32, local_y as u32);
-			return Some([pixel[0], pixel[1], pixel[2]]);
+			return Some([pixel[2], pixel[1], pixel[0]]);
 		}
 	}
 	None
 }
 
-fn dominant_sample<I>(sources: &[(OutputInfo, RgbaImage)], coordinates: I) -> Option<LinearColor>
+fn dominant_sample<I>(sources: &[(OutputInfo, BgraImage)], coordinates: I) -> Option<LinearColor>
 where
 	I: IntoIterator<Item = (i64, i64)>,
 {
@@ -165,7 +165,7 @@ fn positions(start: i64, end: i64, count: usize) -> Vec<i64> {
 }
 
 fn horizontal_edge(
-	sources: &[(OutputInfo, RgbaImage)],
+	sources: &[(OutputInfo, BgraImage)],
 	positions: &[i64],
 	y_start: i64,
 	y_end: i64,
@@ -184,7 +184,7 @@ fn horizontal_edge(
 }
 
 fn vertical_edge(
-	sources: &[(OutputInfo, RgbaImage)],
+	sources: &[(OutputInfo, BgraImage)],
 	positions: &[i64],
 	x_start: i64,
 	x_end: i64,
@@ -315,7 +315,7 @@ fn dimensions(width: u32, height: u32) -> (u32, u32) {
 
 pub(super) fn reconstruct(
 	region: SelectionRegion,
-	sources: &[(OutputInfo, RgbaImage)],
+	sources: &[(OutputInfo, BgraImage)],
 	fallback: Color,
 ) -> (SmartFillPattern, Color) {
 	let (left, top, right, bottom) = region.integer_bounds();

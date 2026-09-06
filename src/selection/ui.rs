@@ -17,32 +17,29 @@ use wayland_client::{Connection, globals::registry_queue_init};
 use crate::config::SelectionConfig;
 use crate::selection::backend::wayland::{AppState, SurfaceData};
 use crate::selection::graphics;
-use crate::selection::state::{SelectionState, Tool};
+use crate::selection::state::{BgraImage, SelectionState, Tool};
 use crate::selection::window::get_windows;
 
 pub enum UserEvent {
 	ProcessingFinished {
 		surface_idx: usize,
-		blurred_img: RgbaImage,
-		pixelated_img: RgbaImage,
+		blurred_img: BgraImage,
+		pixelated_img: BgraImage,
 	},
 }
 
 pub struct SelectionUI {
-	outputs: Arc<Vec<(libframr::OutputInfo, RgbaImage)>>,
+	outputs: Arc<Vec<(libframr::OutputInfo, BgraImage)>>,
 	state: Arc<Mutex<SelectionState>>,
 }
 
-fn image_to_cairo_surface(img: &RgbaImage) -> Result<cairo::ImageSurface> {
+fn bgra_image_to_cairo_surface(img: &BgraImage) -> Result<cairo::ImageSurface> {
+	let img = &img.0;
 	let (w, h) = img.dimensions();
 	let stride = w as i32 * 4;
-	let mut cairo_data = img.as_raw().clone();
-	for pixel in cairo_data.chunks_exact_mut(4) {
-		pixel.swap(0, 2); // RGBA to BGRA
-	}
 
 	cairo::ImageSurface::create_for_data(
-		cairo_data,
+		img.as_raw().clone(),
 		cairo::Format::ARgb32,
 		w as i32,
 		h as i32,
@@ -65,8 +62,11 @@ impl SelectionUI {
 			if img.width() != logical_w || img.height() != logical_h {
 				img = image::imageops::resize(&img, logical_w, logical_h, FilterType::CatmullRom);
 			}
+			for pixel in img.as_mut().chunks_exact_mut(4) {
+				pixel.swap(0, 2); // RGBA to BGRA
+			}
 
-			outputs.push((info, img));
+			outputs.push((info, BgraImage(img)));
 		}
 
 		let mut last_surface_width = 1920.0;
@@ -130,9 +130,9 @@ impl SelectionUI {
 		let seat_state = SeatState::new(&globals, &qh);
 		let mut total_buffer_size = 0;
 		for (info, _) in self.outputs.iter() {
-			total_buffer_size += (info.logical_size.width * info.logical_size.height * 4) * 2;
+			total_buffer_size += info.logical_size.width * info.logical_size.height * 4;
 		}
-		let pool_size = std::cmp::max(1024 * 1024 * 64, total_buffer_size as usize);
+		let pool_size = std::cmp::max(1024 * 1024, total_buffer_size as usize);
 		let pool = SlotPool::new(pool_size, &shm_state)?;
 
 		let (tx, rx) = std::sync::mpsc::channel();
@@ -158,19 +158,8 @@ impl SelectionUI {
 
 		event_queue.roundtrip(&mut app)?;
 
-		for (info, img) in self.outputs.iter() {
+		for (info, _) in self.outputs.iter() {
 			let (w, h) = (info.logical_size.width, info.logical_size.height);
-
-			let cached_bg = image_to_cairo_surface(img)?;
-			let cached_blurred_bg = cached_bg.clone();
-			let cached_pixelated_bg = cached_bg.clone();
-			let scratch = cairo::ImageSurface::create(
-				cairo::Format::ARgb32,
-				info.logical_size.width as i32,
-				info.logical_size.height as i32,
-			)
-			.map_err(|e| anyhow::anyhow!("failed to create scratch surface: {e}"))?;
-
 			let wl_output = app
 				.output_state
 				.outputs()
@@ -198,10 +187,8 @@ impl SelectionUI {
 
 			app.surfaces.push(SurfaceData {
 				output: info.clone(),
-				cached_bg,
-				cached_blurred_bg,
-				cached_pixelated_bg,
-				scratch,
+				cached_blurred_bg: None,
+				cached_pixelated_bg: None,
 				_layer: layer,
 				wl_surface,
 				dimensions: (w, h),
@@ -231,7 +218,7 @@ impl SelectionUI {
 					effects_spawned = true;
 					for (i, (info, img)) in self.outputs.iter().enumerate() {
 						let (w, h) = (info.logical_size.width, info.logical_size.height);
-						let img = img.clone();
+						let img = img.0.clone();
 						let tx = tx.clone();
 						let conn_handle = conn.clone();
 						std::thread::spawn(move || {
@@ -249,8 +236,8 @@ impl SelectionUI {
 
 							let _ = tx.send(UserEvent::ProcessingFinished {
 								surface_idx: i,
-								blurred_img,
-								pixelated_img,
+								blurred_img: BgraImage(blurred_img),
+								pixelated_img: BgraImage(pixelated_img),
 							});
 							let _ = conn_handle.flush();
 						});
@@ -266,8 +253,9 @@ impl SelectionUI {
 						pixelated_img,
 					} => {
 						if let Some(sd) = app.surfaces.get_mut(surface_idx) {
-							sd.cached_blurred_bg = image_to_cairo_surface(&blurred_img)?;
-							sd.cached_pixelated_bg = image_to_cairo_surface(&pixelated_img)?;
+							sd.cached_blurred_bg = Some(bgra_image_to_cairo_surface(&blurred_img)?);
+							sd.cached_pixelated_bg =
+								Some(bgra_image_to_cairo_surface(&pixelated_img)?);
 							app.state.lock().unwrap().dirty = true;
 						}
 					}
@@ -290,11 +278,14 @@ impl SelectionUI {
 
 			for i in 0..app.surfaces.len() {
 				if app.surfaces[i].redraw_pending && !app.surfaces[i].waiting_for_frame {
-					if let Err(e) = app.draw(i, &state, &qh) {
-						eprintln!("Draw error: {}", e);
+					match app.draw(i, &state, &qh) {
+						Ok(true) => {
+							app.surfaces[i].waiting_for_frame = true;
+							app.surfaces[i].redraw_pending = false;
+						}
+						Ok(false) => {}
+						Err(e) => eprintln!("Draw error: {}", e),
 					}
-					app.surfaces[i].waiting_for_frame = true;
-					app.surfaces[i].redraw_pending = false;
 				}
 			}
 		}
@@ -332,7 +323,10 @@ impl SelectionUI {
 		let mut has_content = false;
 
 		for (info, img) in self.outputs.iter() {
-			let mut base = img.clone();
+			let mut base = img.0.clone();
+			for pixel in base.as_mut().chunks_exact_mut(4) {
+				pixel.swap(0, 2); // BGRA to RGBA
+			}
 			graphics::apply_annotations(&mut base, &state.annotations, info, &state.config)?;
 
 			let out_x = info.logical_position.x;

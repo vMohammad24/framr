@@ -38,10 +38,8 @@ use crate::selection::{
 
 pub struct SurfaceData {
 	pub output: OutputInfo,
-	pub cached_bg: ImageSurface,
-	pub cached_blurred_bg: ImageSurface,
-	pub cached_pixelated_bg: ImageSurface,
-	pub scratch: ImageSurface,
+	pub cached_blurred_bg: Option<ImageSurface>,
+	pub cached_pixelated_bg: Option<ImageSurface>,
 	pub _layer: LayerSurface,
 	pub wl_surface: WlSurface,
 	pub dimensions: (u32, u32),
@@ -76,32 +74,51 @@ impl AppState {
 		surface_index: usize,
 		state: &SelectionState,
 		qh: &QueueHandle<Self>,
-	) -> Result<()> {
+	) -> Result<bool> {
 		let surface_data = &mut self.surfaces[surface_index];
 		let (width, height) = surface_data.dimensions;
 		let stride = width as i32 * 4;
 
-		let (buffer, canvas) = self
-			.pool
-			.create_buffer(
+		if surface_data.slot.is_none() {
+			let (buffer, _) = self
+				.pool
+				.create_buffer(
+					width as i32,
+					height as i32,
+					stride,
+					wl_shm::Format::Xrgb8888,
+				)
+				.map_err(|e| anyhow!("failed to create buffer: {}", e))?;
+			surface_data.slot = Some(buffer);
+		}
+
+		let buffer = surface_data.slot.as_ref().unwrap();
+		let Some(canvas) = self.pool.canvas(buffer) else {
+			return Ok(false);
+		};
+		let source = &state.source_images[surface_index].1.0;
+		canvas.copy_from_slice(source.as_raw());
+
+		let scratch = unsafe {
+			ImageSurface::create_for_data_unsafe(
+				canvas.as_mut_ptr(),
+				cairo::Format::ARgb32,
 				width as i32,
 				height as i32,
 				stride,
-				wl_shm::Format::Xrgb8888,
 			)
-			.map_err(|e| anyhow!("failed to create buffer: {}", e))?;
+		}
+		.map_err(|e| anyhow!("failed to create Cairo buffer surface: {e}"))?;
+		scratch.mark_dirty();
 
 		{
-			let cr = Context::new(&surface_data.scratch)
-				.map_err(|e| anyhow!("failed to create context: {}", e))?;
+			let cr =
+				Context::new(&scratch).map_err(|e| anyhow!("failed to create context: {}", e))?;
 			cr.push_group();
-
-			if let Err(e) = cr.set_source_surface(&surface_data.cached_bg, 0.0, 0.0) {
-				eprintln!("failed to set source surface: {}", e);
-			}
-			if let Err(e) = cr.paint() {
-				eprintln!("failed to paint: {}", e);
-			}
+			cr.set_source_surface(&scratch, 0.0, 0.0)
+				.map_err(|e| anyhow!("failed to set source surface: {e}"))?;
+			cr.paint()
+				.map_err(|e| anyhow!("failed to paint source surface: {e}"))?;
 
 			for (idx, ann) in state.annotations.iter().enumerate() {
 				ann.tool
@@ -286,12 +303,8 @@ impl AppState {
 			}
 		}
 
-		surface_data.scratch.flush();
-		let cairo_data = surface_data
-			.scratch
-			.data()
-			.map_err(|e| anyhow!("failed to get surface data: {}", e))?;
-		canvas.copy_from_slice(&cairo_data);
+		scratch.flush();
+		drop(scratch);
 
 		surface_data
 			.wl_surface
@@ -306,8 +319,7 @@ impl AppState {
 
 		surface_data.wl_surface.commit();
 
-		surface_data.slot = Some(buffer);
-		Ok(())
+		Ok(true)
 	}
 
 	fn draw_toolbar(
@@ -518,7 +530,22 @@ impl PointerHandler for AppState {
                     state.handle_pointer_release(global_pos, button);
                 }
                 PointerEventKind::Motion { .. } => {
+					let had_global_invalidation = state.dirty;
                     state.handle_pointer_motion(global_pos, self.modifiers.shift, self.modifiers.alt);
+					let interaction_affects_multiple_surfaces = state.is_dragging
+						|| state.is_moving_annotation
+						|| state.annotation_resize_handle.is_some();
+					if state.dirty
+						&& !had_global_invalidation
+						&& !interaction_affects_multiple_surfaces
+					{
+						if let Some(surface) = self.surfaces.iter_mut().find(|surface| {
+							surface.wl_surface == event.surface
+						}) {
+							surface.redraw_pending = true;
+						}
+						state.dirty = false;
+					}
                 }
                 _ => {}
             }

@@ -7,6 +7,9 @@ use smithay_client_toolkit::seat::keyboard::Keysym;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
+#[derive(Clone)]
+pub struct BgraImage(pub RgbaImage);
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Tool {
 	Select,
@@ -271,7 +274,7 @@ pub struct SelectionState {
 	pub is_dragging: bool,
 	pub active_tool: Tool,
 	pub annotations: Vec<Annotation>,
-	pub source_images: Arc<Vec<(OutputInfo, RgbaImage)>>,
+	pub source_images: Arc<Vec<(OutputInfo, BgraImage)>>,
 	pub undo_stack: VecDeque<HistoryAction>,
 	pub redo_stack: VecDeque<HistoryAction>,
 	pub pending_annotation_history: Option<HistoryAction>,
@@ -299,6 +302,7 @@ impl SelectionState {
 	pub fn handle_pointer_enter(&mut self, surface_width: f64, offset: (f64, f64)) {
 		self.last_surface_width = surface_width;
 		self.current_offset = offset;
+		self.dirty = true;
 	}
 
 	pub fn handle_pointer_press(

@@ -98,8 +98,10 @@ impl ToolBehavior for BlurTool {
 	) {
 		let offset_x = surface_data.output.logical_position.x as f64;
 		let offset_y = surface_data.output.logical_position.y as f64;
-		if let Some((x, y, w, h)) = region_rect(ann, offset_x, offset_y) {
-			if let Err(e) = cr.set_source_surface(&surface_data.cached_blurred_bg, 0.0, 0.0) {
+		if let Some((x, y, w, h)) = region_rect(ann, offset_x, offset_y)
+			&& let Some(surface) = &surface_data.cached_blurred_bg
+		{
+			if let Err(e) = cr.set_source_surface(surface, 0.0, 0.0) {
 				eprintln!("failed to set blurred source surface: {}", e);
 			}
 			cr.rectangle(x, y, w, h);
