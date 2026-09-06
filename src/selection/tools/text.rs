@@ -45,6 +45,7 @@ impl ToolBehavior for TextTool {
 			points: vec![global_pos],
 			text: Some(String::new()),
 			color,
+			smart_fill: None,
 		});
 		state.editing_text_idx = Some(index);
 		state.selected_annotation = Some(index);

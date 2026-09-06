@@ -29,6 +29,10 @@ impl ToolBehavior for SelectTool {
 		_ctrl_pressed: bool,
 		config: &SelectionConfig,
 	) {
+		if state.try_begin_selected_annotation_resize(global_pos, 7.0) {
+			return;
+		}
+
 		if config.multi_region_mode
 			&& let Some(idx) = state.selected_region
 			&& let Some(handle) = state.regions[idx].handle_at(global_pos, 7.0)
@@ -52,7 +56,7 @@ impl ToolBehavior for SelectTool {
 				.map(|(idx, _)| idx);
 
 			if let Some(idx) = hit_idx {
-				state.begin_annotation_move();
+				state.begin_annotation_move(idx);
 				state.selected_annotation = Some(idx);
 				state.is_moving_annotation = true;
 				state.move_start_point = Some(global_pos);

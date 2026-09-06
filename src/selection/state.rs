@@ -1,8 +1,11 @@
 use crate::config::{Color, SelectionConfig};
 use crate::selection::tools::*;
 use crate::selection::window::Window;
+use image::RgbaImage;
+use libframr::OutputInfo;
 use smithay_client_toolkit::seat::keyboard::Keysym;
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Tool {
@@ -14,6 +17,7 @@ pub enum Tool {
 	Counter,
 	Blur,
 	Pixelate,
+	SmartFill,
 	Highlight,
 	Text,
 	Annotate,
@@ -30,6 +34,7 @@ impl Tool {
 			Tool::Counter => &CounterTool,
 			Tool::Blur => &BlurTool,
 			Tool::Pixelate => &PixelateTool,
+			Tool::SmartFill => &SmartFillTool,
 			Tool::Highlight => &HighlightTool,
 			Tool::Text => &TextTool,
 			Tool::Annotate => &AnnotateTool,
@@ -46,6 +51,7 @@ impl Tool {
 			Tool::Counter,
 			Tool::Blur,
 			Tool::Pixelate,
+			Tool::SmartFill,
 			Tool::Highlight,
 			Tool::Text,
 			Tool::Annotate,
@@ -64,12 +70,34 @@ impl Tool {
 	}
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct Annotation {
 	pub tool: Tool,
 	pub points: Vec<(f64, f64)>,
 	pub text: Option<String>,
 	pub color: Color,
+	pub smart_fill: Option<SmartFillPattern>,
+}
+
+impl Annotation {
+	pub fn rectangular_region(&self) -> Option<SelectionRegion> {
+		if self.points.len() < 2 {
+			return None;
+		}
+
+		let region = SelectionRegion::new(self.points[0], self.points[1]);
+		region.is_valid().then_some(region)
+	}
+}
+
+#[derive(Clone, PartialEq)]
+pub enum SmartFillPattern {
+	Solid(Color),
+	Field {
+		width: u32,
+		height: u32,
+		pixels: Vec<Color>,
+	},
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -96,6 +124,14 @@ impl SelectionRegion {
 
 	pub fn is_valid(self) -> bool {
 		self.width() > 0.0 && self.height() > 0.0
+	}
+
+	pub fn integer_bounds(self) -> (i64, i64, i64, i64) {
+		let left = self.start.0.floor() as i64;
+		let top = self.start.1.floor() as i64;
+		let right = (self.end.0.ceil() as i64).max(left + 1);
+		let bottom = (self.end.1.ceil() as i64).max(top + 1);
+		(left, top, right, bottom)
 	}
 
 	pub fn contains(self, point: (f64, f64)) -> bool {
@@ -198,6 +234,10 @@ pub enum HistoryAction {
 		dx: f64,
 		dy: f64,
 	},
+	ReplaceAnnotation {
+		index: usize,
+		annotation: Annotation,
+	},
 	SwapAnnotations {
 		first: usize,
 		second: usize,
@@ -230,6 +270,7 @@ pub struct SelectionState {
 	pub is_dragging: bool,
 	pub active_tool: Tool,
 	pub annotations: Vec<Annotation>,
+	pub source_images: Arc<Vec<(OutputInfo, RgbaImage)>>,
 	pub undo_stack: VecDeque<HistoryAction>,
 	pub redo_stack: VecDeque<HistoryAction>,
 	pub pending_annotation_history: Option<HistoryAction>,
@@ -238,6 +279,9 @@ pub struct SelectionState {
 	pub is_moving_annotation: bool,
 	pub move_start_point: Option<(f64, f64)>,
 	pub annotation_draw_origin: Option<(f64, f64)>,
+	pub annotation_resize_index: Option<usize>,
+	pub annotation_resize_handle: Option<ResizeHandle>,
+	pub original_annotation: Option<Annotation>,
 	pub annotation_move_delta: (f64, f64),
 	pub finished: bool,
 	pub cancelled: bool,
@@ -301,7 +345,9 @@ impl SelectionState {
 		}
 
 		if mouse_btn == MouseButton::Right {
-			if self.is_dragging {
+			if self.annotation_resize_handle.is_some() {
+				self.cancel_annotation_resize();
+			} else if self.is_dragging {
 				self.is_dragging = false;
 				self.annotation_draw_origin = None;
 				if self.active_tool == Tool::Select {
@@ -329,7 +375,9 @@ impl SelectionState {
 		self.current = global_pos;
 		let mouse_btn = MouseButton::from_raw(button);
 		if mouse_btn == MouseButton::Left {
-			if self.is_moving_annotation {
+			if self.annotation_resize_handle.is_some() {
+				self.finish_annotation_resize();
+			} else if self.is_moving_annotation {
 				self.finish_annotation_move();
 				self.is_moving_annotation = false;
 				self.move_start_point = None;
@@ -354,7 +402,19 @@ impl SelectionState {
 	) {
 		self.current = global_pos;
 
-		if self.is_moving_annotation {
+		if let (Some(handle), Some(original), Some(index)) = (
+			self.annotation_resize_handle,
+			self.original_annotation.as_ref(),
+			self.annotation_resize_index,
+		) {
+			if let Some(region) = original.rectangular_region()
+				&& let Some(annotation) = self.annotations.get_mut(index)
+			{
+				let resized = region.resized(handle, global_pos);
+				annotation.points[0] = resized.start;
+				annotation.points[1] = resized.end;
+			}
+		} else if self.is_moving_annotation {
 			if let (Some(start), Some(idx)) = (self.move_start_point, self.selected_annotation) {
 				let mut dx = global_pos.0 - start.0;
 				let mut dy = global_pos.1 - start.1;
@@ -406,8 +466,76 @@ impl SelectionState {
 		}
 	}
 
-	pub fn begin_annotation_move(&mut self) {
+	pub fn begin_annotation_move(&mut self, index: usize) {
 		self.annotation_move_delta = (0.0, 0.0);
+		self.original_annotation = self
+			.annotations
+			.get(index)
+			.filter(|annotation| annotation.tool.behavior().requires_full_move_history())
+			.cloned();
+	}
+
+	pub fn try_begin_selected_annotation_resize(
+		&mut self,
+		point: (f64, f64),
+		handle_radius: f64,
+	) -> bool {
+		let Some(index) = self.selected_annotation else {
+			return false;
+		};
+		let Some(annotation) = self.annotations.get(index) else {
+			return false;
+		};
+		if !annotation.tool.behavior().is_resizable() {
+			return false;
+		}
+		let Some(handle) = annotation
+			.rectangular_region()
+			.and_then(|region| region.handle_at(point, handle_radius))
+		else {
+			return false;
+		};
+
+		self.original_annotation = Some(annotation.clone());
+		self.annotation_resize_index = Some(index);
+		self.annotation_resize_handle = Some(handle);
+		true
+	}
+
+	fn finish_annotation_resize(&mut self) {
+		self.annotation_resize_handle = None;
+		let index = self.annotation_resize_index.take();
+		let original = self.original_annotation.take();
+		if let Some(index) = index
+			&& let Some(tool) = self
+				.annotations
+				.get(index)
+				.map(|annotation| annotation.tool)
+		{
+			tool.behavior().on_resize_finished(self, index);
+		}
+		if let (Some(index), Some(original)) = (index, original)
+			&& self
+				.annotations
+				.get(index)
+				.is_some_and(|annotation| annotation != &original)
+		{
+			self.push_history(HistoryAction::ReplaceAnnotation {
+				index,
+				annotation: original,
+			});
+		}
+	}
+
+	fn cancel_annotation_resize(&mut self) {
+		self.annotation_resize_handle = None;
+		if let (Some(index), Some(original)) = (
+			self.annotation_resize_index.take(),
+			self.original_annotation.take(),
+		) && let Some(annotation) = self.annotations.get_mut(index)
+		{
+			*annotation = original;
+		}
 	}
 
 	fn finish_annotation_move(&mut self) {
@@ -423,12 +551,28 @@ impl SelectionState {
 		if let Some((index, dx, dy)) = delta
 			&& (dx != 0.0 || dy != 0.0)
 		{
-			self.push_history(HistoryAction::TranslateAnnotation {
-				index,
-				dx: -dx,
-				dy: -dy,
-			});
+			if let Some(tool) = self
+				.annotations
+				.get(index)
+				.map(|annotation| annotation.tool)
+			{
+				tool.behavior().on_move_finished(self, index);
+			}
+
+			if let Some(original) = self.original_annotation.take() {
+				self.push_history(HistoryAction::ReplaceAnnotation {
+					index,
+					annotation: original,
+				});
+			} else {
+				self.push_history(HistoryAction::TranslateAnnotation {
+					index,
+					dx: -dx,
+					dy: -dy,
+				});
+			}
 		}
+		self.original_annotation = None;
 	}
 
 	pub fn add_annotation(&mut self, annotation: Annotation) -> usize {
@@ -443,6 +587,13 @@ impl SelectionState {
 		self.annotations.push(annotation);
 		self.pending_annotation_history = Some(HistoryAction::RemoveAnnotation { index });
 		index
+	}
+
+	pub(crate) fn pending_annotation_index(&self) -> Option<usize> {
+		match self.pending_annotation_history {
+			Some(HistoryAction::RemoveAnnotation { index }) => Some(index),
+			_ => None,
+		}
 	}
 
 	fn commit_annotation_history(&mut self) {
@@ -529,6 +680,12 @@ impl SelectionState {
 					dy: -dy,
 				})
 			}
+			HistoryAction::ReplaceAnnotation { index, annotation }
+				if index < self.annotations.len() =>
+			{
+				let annotation = std::mem::replace(&mut self.annotations[index], annotation);
+				Some(HistoryAction::ReplaceAnnotation { index, annotation })
+			}
 			HistoryAction::SwapAnnotations { first, second }
 				if first < self.annotations.len() && second < self.annotations.len() =>
 			{
@@ -567,6 +724,9 @@ impl SelectionState {
 		self.pending_region_history = None;
 		self.move_start_point = None;
 		self.annotation_draw_origin = None;
+		self.annotation_resize_index = None;
+		self.annotation_resize_handle = None;
+		self.original_annotation = None;
 		self.annotation_move_delta = (0.0, 0.0);
 		self.original_region = None;
 		self.start = None;

@@ -2,6 +2,10 @@ use crate::selection::graphics;
 use crate::selection::state::{Annotation, SelectionState};
 
 pub(super) fn try_pick_annotation(state: &mut SelectionState, global_pos: (f64, f64)) -> bool {
+	if state.try_begin_selected_annotation_resize(global_pos, 7.0) {
+		return true;
+	}
+
 	let hit_idx = state
 		.annotations
 		.iter()
@@ -11,7 +15,7 @@ pub(super) fn try_pick_annotation(state: &mut SelectionState, global_pos: (f64, 
 		.map(|(idx, _)| idx);
 
 	if let Some(idx) = hit_idx {
-		state.begin_annotation_move();
+		state.begin_annotation_move(idx);
 		state.selected_annotation = Some(idx);
 		state.is_moving_annotation = true;
 		state.move_start_point = Some(global_pos);
@@ -21,21 +25,24 @@ pub(super) fn try_pick_annotation(state: &mut SelectionState, global_pos: (f64, 
 	}
 }
 
-pub(super) fn begin_annotation(state: &mut SelectionState, global_pos: (f64, f64)) {
+pub(super) fn begin_annotation(state: &mut SelectionState, global_pos: (f64, f64)) -> usize {
 	let color = state.config.annotation_color;
-	state.begin_annotation_history(Annotation {
+	let index = state.begin_annotation_history(Annotation {
 		tool: state.active_tool,
 		points: vec![global_pos],
 		text: None,
 		color,
+		smart_fill: None,
 	});
 	state.editing_text_idx = None;
 	state.is_dragging = true;
+	index
 }
 
 pub(super) fn two_point_motion(state: &mut SelectionState, global_pos: (f64, f64)) {
 	if state.is_dragging
-		&& let Some(ann) = state.annotations.last_mut()
+		&& let Some(index) = state.pending_annotation_index()
+		&& let Some(ann) = state.annotations.get_mut(index)
 	{
 		if ann.points.len() > 1 {
 			ann.points[1] = global_pos;

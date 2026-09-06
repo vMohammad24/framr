@@ -158,6 +158,22 @@ impl AppState {
 							max_y - min_y + 10.0,
 						);
 						cr.stroke().ok();
+
+						if ann.tool == Tool::SmartFill
+							&& let Some(region) = ann.rectangular_region()
+						{
+							cr.set_dash(&[], 0.0);
+							for (_, handle) in region.handle_positions() {
+								let handle_x = handle.0 - offset_x;
+								let handle_y = handle.1 - offset_y;
+								cr.set_source_rgba(0.0, 0.0, 0.0, 0.8);
+								cr.rectangle(handle_x - 4.0, handle_y - 4.0, 8.0, 8.0);
+								cr.fill().ok();
+								cr.set_source_rgb(1.0, 1.0, 1.0);
+								cr.rectangle(handle_x - 2.0, handle_y - 2.0, 4.0, 4.0);
+								cr.fill().ok();
+							}
+						}
 					}
 					cr.set_dash(&[], 0.0);
 				}

@@ -9,6 +9,7 @@ mod highlight;
 mod pixelate;
 mod rectangle;
 mod select;
+mod smart_fill;
 mod text;
 
 pub use annotate::AnnotateTool;
@@ -21,6 +22,7 @@ pub use highlight::HighlightTool;
 pub use pixelate::PixelateTool;
 pub use rectangle::RectangleTool;
 pub use select::SelectTool;
+pub use smart_fill::SmartFillTool;
 pub use text::TextTool;
 
 use cairo::Context;
@@ -80,6 +82,17 @@ pub trait ToolBehavior: Send + Sync {
 		_shift_pressed: bool,
 		_alt_pressed: bool,
 	) {
+	}
+
+	fn on_resize_finished(&self, _state: &mut SelectionState, _annotation_index: usize) {}
+	fn on_move_finished(&self, _state: &mut SelectionState, _annotation_index: usize) {}
+
+	fn requires_full_move_history(&self) -> bool {
+		false
+	}
+
+	fn is_resizable(&self) -> bool {
+		false
 	}
 
 	fn draw(

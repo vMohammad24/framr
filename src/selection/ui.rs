@@ -29,7 +29,7 @@ pub enum UserEvent {
 }
 
 pub struct SelectionUI {
-	outputs: Vec<(libframr::OutputInfo, RgbaImage)>,
+	outputs: Arc<Vec<(libframr::OutputInfo, RgbaImage)>>,
 	state: Arc<Mutex<SelectionState>>,
 }
 
@@ -75,9 +75,10 @@ impl SelectionUI {
 		}
 
 		let windows = get_windows();
+		let outputs = Arc::new(outputs);
 
 		Ok(Self {
-			outputs,
+			outputs: outputs.clone(),
 			state: Arc::new(Mutex::new(SelectionState {
 				start: None,
 				end: None,
@@ -89,6 +90,7 @@ impl SelectionUI {
 				is_dragging: false,
 				active_tool: Tool::Select,
 				annotations: Vec::new(),
+				source_images: outputs,
 				undo_stack: VecDeque::new(),
 				redo_stack: VecDeque::new(),
 				pending_annotation_history: None,
@@ -97,6 +99,9 @@ impl SelectionUI {
 				is_moving_annotation: false,
 				move_start_point: None,
 				annotation_draw_origin: None,
+				annotation_resize_index: None,
+				annotation_resize_handle: None,
+				original_annotation: None,
 				annotation_move_delta: (0.0, 0.0),
 				finished: false,
 				cancelled: false,
@@ -123,7 +128,7 @@ impl SelectionUI {
 		let layer_shell = LayerShell::bind(&globals, &qh)?;
 		let seat_state = SeatState::new(&globals, &qh);
 		let mut total_buffer_size = 0;
-		for (info, _) in &self.outputs {
+		for (info, _) in self.outputs.iter() {
 			total_buffer_size += (info.logical_size.width * info.logical_size.height * 4) * 2;
 		}
 		let pool_size = std::cmp::max(1024 * 1024 * 64, total_buffer_size as usize);
@@ -326,7 +331,7 @@ impl SelectionUI {
 		let mut final_img = RgbaImage::new(width, height);
 		let mut has_content = false;
 
-		for (info, img) in &self.outputs {
+		for (info, img) in self.outputs.iter() {
 			let mut base = img.clone();
 			graphics::apply_annotations(&mut base, &state.annotations, info, &state.config)?;
 
