@@ -59,8 +59,19 @@ pub fn get_window_at_pos(pos: (f64, f64), windows: &[Window]) -> Option<usize> {
 
 pub fn get_hypr_windows() -> Result<Vec<Window>> {
 	#[derive(Deserialize)]
-	struct HyprWorkspaceRef {
-		id: i32,
+	#[serde(untagged)]
+	enum HyprWorkspaceRef {
+		New { address: String },
+		Old { id: i32 },
+	}
+
+	impl HyprWorkspaceRef {
+		fn address(&self) -> String {
+			match self {
+				Self::New { address } => address.clone(),
+				Self::Old { id } => id.to_string(),
+			}
+		}
 	}
 
 	#[derive(Deserialize)]
@@ -71,7 +82,8 @@ pub fn get_hypr_windows() -> Result<Vec<Window>> {
 		workspace: HyprWorkspaceRef,
 		floating: bool,
 		fullscreen: u8,
-		#[serde(rename = "overFullscreen", alias = "allowedOverFullscreen", default)]
+
+		#[serde(rename = "allowedOverFullscreen", alias = "overFullscreen", default)]
 		over_fullscreen: bool,
 		visible: bool,
 		#[serde(rename = "focusHistoryID")]
@@ -103,12 +115,18 @@ pub fn get_hypr_windows() -> Result<Vec<Window>> {
 	let clients: Vec<HyprClient> = serde_json::from_str(&hypr_query("j/clients")?)
 		.context("Failed to parse Hyprland clients JSON")?;
 
+	let active_workspaces: Vec<String> = monitors
+		.iter()
+		.map(|m| m.active_workspace.address())
+		.collect();
+
 	let windows = clients
 		.into_iter()
 		.filter(|c| {
-			monitors
-				.iter()
-				.any(|m| m.active_workspace.id == c.workspace.id && c.visible)
+			c.visible
+				&& active_workspaces
+					.iter()
+					.any(|workspace| *workspace == c.workspace.address())
 		})
 		.map(|c| {
 			let layer_base: i32 = if c.over_fullscreen {
