@@ -2,8 +2,8 @@ mod record;
 
 use crate::RecordingConfig;
 use crate::backend::{CaptureBackend, RecordingHandle};
-use crate::convert::convert_to_rgba;
-use crate::output::{LogicalRegion, OutputInfo, PixelFormat};
+use crate::convert::{CapturePixelOrder, convert_to_bgra, convert_to_rgba};
+use crate::output::{BgraImage, LogicalRegion, OutputInfo, PixelFormat};
 use anyhow::{Result, anyhow};
 use dbus::arg::{self, RefArg};
 use dbus::blocking::SyncConnection;
@@ -32,7 +32,11 @@ impl KdeBackend {
 		})
 	}
 
-	fn perform_kwin_capture<F>(&self, capture_call: F) -> Result<RgbaImage>
+	fn perform_kwin_capture<F>(
+		&self,
+		pixel_order: CapturePixelOrder,
+		capture_call: F,
+	) -> Result<RgbaImage>
 	where
 		F: FnOnce(
 			&dbus::blocking::Proxy<&SyncConnection>,
@@ -64,10 +68,15 @@ impl KdeBackend {
 			.map_err(|_| anyhow!("Pipe thread panicked"))?
 			.map_err(|e| anyhow!("Failed to read from KWin pipe: {}", e))?;
 
-		self.process_kwin_data(raw_data, dict)
+		self.process_kwin_data(raw_data, dict, pixel_order)
 	}
 
-	fn process_kwin_data(&self, mut raw: Vec<u8>, dict: arg::PropMap) -> Result<RgbaImage> {
+	fn process_kwin_data(
+		&self,
+		mut raw: Vec<u8>,
+		dict: arg::PropMap,
+		pixel_order: CapturePixelOrder,
+	) -> Result<RgbaImage> {
 		let get_u32 = |key: &str| -> Result<u32> {
 			dict.get(key)
 				.ok_or_else(|| anyhow!("No {}", key))?
@@ -117,8 +126,13 @@ impl KdeBackend {
 			raw = packed_raw;
 		}
 
-		convert_to_rgba(&mut raw, pixel_format)
-			.ok_or_else(|| anyhow!("Failed to convert pixel format"))?;
+		let ok = match pixel_order {
+			CapturePixelOrder::Bgra => convert_to_bgra(&mut raw, pixel_format),
+			CapturePixelOrder::Rgba => convert_to_rgba(&mut raw, pixel_format).is_some(),
+		};
+		if !ok {
+			return Err(anyhow!("Failed to convert pixel format"));
+		}
 
 		ImageBuffer::<Rgba<u8>, Vec<u8>>::from_raw(width, height, raw)
 			.ok_or_else(|| anyhow!("Failed to create image buffer"))
@@ -152,7 +166,7 @@ impl CaptureBackend for KdeBackend {
 			arg::Variant(Box::new(include_cursor)),
 		);
 
-		self.perform_kwin_capture(|proxy, fd| {
+		self.perform_kwin_capture(CapturePixelOrder::Rgba, |proxy, fd| {
 			let (dict,): (arg::PropMap,) = proxy.method_call(
 				"org.kde.KWin.ScreenShot2",
 				"CaptureScreen",
@@ -162,6 +176,31 @@ impl CaptureBackend for KdeBackend {
 		})
 	}
 
+	fn capture_each_output_bgra(
+		&self,
+		include_cursor: bool,
+	) -> Result<Vec<(OutputInfo, BgraImage)>> {
+		let outputs = self.get_outputs()?;
+		let mut results = Vec::with_capacity(outputs.len());
+		for output in outputs {
+			let mut options: arg::PropMap = HashMap::new();
+			options.insert(
+				"include-cursor".to_string(),
+				arg::Variant(Box::new(include_cursor)),
+			);
+			let img = self.perform_kwin_capture(CapturePixelOrder::Bgra, |proxy, fd| {
+				let (dict,): (arg::PropMap,) = proxy.method_call(
+					"org.kde.KWin.ScreenShot2",
+					"CaptureScreen",
+					(output.name.as_str(), options, fd),
+				)?;
+				Ok(dict)
+			})?;
+			results.push((output, BgraImage(img)));
+		}
+		Ok(results)
+	}
+
 	fn capture_all_outputs(&self, include_cursor: bool) -> Result<RgbaImage> {
 		let mut options: arg::PropMap = HashMap::new();
 		options.insert(
@@ -169,7 +208,7 @@ impl CaptureBackend for KdeBackend {
 			arg::Variant(Box::new(include_cursor)),
 		);
 
-		self.perform_kwin_capture(|proxy, fd| {
+		self.perform_kwin_capture(CapturePixelOrder::Rgba, |proxy, fd| {
 			let (dict,): (arg::PropMap,) = proxy.method_call(
 				"org.kde.KWin.ScreenShot2",
 				"CaptureWorkspace",

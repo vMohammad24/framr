@@ -1,7 +1,9 @@
 pub use connection::FramrConnection;
 pub use error::FramrError;
 pub use frame::{DmaBuf, DmaBufPlane, Frame, FrameBytes, FrameData};
-pub use output::{FrameFormat, LogicalRegion, OutputInfo, PixelFormat, Position, Size, Transform};
+pub use output::{
+	BgraImage, FrameFormat, LogicalRegion, OutputInfo, PixelFormat, Position, Size, Transform,
+};
 pub mod backend;
 mod buffer;
 mod connection;

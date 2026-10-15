@@ -13,10 +13,10 @@ use crate::backend::wlr::shm::{
 	ShmPool, ShmPoolError, WlBufferGuard, WlFrameGuard, allocate_shm_buffer, pixel_format_to_wl_shm,
 };
 use crate::backend::{CaptureBackend, RecordingHandle};
-use crate::convert::convert_to_rgba;
+use crate::convert::{CapturePixelOrder, convert_to_bgra, convert_to_rgba};
 use crate::encoding::FrameMessage;
 use crate::error::FramrError;
-use crate::output::{FrameFormat, LogicalRegion, OutputInfo};
+use crate::output::{BgraImage, FrameFormat, LogicalRegion, OutputInfo};
 use crate::transform::apply_transform;
 use crate::{Frame, FrameData};
 
@@ -71,28 +71,48 @@ impl CaptureBackend for WlrBackend {
 			include_cursor,
 		)?;
 
-		let bytes = frame.bytes()?;
-		let stride = frame.format.stride as usize;
-		let row_size = frame.format.width as usize * frame.format.format.bytes_per_pixel();
-		let mut raw = Vec::with_capacity(row_size * frame.format.height as usize);
-		for row in bytes
-			.as_ref()
-			.chunks_exact(stride)
-			.take(frame.format.height as usize)
-		{
-			raw.extend_from_slice(&row[..row_size]);
-		}
+		let frame_format = frame.format;
+		let frame_transform = frame.transform;
+		let stride = frame_format.stride as usize;
+		let row_size = frame_format.width as usize * frame_format.format.bytes_per_pixel();
+		let height = frame_format.height as usize;
 
-		convert_to_rgba(&mut raw, frame.format.format)
+		let mut raw = {
+			let bytes = frame.bytes()?;
+			let slice = bytes.as_ref();
+			if stride == row_size {
+				slice[..row_size * height].to_vec()
+			} else {
+				let mut packed = Vec::with_capacity(row_size * height);
+				for row in slice.chunks_exact(stride).take(height) {
+					packed.extend_from_slice(&row[..row_size]);
+				}
+				packed
+			}
+		};
+		drop(frame);
+
+		convert_to_rgba(&mut raw, frame_format.format)
 			.ok_or_else(|| anyhow::anyhow!("unsupported pixel format"))?;
 
-		let width = frame.format.width as u32;
-		let height = frame.format.height as u32;
+		let width = frame_format.width as u32;
+		let height = frame_format.height as u32;
 
 		let image = ImageBuffer::<Rgba<u8>, Vec<u8>>::from_raw(width, height, raw)
 			.ok_or_else(|| anyhow::anyhow!("failed to create image buffer"))?;
 
-		Ok(apply_transform(image, frame.transform))
+		Ok(apply_transform(image, frame_transform))
+	}
+
+	fn capture_each_output_bgra(
+		&self,
+		include_cursor: bool,
+	) -> Result<Vec<(OutputInfo, BgraImage)>> {
+		let captured = self.capture_all_outputs_raw(include_cursor, CapturePixelOrder::Bgra)?;
+		Ok(captured
+			.into_iter()
+			.map(|(output, img)| (output, BgraImage(img)))
+			.collect())
 	}
 
 	fn capture_all_outputs(&self, include_cursor: bool) -> Result<RgbaImage> {
@@ -104,87 +124,14 @@ impl CaptureBackend for WlrBackend {
 		let total_width = bounds.size.width;
 		let total_height = bounds.size.height;
 
-		let mut state = MultiCaptureState::new(outputs);
-		let mut event_queue = self.conn.new_event_queue::<MultiCaptureState>();
-		let qh = event_queue.handle();
-
-		let screencopy_mgr: ZwlrScreencopyManagerV1 = self
-			.globals
-			.bind(&qh, 3..=3, ())
-			.map_err(|_| FramrError::ProtocolNotSupported("wlr-screencopy".into()))?;
-
-		let cursor_val = if include_cursor { 1 } else { 0 };
-
-		let frames: Vec<WlFrameGuard> = outputs
-			.iter()
-			.map(|output| {
-				let wl_output = &self.wl_outputs[output.id];
-				WlFrameGuard(screencopy_mgr.capture_output(cursor_val, wl_output, &qh, output.id))
-			})
-			.collect();
-
-		while !state.all_buffer_done() {
-			event_queue.blocking_dispatch(&mut state)?;
-		}
-
-		let mut buffers_files: Vec<(WlBufferGuard, std::fs::File, FrameFormat)> =
-			Vec::with_capacity(outputs.len());
-
-		let shm: WlShm = self.globals.bind(&qh, 1..=1, ())?;
-
-		for (i, slot) in state.slots.iter().enumerate() {
-			let frame_format = slot
-				.formats
-				.first()
-				.ok_or(FramrError::NoSupportedBufferFormat)?;
-			let frame_format = *frame_format;
-
-			let wl_fmt = pixel_format_to_wl_shm(frame_format.format);
-			let (buffer, file, _) = allocate_shm_buffer(
-				&shm,
-				&qh,
-				frame_format.width,
-				frame_format.height,
-				frame_format.stride,
-				wl_fmt,
-			)?;
-
-			let buffer = WlBufferGuard(buffer);
-			frames[i].copy(&buffer);
-			buffers_files.push((buffer, file, frame_format));
-		}
-
-		while !state.all_finished() {
-			event_queue.blocking_dispatch(&mut state)?;
-		}
-
+		let captured = self.capture_all_outputs_raw(include_cursor, CapturePixelOrder::Rgba)?;
 		let mut composite = RgbaImage::new(total_width, total_height);
 
-		for (i, output) in outputs.iter().enumerate() {
-			if state.slots[i].frame_state == FrameState::Failed {
-				return Err(FramrError::FrameCaptureFailed.into());
-			}
-
-			let (_buffer, file, frame_format) = &buffers_files[i];
-			let mmap = unsafe { memmap2::Mmap::map(file)? };
-
-			let mut raw = mmap.to_vec();
-
-			convert_to_rgba(&mut raw, frame_format.format)
-				.ok_or_else(|| anyhow::anyhow!("unsupported pixel format"))?;
-
-			let width = frame_format.width as u32;
-			let height = frame_format.height as u32;
-
-			let image = ImageBuffer::<Rgba<u8>, Vec<u8>>::from_raw(width, height, raw)
-				.ok_or_else(|| anyhow::anyhow!("failed to create image buffer"))?;
-
-			let image = apply_transform(image, state.slots[i].transform);
-
+		for (output, image) in captured {
 			let x = (output.logical_position.x - min_x) as i64;
 			let y = (output.logical_position.y - min_y) as i64;
 
-			image::imageops::overlay(&mut composite, &image, x, y);
+			image::imageops::replace(&mut composite, &image, x, y);
 		}
 
 		Ok(composite)
@@ -368,6 +315,117 @@ impl CaptureBackend for WlrBackend {
 }
 
 impl WlrBackend {
+	fn capture_all_outputs_raw(
+		&self,
+		include_cursor: bool,
+		pixel_order: CapturePixelOrder,
+	) -> Result<Vec<(OutputInfo, RgbaImage)>> {
+		let outputs = &self.outputs;
+		if outputs.is_empty() {
+			return Err(FramrError::NoOutputs.into());
+		}
+
+		let mut state = MultiCaptureState::new(outputs);
+		let mut event_queue = self.conn.new_event_queue::<MultiCaptureState>();
+		let qh = event_queue.handle();
+
+		let screencopy_mgr: ZwlrScreencopyManagerV1 = self
+			.globals
+			.bind(&qh, 3..=3, ())
+			.map_err(|_| FramrError::ProtocolNotSupported("wlr-screencopy".into()))?;
+
+		let cursor_val = if include_cursor { 1 } else { 0 };
+
+		let frames: Vec<WlFrameGuard> = outputs
+			.iter()
+			.map(|output| {
+				let wl_output = &self.wl_outputs[output.id];
+				WlFrameGuard(screencopy_mgr.capture_output(cursor_val, wl_output, &qh, output.id))
+			})
+			.collect();
+
+		while !state.all_buffer_done() {
+			event_queue.blocking_dispatch(&mut state)?;
+		}
+
+		let mut buffers_files: Vec<(WlBufferGuard, std::fs::File, memmap2::Mmap, FrameFormat)> =
+			Vec::with_capacity(outputs.len());
+
+		let shm: WlShm = self.globals.bind(&qh, 1..=1, ())?;
+
+		for (i, slot) in state.slots.iter().enumerate() {
+			let frame_format = *slot
+				.formats
+				.first()
+				.ok_or(FramrError::NoSupportedBufferFormat)?;
+
+			let wl_fmt = pixel_format_to_wl_shm(frame_format.format);
+			let (buffer, file, mmap) = allocate_shm_buffer(
+				&shm,
+				&qh,
+				frame_format.width,
+				frame_format.height,
+				frame_format.stride,
+				wl_fmt,
+			)?;
+
+			let buffer = WlBufferGuard(buffer);
+			frames[i].copy(&buffer);
+			buffers_files.push((buffer, file, mmap, frame_format));
+		}
+
+		while !state.all_finished() {
+			event_queue.blocking_dispatch(&mut state)?;
+		}
+		drop(frames);
+
+		let mut captured = Vec::with_capacity(outputs.len());
+
+		for (i, ((buffer, file, mmap, frame_format), output)) in
+			buffers_files.into_iter().zip(outputs.iter()).enumerate()
+		{
+			if state.slots[i].frame_state == FrameState::Failed {
+				return Err(FramrError::FrameCaptureFailed.into());
+			}
+
+			let stride = frame_format.stride as usize;
+			let row_size = frame_format.width as usize * frame_format.format.bytes_per_pixel();
+			let height = frame_format.height as usize;
+
+			let mut raw = if stride == row_size {
+				mmap[..row_size * height].to_vec()
+			} else {
+				let mut packed = Vec::with_capacity(row_size * height);
+				for row in mmap.chunks_exact(stride).take(height) {
+					packed.extend_from_slice(&row[..row_size]);
+				}
+				packed
+			};
+			drop(mmap);
+			drop(file);
+			drop(buffer);
+
+			let ok = match pixel_order {
+				CapturePixelOrder::Bgra => convert_to_bgra(&mut raw, frame_format.format),
+				CapturePixelOrder::Rgba => convert_to_rgba(&mut raw, frame_format.format).is_some(),
+			};
+			if !ok {
+				return Err(anyhow::anyhow!("unsupported pixel format"));
+			}
+
+			let width = frame_format.width as u32;
+			let height = frame_format.height as u32;
+
+			let image = ImageBuffer::<Rgba<u8>, Vec<u8>>::from_raw(width, height, raw)
+				.ok_or_else(|| anyhow::anyhow!("failed to create image buffer"))?;
+
+			let image = apply_transform(image, state.slots[i].transform);
+			captured.push((output.clone(), image));
+		}
+
+		Ok(captured)
+	}
+
 	#[expect(
 		clippy::too_many_arguments,
 		reason = "capture loop inputs mirror the Wayland request and its channel endpoints"
@@ -434,7 +492,7 @@ impl WlrBackend {
 					output_info.physical_size.height as i32,
 				),
 				is_region,
-				dmabuf_modifiers: dmabuf_modifiers.clone(),
+				dmabuf_modifiers: std::mem::take(&mut dmabuf_modifiers),
 				..Default::default()
 			};
 			let frame = WlFrameGuard(if let Some(region) = region {
@@ -458,7 +516,7 @@ impl WlrBackend {
 				event_queue.blocking_dispatch(&mut state)?;
 			}
 
-			dmabuf_modifiers = state.dmabuf_modifiers.clone();
+			dmabuf_modifiers = std::mem::take(&mut state.dmabuf_modifiers);
 			let dmabuf_format = state.dmabuf_formats.iter().find(|format| {
 				dmabuf_modifiers.iter().any(|(fourcc, modifier)| {
 					drm_fourcc::DrmFourcc::try_from(*fourcc)
@@ -471,13 +529,12 @@ impl WlrBackend {
 			let use_dma = *use_dmabuf.get_or_insert_with(|| {
 				dmabuf_format.is_some() && dmabuf_pool.is_some() && linux_dmabuf.is_some()
 			});
-			let frame_format = if use_dma {
+			let frame_format = *(if use_dma {
 				dmabuf_format
 			} else {
 				state.formats.first()
 			}
-			.ok_or(FramrError::NoSupportedBufferFormat)?;
-			let frame_format = *frame_format;
+			.ok_or(FramrError::NoSupportedBufferFormat)?);
 
 			if let Some(ref f) = pool_format {
 				if f.format != frame_format.format

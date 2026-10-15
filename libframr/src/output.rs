@@ -1,4 +1,9 @@
+use image::RgbaImage;
 use std::fmt;
+
+#[repr(transparent)]
+#[derive(Clone, Debug)]
+pub struct BgraImage(pub RgbaImage);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Transform {

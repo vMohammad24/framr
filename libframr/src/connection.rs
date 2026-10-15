@@ -2,7 +2,7 @@ use crate::RecordingConfig;
 use crate::backend::kde::KdeBackend;
 use crate::backend::wlr::WlrBackend;
 use crate::backend::{CaptureBackend, RecordingHandle};
-use crate::output::{LogicalRegion, OutputInfo};
+use crate::output::{BgraImage, LogicalRegion, OutputInfo};
 use anyhow::Result;
 use image::RgbaImage;
 
@@ -54,6 +54,13 @@ impl FramrConnection {
 		include_cursor: bool,
 	) -> Result<RgbaImage> {
 		self.backend.capture_output(output, None, include_cursor)
+	}
+
+	pub fn screenshot_each_output_bgra(
+		&self,
+		include_cursor: bool,
+	) -> Result<Vec<(OutputInfo, BgraImage)>> {
+		self.backend.capture_each_output_bgra(include_cursor)
 	}
 
 	pub fn screenshot_region(

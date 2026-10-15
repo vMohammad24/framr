@@ -1,5 +1,5 @@
 use crate::RecordingConfig;
-use crate::output::{LogicalRegion, OutputInfo};
+use crate::output::{BgraImage, LogicalRegion, OutputInfo};
 use anyhow::Result;
 use image::RgbaImage;
 
@@ -17,6 +17,22 @@ pub trait CaptureBackend: Send + Sync {
 		include_cursor: bool,
 	) -> Result<RgbaImage>;
 	fn capture_all_outputs(&self, include_cursor: bool) -> Result<RgbaImage>;
+
+	fn capture_each_output_bgra(
+		&self,
+		include_cursor: bool,
+	) -> Result<Vec<(OutputInfo, BgraImage)>> {
+		let outputs = self.get_outputs()?;
+		let mut results = Vec::with_capacity(outputs.len());
+		for output in outputs {
+			let mut img = self.capture_output(&output, None, include_cursor)?;
+			for pixel in img.as_mut().chunks_exact_mut(4) {
+				pixel.swap(0, 2);
+			}
+			results.push((output, BgraImage(img)));
+		}
+		Ok(results)
+	}
 
 	fn start_recording_all(
 		&self,
