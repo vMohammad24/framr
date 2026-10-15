@@ -1,14 +1,11 @@
 use crate::config::{Color, SelectionConfig};
 use crate::selection::tools::*;
 use crate::selection::window::Window;
-use image::RgbaImage;
+pub use libframr::BgraImage;
 use libframr::OutputInfo;
 use smithay_client_toolkit::seat::keyboard::Keysym;
 use std::collections::VecDeque;
 use std::sync::Arc;
-
-#[derive(Clone)]
-pub struct BgraImage(pub RgbaImage);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Tool {
@@ -305,6 +302,30 @@ impl SelectionState {
 		self.dirty = true;
 	}
 
+	fn hovered_toolbar_item(&self, global_pos: (f64, f64)) -> Option<usize> {
+		if !self.config.show_toolbar {
+			return None;
+		}
+		let local_x = global_pos.0 - self.current_offset.0;
+		let local_y = global_pos.1 - self.current_offset.1;
+		let ty = self.config.toolbar_y;
+		let th = self.config.toolbar_height;
+		if local_y < ty || local_y > ty + th {
+			return None;
+		}
+		let count = Tool::all().len();
+		let item_w = self.config.toolbar_item_width;
+		let total_w = item_w * count as f64;
+		let x_start = (self.last_surface_width - total_w) / 2.0;
+		for i in 0..count {
+			let tx = x_start + i as f64 * item_w;
+			if local_x >= tx && local_x <= tx + item_w {
+				return Some(i);
+			}
+		}
+		None
+	}
+
 	pub fn handle_pointer_press(
 		&mut self,
 		global_pos: (f64, f64),
@@ -409,6 +430,12 @@ impl SelectionState {
 		if self.current == global_pos && self.pointer_modifiers == modifiers {
 			return;
 		}
+		let prev_toolbar_hover = self.hovered_toolbar_item(self.current);
+		let prev_window = self.hovered_window;
+		let prev_in_region = self.active_tool == Tool::Select
+			&& self.hovered_window.is_some()
+			&& self.regions.iter().any(|r| r.contains(self.current));
+
 		self.current = global_pos;
 		self.pointer_modifiers = modifiers;
 
@@ -424,6 +451,7 @@ impl SelectionState {
 				annotation.points[0] = resized.start;
 				annotation.points[1] = resized.end;
 			}
+			self.dirty = true;
 		} else if self.is_moving_annotation {
 			if let (Some(start), Some(idx)) = (self.move_start_point, self.selected_annotation) {
 				let mut dx = global_pos.0 - start.0;
@@ -445,12 +473,26 @@ impl SelectionState {
 				}
 				self.annotation_move_delta = (dx, dy);
 			}
+			self.dirty = true;
 		} else {
 			self.active_tool
 				.behavior()
 				.on_motion(self, global_pos, shift_pressed, alt_pressed);
+			if self.is_dragging {
+				self.dirty = true;
+			} else {
+				let new_toolbar_hover = self.hovered_toolbar_item(global_pos);
+				let new_in_region = self.active_tool == Tool::Select
+					&& self.hovered_window.is_some()
+					&& self.regions.iter().any(|r| r.contains(global_pos));
+				if new_toolbar_hover != prev_toolbar_hover
+					|| self.hovered_window != prev_window
+					|| new_in_region != prev_in_region
+				{
+					self.dirty = true;
+				}
+			}
 		}
-		self.dirty = true;
 	}
 
 	fn push_history(&mut self, action: HistoryAction) {

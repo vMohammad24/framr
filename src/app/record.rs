@@ -86,7 +86,7 @@ pub fn record(
 			let mut selection_cfg = cfg.map(|c| c.selection).unwrap_or_default();
 			selection_cfg.show_toolbar = false;
 			let ui = selection::SelectionUI::new(selection_cfg)?;
-			let (region, _) = ui
+			let (region, _, _) = ui
 				.run(false)?
 				.ok_or_else(|| anyhow::anyhow!("Selection cancelled"))?;
 			crate::app::save_last_region(&region);

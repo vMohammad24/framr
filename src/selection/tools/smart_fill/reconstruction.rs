@@ -1,3 +1,5 @@
+use std::sync::LazyLock;
+
 use libframr::OutputInfo;
 
 use crate::config::Color;
@@ -9,6 +11,17 @@ const LOCAL_SAMPLE_CAPACITY: usize = ((NEIGHBORHOOD_RADIUS * 2 + 1) * RING_WIDTH
 const SOLID_DISTANCE_SQUARED: u64 = 6 * 6 * 3;
 const EDGE_SAMPLES: u32 = 128;
 
+static SRGB_TO_LINEAR: LazyLock<[f32; 256]> = LazyLock::new(|| {
+	std::array::from_fn(|channel| {
+		let value = channel as f32 / 255.0;
+		if value <= 0.04045 {
+			value / 12.92
+		} else {
+			((value + 0.055) / 1.055).powf(2.4)
+		}
+	})
+});
+
 #[derive(Clone, Copy, Default)]
 struct LinearColor {
 	r: f32,
@@ -18,19 +31,11 @@ struct LinearColor {
 
 impl LinearColor {
 	fn from_color(color: Color) -> Self {
-		fn linear(channel: u8) -> f32 {
-			let value = channel as f32 / 255.0;
-			if value <= 0.04045 {
-				value / 12.92
-			} else {
-				((value + 0.055) / 1.055).powf(2.4)
-			}
-		}
-
+		let lut = &*SRGB_TO_LINEAR;
 		Self {
-			r: linear(color.r),
-			g: linear(color.g),
-			b: linear(color.b),
+			r: lut[color.r as usize],
+			g: lut[color.g as usize],
+			b: lut[color.b as usize],
 		}
 	}
 
@@ -87,12 +92,20 @@ fn sample_pixel(
 		let image = &image.0;
 		let local_x = global_x - output.logical_position.x as i64;
 		let local_y = global_y - output.logical_position.y as i64;
+		let log_w = output.logical_size.width as i64;
+		let log_h = output.logical_size.height as i64;
 		if local_x >= 0
 			&& local_y >= 0
-			&& local_x < image.width() as i64
-			&& local_y < image.height() as i64
+			&& local_x < log_w
+			&& local_y < log_h
+			&& image.width() > 0
+			&& image.height() > 0
 		{
-			let pixel = image.get_pixel(local_x as u32, local_y as u32);
+			let px = ((local_x as u64 * image.width() as u64) / log_w.max(1) as u64)
+				.min(image.width().saturating_sub(1) as u64) as u32;
+			let py = ((local_y as u64 * image.height() as u64) / log_h.max(1) as u64)
+				.min(image.height().saturating_sub(1) as u64) as u32;
+			let pixel = image.get_pixel(px, py);
 			return Some([pixel[2], pixel[1], pixel[0]]);
 		}
 	}
@@ -259,16 +272,6 @@ fn reconcile_corner(first: &mut LinearColor, second: &mut LinearColor) {
 	*second = *first;
 }
 
-fn edge_at(edge: &[LinearColor], amount: f32) -> LinearColor {
-	if edge.len() == 1 {
-		return edge[0];
-	}
-	let position = amount.clamp(0.0, 1.0) * (edge.len() - 1) as f32;
-	let first = position.floor() as usize;
-	let second = (first + 1).min(edge.len() - 1);
-	edge[first].lerp(edge[second], position - first as f32)
-}
-
 fn color_distance(first: Color, second: Color) -> u64 {
 	let dr = first.r as i64 - second.r as i64;
 	let dg = first.g as i64 - second.g as i64;
@@ -386,6 +389,11 @@ pub(super) fn reconstruct(
 	let mut bottom_edge = bottom_edge.expect("missing bottom edge is synthesized");
 	let mut left_edge = left_edge.expect("missing left edge is synthesized");
 	let mut right_edge = right_edge.expect("missing right edge is synthesized");
+	debug_assert_eq!(top_edge.len(), field_width as usize);
+	debug_assert_eq!(bottom_edge.len(), field_width as usize);
+	debug_assert_eq!(left_edge.len(), field_height as usize);
+	debug_assert_eq!(right_edge.len(), field_height as usize);
+
 	reconcile_corner(&mut top_edge[0], &mut left_edge[0]);
 	reconcile_corner(
 		top_edge.last_mut().expect("edge is non-empty"),
@@ -409,14 +417,16 @@ pub(super) fn reconstruct(
 	let bottom_left = bottom_edge[0];
 	let bottom_right = *bottom_edge.last().expect("edge is non-empty");
 	let mut pixels = Vec::with_capacity((field_width * field_height) as usize);
-	for y in 0..field_height {
-		let v = y as f32 / (field_height - 1) as f32;
-		for x in 0..field_width {
-			let u = x as f32 / (field_width - 1) as f32;
-			let top = edge_at(&top_edge, u);
-			let bottom = edge_at(&bottom_edge, u);
-			let left = edge_at(&left_edge, v);
-			let right = edge_at(&right_edge, v);
+	let inv_h = 1.0 / (field_height - 1) as f32;
+	let inv_w = 1.0 / (field_width - 1) as f32;
+	for y in 0..field_height as usize {
+		let v = y as f32 * inv_h;
+		let left = left_edge[y];
+		let right = right_edge[y];
+		for x in 0..field_width as usize {
+			let u = x as f32 * inv_w;
+			let top = top_edge[x];
+			let bottom = bottom_edge[x];
 			let vertical = top.lerp(bottom, v);
 			let horizontal = left.lerp(right, u);
 			let corners = top_left

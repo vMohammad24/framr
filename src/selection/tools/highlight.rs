@@ -68,16 +68,18 @@ impl ToolBehavior for HighlightTool {
 		if ann.points.len() < 2 {
 			return;
 		}
+		let scale_x = img.width() as f64 / output.logical_size.width.max(1) as f64;
+		let scale_y = img.height() as f64 / output.logical_size.height.max(1) as f64;
 		let (x1, y1) = (
-			ann.points[0].0 - output.logical_position.x as f64,
-			ann.points[0].1 - output.logical_position.y as f64,
+			(ann.points[0].0 - output.logical_position.x as f64) * scale_x,
+			(ann.points[0].1 - output.logical_position.y as f64) * scale_y,
 		);
 		let (x2, y2) = (
-			ann.points[1].0 - output.logical_position.x as f64,
-			ann.points[1].1 - output.logical_position.y as f64,
+			(ann.points[1].0 - output.logical_position.x as f64) * scale_x,
+			(ann.points[1].1 - output.logical_position.y as f64) * scale_y,
 		);
-		let bx = (x1.min(x2) as u32).min(img.width());
-		let by = (y1.min(y2) as u32).min(img.height());
+		let bx = (x1.min(x2).max(0.0) as u32).min(img.width());
+		let by = (y1.min(y2).max(0.0) as u32).min(img.height());
 		let bw = ((x1 - x2).abs() as u32).min(img.width() - bx);
 		let bh = ((y1 - y2).abs() as u32).min(img.height() - by);
 		if bw > 0 && bh > 0 {

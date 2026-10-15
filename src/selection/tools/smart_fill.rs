@@ -1,7 +1,7 @@
 mod reconstruction;
 
 use cairo::{Context, Extend, Filter, Format, ImageSurface, SurfacePattern};
-use image::{Rgba, RgbaImage};
+use image::RgbaImage;
 use libframr::OutputInfo;
 use smithay_client_toolkit::seat::keyboard::Keysym;
 
@@ -44,23 +44,6 @@ impl SmartFillTool {
 			annotation.smart_fill = Some(pattern);
 		}
 		true
-	}
-
-	fn pattern_color(annotation: &Annotation, x: u32, y: u32, width: u32, height: u32) -> Color {
-		let Some(pattern) = annotation.smart_fill.as_ref() else {
-			return annotation.color;
-		};
-		let u = if width <= 1 {
-			0.5
-		} else {
-			x as f32 / (width - 1) as f32
-		};
-		let v = if height <= 1 {
-			0.5
-		} else {
-			y as f32 / (height - 1) as f32
-		};
-		reconstruction::sample_pattern(pattern, u, v, annotation.color)
 	}
 
 	fn draw_field(
@@ -221,30 +204,75 @@ impl ToolBehavior for SmartFillTool {
 		else {
 			return;
 		};
+		let scale_x = image.width() as f64 / output.logical_size.width.max(1) as f64;
+		let scale_y = image.height() as f64 / output.logical_size.height.max(1) as f64;
 		let output_left = output.logical_position.x as i64;
 		let output_top = output.logical_position.y as i64;
-		let clipped_left = left.max(output_left);
-		let clipped_top = top.max(output_top);
-		let clipped_right = right.min(output_left + image.width() as i64);
-		let clipped_bottom = bottom.min(output_top + image.height() as i64);
+
+		let phys_left = ((left - output_left) as f64 * scale_x).round() as i64;
+		let phys_top = ((top - output_top) as f64 * scale_y).round() as i64;
+		let phys_right = ((right - output_left) as f64 * scale_x).round() as i64;
+		let phys_bottom = ((bottom - output_top) as f64 * scale_y).round() as i64;
+
+		let clipped_left = phys_left.max(0);
+		let clipped_top = phys_top.max(0);
+		let clipped_right = phys_right.min(image.width() as i64);
+		let clipped_bottom = phys_bottom.min(image.height() as i64);
 		if clipped_left >= clipped_right || clipped_top >= clipped_bottom {
 			return;
 		}
-		let width = (right - left) as u32;
-		let height = (bottom - top) as u32;
+		let width = (phys_right - phys_left).max(1) as u32;
+		let height = (phys_bottom - phys_top).max(1) as u32;
+		let stride = image.width() as usize * 4;
+		let x_offset = clipped_left as usize * 4;
+		let row_bytes = (clipped_right - clipped_left) as usize * 4;
+		let raw = image.as_mut();
 
-		for global_y in clipped_top..clipped_bottom {
-			for global_x in clipped_left..clipped_right {
-				let color = Self::pattern_color(
-					ann,
-					(global_x - left) as u32,
-					(global_y - top) as u32,
-					width,
-					height,
-				);
-				let pixel_x = (global_x - output_left) as u32;
-				let pixel_y = (global_y - output_top) as u32;
-				image.put_pixel(pixel_x, pixel_y, Rgba([color.r, color.g, color.b, u8::MAX]));
+		match ann.smart_fill.as_ref() {
+			Some(SmartFillPattern::Solid(color)) => {
+				let px = [color.r, color.g, color.b, u8::MAX];
+				for py in clipped_top..clipped_bottom {
+					let row_start = py as usize * stride + x_offset;
+					let row_slice = &mut raw[row_start..row_start + row_bytes];
+					for dst in row_slice.chunks_exact_mut(4) {
+						dst.copy_from_slice(&px);
+					}
+				}
+			}
+			None => {
+				let px = [ann.color.r, ann.color.g, ann.color.b, u8::MAX];
+				for py in clipped_top..clipped_bottom {
+					let row_start = py as usize * stride + x_offset;
+					let row_slice = &mut raw[row_start..row_start + row_bytes];
+					for dst in row_slice.chunks_exact_mut(4) {
+						dst.copy_from_slice(&px);
+					}
+				}
+			}
+			Some(pattern) => {
+				for py in clipped_top..clipped_bottom {
+					let y = (py - phys_top) as u32;
+					let v = if height <= 1 {
+						0.5
+					} else {
+						y as f32 / (height - 1) as f32
+					};
+					let row_start = py as usize * stride + x_offset;
+					let row_slice = &mut raw[row_start..row_start + row_bytes];
+					for (dst, px) in row_slice
+						.chunks_exact_mut(4)
+						.zip(clipped_left..clipped_right)
+					{
+						let x = (px - phys_left) as u32;
+						let u = if width <= 1 {
+							0.5
+						} else {
+							x as f32 / (width - 1) as f32
+						};
+						let color = reconstruction::sample_pattern(pattern, u, v, ann.color);
+						dst.copy_from_slice(&[color.r, color.g, color.b, u8::MAX]);
+					}
+				}
 			}
 		}
 	}

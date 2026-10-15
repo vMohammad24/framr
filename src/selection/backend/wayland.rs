@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use cairo::{Context, ImageSurface};
+use cairo::{Context, FillRule, Format, ImageSurface};
 use libframr::{OutputInfo, Position};
 use pangocairo::functions::{create_layout, show_layout};
 use smithay_client_toolkit::{
@@ -13,7 +13,10 @@ use smithay_client_toolkit::{
 		pointer::cursor_shape::CursorShapeManager,
 		pointer::{PointerEvent, PointerEventKind, PointerHandler},
 	},
-	shell::wlr_layer::{LayerShell, LayerShellHandler, LayerSurface},
+	shell::{
+		WaylandSurface,
+		wlr_layer::{LayerShell, LayerShellHandler, LayerSurface},
+	},
 	shm::{
 		Shm, ShmHandler,
 		slot::{Buffer, SlotPool},
@@ -30,20 +33,178 @@ use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::
 	Shape, WpCursorShapeDeviceV1,
 };
 
-use crate::config::SelectionConfig;
+use crate::config::{Color, SelectionConfig};
 use crate::selection::{
 	graphics,
 	state::{SelectionRegion, SelectionState, Tool},
 };
 
+#[inline]
+fn is_integral(v: f64) -> bool {
+	(v - v.round()).abs() < 1e-4
+}
+
+#[inline]
+fn dim_bgra_slice(dst: &mut [u8], src: &[u8], bg: Color) {
+	let alpha = bg.a as u16;
+	if alpha == 0 {
+		dst.copy_from_slice(src);
+		return;
+	}
+	if alpha == 255 {
+		let px = [bg.b, bg.g, bg.r, 255];
+		for d in dst.chunks_exact_mut(4) {
+			d.copy_from_slice(&px);
+		}
+		return;
+	}
+	let inv_a = 255 - alpha;
+	let b_pre = (bg.b as u16 * alpha + 127) / 255;
+	let g_pre = (bg.g as u16 * alpha + 127) / 255;
+	let r_pre = (bg.r as u16 * alpha + 127) / 255;
+	for (d, s) in dst.chunks_exact_mut(4).zip(src.chunks_exact(4)) {
+		d[0] = (b_pre + (s[0] as u16 * inv_a + 127) / 255) as u8;
+		d[1] = (g_pre + (s[1] as u16 * inv_a + 127) / 255) as u8;
+		d[2] = (r_pre + (s[2] as u16 * inv_a + 127) / 255) as u8;
+		d[3] = 255;
+	}
+}
+
+#[inline]
+#[allow(clippy::too_many_arguments)]
+fn copy_or_dim_span(
+	dst_row: &mut [u8],
+	src_row: &[u8],
+	src_w: usize,
+	dst_w: usize,
+	x_start: usize,
+	x_end: usize,
+	bg: Option<Color>,
+) {
+	if x_start >= x_end {
+		return;
+	}
+	let dst_span = &mut dst_row[x_start * 4..x_end * 4];
+	if src_w == dst_w {
+		let src_span = &src_row[x_start * 4..x_end * 4];
+		match bg {
+			Some(color) => dim_bgra_slice(dst_span, src_span, color),
+			None => dst_span.copy_from_slice(src_span),
+		}
+		return;
+	}
+
+	match bg {
+		None => {
+			if src_w == dst_w * 2 {
+				for (d, x) in dst_span.chunks_exact_mut(4).zip(x_start..x_end) {
+					let s_idx = x * 8;
+					d.copy_from_slice(&src_row[s_idx..s_idx + 4]);
+				}
+			} else {
+				for (d, x) in dst_span.chunks_exact_mut(4).zip(x_start..x_end) {
+					let sx = (x * src_w / dst_w).min(src_w.saturating_sub(1));
+					let s_idx = sx * 4;
+					d.copy_from_slice(&src_row[s_idx..s_idx + 4]);
+				}
+			}
+		}
+		Some(color) => {
+			let alpha = color.a as u16;
+			if alpha == 0 {
+				copy_or_dim_span(dst_row, src_row, src_w, dst_w, x_start, x_end, None);
+				return;
+			}
+			if alpha == 255 {
+				let px = [color.b, color.g, color.r, 255];
+				for d in dst_span.chunks_exact_mut(4) {
+					d.copy_from_slice(&px);
+				}
+				return;
+			}
+			let inv_a = 255 - alpha;
+			let b_pre = (color.b as u16 * alpha + 127) / 255;
+			let g_pre = (color.g as u16 * alpha + 127) / 255;
+			let r_pre = (color.r as u16 * alpha + 127) / 255;
+			if src_w == dst_w * 2 {
+				for (d, x) in dst_span.chunks_exact_mut(4).zip(x_start..x_end) {
+					let s = &src_row[x * 8..x * 8 + 4];
+					d[0] = (b_pre + (s[0] as u16 * inv_a + 127) / 255) as u8;
+					d[1] = (g_pre + (s[1] as u16 * inv_a + 127) / 255) as u8;
+					d[2] = (r_pre + (s[2] as u16 * inv_a + 127) / 255) as u8;
+					d[3] = 255;
+				}
+			} else {
+				for (d, x) in dst_span.chunks_exact_mut(4).zip(x_start..x_end) {
+					let sx = (x * src_w / dst_w).min(src_w.saturating_sub(1));
+					let s = &src_row[sx * 4..sx * 4 + 4];
+					d[0] = (b_pre + (s[0] as u16 * inv_a + 127) / 255) as u8;
+					d[1] = (g_pre + (s[1] as u16 * inv_a + 127) / 255) as u8;
+					d[2] = (r_pre + (s[2] as u16 * inv_a + 127) / 255) as u8;
+					d[3] = 255;
+				}
+			}
+		}
+	}
+}
+
+/// Pre-renders the toolbar icon strip on a background thread during screen capture so that
+/// cold Fontconfig/Pango initialization is completely hidden behind the Wayland vblank wait.
+pub fn prerender_toolbar_icons(config: &SelectionConfig) -> Option<(Vec<u8>, i32, i32)> {
+	if !config.show_toolbar {
+		return None;
+	}
+	let tools = Tool::all();
+	let item_w = config.toolbar_item_width;
+	let h = config.toolbar_height;
+	let total_w = item_w * tools.len() as f64;
+	let icons_w = (total_w.ceil() as i32).max(1);
+	let icons_h = (h.ceil() as i32).max(1);
+	let stride = icons_w * 4;
+	let mut buf = vec![0u8; (stride * icons_h) as usize];
+	{
+		let surface = unsafe {
+			ImageSurface::create_for_data_unsafe(
+				buf.as_mut_ptr(),
+				Format::ARgb32,
+				icons_w,
+				icons_h,
+				stride,
+			)
+		}
+		.ok()?;
+		let icon_cr = Context::new(&surface).ok()?;
+		icon_cr.set_source_rgb(1.0, 1.0, 1.0);
+		let layout = create_layout(&icon_cr);
+		let font = pango::FontDescription::from_string("system-ui 18");
+		layout.set_font_description(Some(&font));
+
+		for (i, tool) in tools.iter().enumerate() {
+			let icon = tool.behavior().icon();
+			let tx = i as f64 * item_w;
+			layout.set_text(icon);
+			let (_, logical_rect) = layout.pixel_extents();
+			let icon_w = logical_rect.width() as f64;
+			let icon_h = logical_rect.height() as f64;
+			icon_cr.move_to(tx + (item_w - icon_w) / 2.0, (h - icon_h) / 2.0);
+			show_layout(&icon_cr, &layout);
+		}
+		surface.flush();
+	}
+	Some((buf, icons_w, icons_h))
+}
+
 pub struct SurfaceData {
 	pub output: OutputInfo,
+	pub cached_toolbar_icons: Option<ImageSurface>,
 	pub cached_blurred_bg: Option<ImageSurface>,
 	pub cached_pixelated_bg: Option<ImageSurface>,
 	pub _layer: LayerSurface,
 	pub wl_surface: WlSurface,
 	pub dimensions: (u32, u32),
 	pub slot: Option<Buffer>,
+	pub configured: bool,
+	pub canvas_ready: bool,
 	pub waiting_for_frame: bool,
 	pub redraw_pending: bool,
 }
@@ -69,12 +230,7 @@ pub struct AppState {
 }
 
 impl AppState {
-	pub fn draw(
-		&mut self,
-		surface_index: usize,
-		state: &SelectionState,
-		qh: &QueueHandle<Self>,
-	) -> Result<bool> {
+	pub fn render_canvas(&mut self, surface_index: usize, state: &SelectionState) -> Result<bool> {
 		let surface_data = &mut self.surfaces[surface_index];
 		let (width, height) = surface_data.dimensions;
 		let stride = width as i32 * 4;
@@ -97,12 +253,182 @@ impl AppState {
 			return Ok(false);
 		};
 		let source = &state.source_images[surface_index].1.0;
-		canvas.copy_from_slice(source.as_raw());
+		let src_raw = source.as_raw();
+		let src_w = source.width() as usize;
+		let src_h = source.height() as usize;
+		let src_stride = src_w * 4;
+		let dst_w = width as usize;
+		let dst_h = height as usize;
+		let stride_usize = stride as usize;
+
+		let draft_region = state
+			.start
+			.map(|start| SelectionRegion::new(start, state.end.unwrap_or(state.current)));
+		let extra_region = if let Some(region) = draft_region.filter(|region| region.is_valid()) {
+			Some(region)
+		} else if state.active_tool == Tool::Select
+			&& !state.is_dragging
+			&& !state
+				.regions
+				.iter()
+				.any(|region| region.contains(state.current))
+			&& let Some(hovered_idx) = state.hovered_window
+			&& let Some(win) = state.windows.get(hovered_idx)
+		{
+			Some(SelectionRegion::new(
+				(win.x as f64, win.y as f64),
+				((win.x + win.width) as f64, (win.y + win.height) as f64),
+			))
+		} else {
+			None
+		};
+
+		let offset_x = surface_data.output.logical_position.x as f64;
+		let offset_y = surface_data.output.logical_position.y as f64;
+
+		let can_use_fast_dimmed = state.annotations.is_empty()
+			&& state.regions.iter().copied().chain(extra_region).all(|r| {
+				is_integral(r.start.0 - offset_x)
+					&& is_integral(r.start.1 - offset_y)
+					&& is_integral(r.end.0 - offset_x)
+					&& is_integral(r.end.1 - offset_y)
+			});
+
+		let map_y = |y: usize| -> usize {
+			if src_h == dst_h {
+				y
+			} else if src_h == dst_h * 2 {
+				y * 2
+			} else {
+				(y * src_h / dst_h.max(1)).min(src_h.saturating_sub(1))
+			}
+		};
+
+		if can_use_fast_dimmed {
+			let bg = state.config.background_color;
+			let mut clamped_regions = Vec::new();
+			for region in state.regions.iter().copied().chain(extra_region) {
+				let rx0 =
+					((region.start.0 - offset_x).round() as i64).clamp(0, width as i64) as usize;
+				let ry0 =
+					((region.start.1 - offset_y).round() as i64).clamp(0, height as i64) as usize;
+				let rx1 =
+					((region.end.0 - offset_x).round() as i64).clamp(0, width as i64) as usize;
+				let ry1 =
+					((region.end.1 - offset_y).round() as i64).clamp(0, height as i64) as usize;
+				if rx0 < rx1 && ry0 < ry1 {
+					clamped_regions.push((rx0, ry0, rx1, ry1));
+				}
+			}
+
+			if clamped_regions.len() == 1 {
+				let (rx0, ry0, rx1, ry1) = clamped_regions[0];
+				if src_w == dst_w && src_h == dst_h {
+					dim_bgra_slice(
+						&mut canvas[..ry0 * stride_usize],
+						&src_raw[..ry0 * stride_usize],
+						bg,
+					);
+					for y in ry0..ry1 {
+						let row_start = y * stride_usize;
+						let dst_row = &mut canvas[row_start..row_start + stride_usize];
+						let src_row = &src_raw[row_start..row_start + stride_usize];
+						dim_bgra_slice(&mut dst_row[..rx0 * 4], &src_row[..rx0 * 4], bg);
+						dst_row[rx0 * 4..rx1 * 4].copy_from_slice(&src_row[rx0 * 4..rx1 * 4]);
+						dim_bgra_slice(&mut dst_row[rx1 * 4..], &src_row[rx1 * 4..], bg);
+					}
+					dim_bgra_slice(
+						&mut canvas[ry1 * stride_usize..],
+						&src_raw[ry1 * stride_usize..],
+						bg,
+					);
+				} else {
+					for y in 0..ry0 {
+						let sy = map_y(y);
+						copy_or_dim_span(
+							&mut canvas[y * stride_usize..(y + 1) * stride_usize],
+							&src_raw[sy * src_stride..(sy + 1) * src_stride],
+							src_w,
+							dst_w,
+							0,
+							dst_w,
+							Some(bg),
+						);
+					}
+					for y in ry0..ry1 {
+						let sy = map_y(y);
+						let dst_row = &mut canvas[y * stride_usize..(y + 1) * stride_usize];
+						let src_row = &src_raw[sy * src_stride..(sy + 1) * src_stride];
+						copy_or_dim_span(dst_row, src_row, src_w, dst_w, 0, rx0, Some(bg));
+						copy_or_dim_span(dst_row, src_row, src_w, dst_w, rx0, rx1, None);
+						copy_or_dim_span(dst_row, src_row, src_w, dst_w, rx1, dst_w, Some(bg));
+					}
+					for y in ry1..dst_h {
+						let sy = map_y(y);
+						copy_or_dim_span(
+							&mut canvas[y * stride_usize..(y + 1) * stride_usize],
+							&src_raw[sy * src_stride..(sy + 1) * src_stride],
+							src_w,
+							dst_w,
+							0,
+							dst_w,
+							Some(bg),
+						);
+					}
+				}
+			} else {
+				if src_w == dst_w && src_h == dst_h {
+					dim_bgra_slice(canvas, src_raw, bg);
+				} else {
+					for y in 0..dst_h {
+						let sy = map_y(y);
+						copy_or_dim_span(
+							&mut canvas[y * stride_usize..(y + 1) * stride_usize],
+							&src_raw[sy * src_stride..(sy + 1) * src_stride],
+							src_w,
+							dst_w,
+							0,
+							dst_w,
+							Some(bg),
+						);
+					}
+				}
+				for (rx0, ry0, rx1, ry1) in clamped_regions {
+					for y in ry0..ry1 {
+						let sy = map_y(y);
+						copy_or_dim_span(
+							&mut canvas[y * stride_usize..(y + 1) * stride_usize],
+							&src_raw[sy * src_stride..(sy + 1) * src_stride],
+							src_w,
+							dst_w,
+							rx0,
+							rx1,
+							None,
+						);
+					}
+				}
+			}
+		} else if src_w == dst_w && src_h == dst_h {
+			canvas.copy_from_slice(src_raw);
+		} else {
+			for y in 0..dst_h {
+				let sy = map_y(y);
+				copy_or_dim_span(
+					&mut canvas[y * stride_usize..(y + 1) * stride_usize],
+					&src_raw[sy * src_stride..(sy + 1) * src_stride],
+					src_w,
+					dst_w,
+					0,
+					dst_w,
+					None,
+				);
+			}
+		}
 
 		let scratch = unsafe {
 			ImageSurface::create_for_data_unsafe(
 				canvas.as_mut_ptr(),
-				cairo::Format::ARgb32,
+				Format::ARgb32,
 				width as i32,
 				height as i32,
 				stride,
@@ -114,144 +440,104 @@ impl AppState {
 		{
 			let cr =
 				Context::new(&scratch).map_err(|e| anyhow!("failed to create context: {}", e))?;
-			cr.push_group();
-			cr.set_source_surface(&scratch, 0.0, 0.0)
-				.map_err(|e| anyhow!("failed to set source surface: {e}"))?;
-			cr.paint()
-				.map_err(|e| anyhow!("failed to paint source surface: {e}"))?;
 
-			for (idx, ann) in state.annotations.iter().enumerate() {
-				ann.tool
-					.behavior()
-					.render(&cr, ann, surface_data, &state.config);
+			if !can_use_fast_dimmed {
+				for (idx, ann) in state.annotations.iter().enumerate() {
+					ann.tool
+						.behavior()
+						.render(&cr, ann, surface_data, &state.config);
 
-				if Some(idx) == state.selected_annotation {
-					let offset_x = surface_data.output.logical_position.x as f64;
-					let offset_y = surface_data.output.logical_position.y as f64;
-					cr.set_source_rgba(1.0, 1.0, 1.0, 0.5);
-					cr.set_dash(&[5.0, 5.0], 0.0);
-					cr.set_line_width(1.0);
+					if Some(idx) == state.selected_annotation {
+						cr.set_source_rgba(1.0, 1.0, 1.0, 0.5);
+						cr.set_dash(&[5.0, 5.0], 0.0);
+						cr.set_line_width(1.0);
 
-					if ann.tool == Tool::Circle && ann.points.len() >= 2 {
-						let x1 = ann.points[0].0 - offset_x;
-						let y1 = ann.points[0].1 - offset_y;
-						let x2 = ann.points[1].0 - offset_x;
-						let y2 = ann.points[1].1 - offset_y;
-						let center = ((x1 + x2) * 0.5, (y1 + y2) * 0.5);
-						let radii = ((x2 - x1).abs() * 0.5 + 2.0, (y2 - y1).abs() * 0.5 + 2.0);
-						match cr.save() {
-							Ok(()) => {
-								cr.translate(center.0, center.1);
-								cr.scale(radii.0, radii.1);
-								cr.arc(0.0, 0.0, 1.0, 0.0, 2.0 * std::f64::consts::PI);
-								match cr.restore() {
-									Ok(()) => {
-										if let Err(e) = cr.stroke() {
-											eprintln!("failed to stroke selected ellipse: {e}");
+						if ann.tool == Tool::Circle && ann.points.len() >= 2 {
+							let x1 = ann.points[0].0 - offset_x;
+							let y1 = ann.points[0].1 - offset_y;
+							let x2 = ann.points[1].0 - offset_x;
+							let y2 = ann.points[1].1 - offset_y;
+							let center = ((x1 + x2) * 0.5, (y1 + y2) * 0.5);
+							let radii = ((x2 - x1).abs() * 0.5 + 2.0, (y2 - y1).abs() * 0.5 + 2.0);
+							match cr.save() {
+								Ok(()) => {
+									cr.translate(center.0, center.1);
+									cr.scale(radii.0, radii.1);
+									cr.arc(0.0, 0.0, 1.0, 0.0, 2.0 * std::f64::consts::PI);
+									match cr.restore() {
+										Ok(()) => {
+											if let Err(e) = cr.stroke() {
+												eprintln!("failed to stroke selected ellipse: {e}");
+											}
 										}
+										Err(e) => eprintln!("failed to restore cairo state: {e}"),
 									}
-									Err(e) => eprintln!("failed to restore cairo state: {e}"),
+								}
+								Err(e) => eprintln!("failed to save cairo state: {e}"),
+							}
+						} else if !ann.points.is_empty() {
+							let mut min_x = ann.points[0].0;
+							let mut min_y = ann.points[0].1;
+							let mut max_x = ann.points[0].0;
+							let mut max_y = ann.points[0].1;
+							for p in &ann.points[1..] {
+								min_x = min_x.min(p.0);
+								min_y = min_y.min(p.1);
+								max_x = max_x.max(p.0);
+								max_y = max_y.max(p.1);
+							}
+							cr.rectangle(
+								min_x - offset_x - 5.0,
+								min_y - offset_y - 5.0,
+								max_x - min_x + 10.0,
+								max_y - min_y + 10.0,
+							);
+							cr.stroke().ok();
+
+							if ann.tool == Tool::SmartFill
+								&& let Some(region) = ann.rectangular_region()
+							{
+								cr.set_dash(&[], 0.0);
+								for (_, handle) in region.handle_positions() {
+									let handle_x = handle.0 - offset_x;
+									let handle_y = handle.1 - offset_y;
+									cr.set_source_rgba(0.0, 0.0, 0.0, 0.8);
+									cr.rectangle(handle_x - 4.0, handle_y - 4.0, 8.0, 8.0);
+									cr.fill().ok();
+									cr.set_source_rgb(1.0, 1.0, 1.0);
+									cr.rectangle(handle_x - 2.0, handle_y - 2.0, 4.0, 4.0);
+									cr.fill().ok();
 								}
 							}
-							Err(e) => eprintln!("failed to save cairo state: {e}"),
 						}
-					} else if !ann.points.is_empty() {
-						let mut min_x = ann.points[0].0;
-						let mut min_y = ann.points[0].1;
-						let mut max_x = ann.points[0].0;
-						let mut max_y = ann.points[0].1;
-						for p in &ann.points[1..] {
-							min_x = min_x.min(p.0);
-							min_y = min_y.min(p.1);
-							max_x = max_x.max(p.0);
-							max_y = max_y.max(p.1);
-						}
-						cr.rectangle(
-							min_x - offset_x - 5.0,
-							min_y - offset_y - 5.0,
-							max_x - min_x + 10.0,
-							max_y - min_y + 10.0,
-						);
-						cr.stroke().ok();
-
-						if ann.tool == Tool::SmartFill
-							&& let Some(region) = ann.rectangular_region()
-						{
-							cr.set_dash(&[], 0.0);
-							for (_, handle) in region.handle_positions() {
-								let handle_x = handle.0 - offset_x;
-								let handle_y = handle.1 - offset_y;
-								cr.set_source_rgba(0.0, 0.0, 0.0, 0.8);
-								cr.rectangle(handle_x - 4.0, handle_y - 4.0, 8.0, 8.0);
-								cr.fill().ok();
-								cr.set_source_rgb(1.0, 1.0, 1.0);
-								cr.rectangle(handle_x - 2.0, handle_y - 2.0, 4.0, 4.0);
-								cr.fill().ok();
-							}
-						}
+						cr.set_dash(&[], 0.0);
 					}
-					cr.set_dash(&[], 0.0);
 				}
-			}
 
-			let scene = cr
-				.pop_group()
-				.map_err(|e| anyhow!("failed to cache selection scene: {}", e))?;
-			cr.set_source(&scene)
-				.map_err(|e| anyhow!("failed to restore selection scene: {}", e))?;
-			cr.paint()
-				.map_err(|e| anyhow!("failed to paint selection scene: {}", e))?;
-
-			graphics::set_source_color(&cr, state.config.background_color);
-			cr.rectangle(0.0, 0.0, width as f64, height as f64);
-			cr.fill()
-				.map_err(|e| anyhow!("failed to fill selection background: {}", e))?;
-
-			let draft_region = state
-				.start
-				.map(|start| SelectionRegion::new(start, state.end.unwrap_or(state.current)));
-			let extra_region = if let Some(region) = draft_region.filter(|region| region.is_valid())
-			{
-				Some(region)
-			} else if state.active_tool == Tool::Select
-				&& !state.is_dragging
-				&& !state
-					.regions
-					.iter()
-					.any(|region| region.contains(state.current))
-				&& let Some(hovered_idx) = state.hovered_window
-				&& let Some(win) = state.windows.get(hovered_idx)
-			{
-				Some(SelectionRegion::new(
-					(win.x as f64, win.y as f64),
-					((win.x + win.width) as f64, (win.y + win.height) as f64),
-				))
-			} else {
-				None
-			};
-
-			let offset_x = surface_data.output.logical_position.x as f64;
-			let offset_y = surface_data.output.logical_position.y as f64;
-			if !state.regions.is_empty() || extra_region.is_some() {
 				cr.save()
 					.map_err(|e| anyhow!("failed to save selection clipping state: {}", e))?;
+				cr.set_fill_rule(FillRule::EvenOdd);
 				for region in state.regions.iter().copied().chain(extra_region) {
-					cr.rectangle(
-						region.start.0 - offset_x,
-						region.start.1 - offset_y,
-						region.width(),
-						region.height(),
-					);
+					let rx0 = (region.start.0 - offset_x).clamp(0.0, width as f64);
+					let ry0 = (region.start.1 - offset_y).clamp(0.0, height as f64);
+					let rx1 = (region.end.0 - offset_x).clamp(0.0, width as f64);
+					let ry1 = (region.end.1 - offset_y).clamp(0.0, height as f64);
+					if rx0 < rx1 && ry0 < ry1 {
+						cr.rectangle(0.0, 0.0, width as f64, height as f64);
+						cr.rectangle(rx0, ry0, rx1 - rx0, ry1 - ry0);
+						cr.clip();
+					}
 				}
-				cr.clip();
-				cr.set_source(&scene)
-					.map_err(|e| anyhow!("failed to set selected region source: {}", e))?;
-				cr.paint()
-					.map_err(|e| anyhow!("failed to paint selected regions: {}", e))?;
+				cr.set_fill_rule(FillRule::Winding);
+				graphics::set_source_color(&cr, state.config.background_color);
+				cr.rectangle(0.0, 0.0, width as f64, height as f64);
+				cr.fill()
+					.map_err(|e| anyhow!("failed to fill selection background: {}", e))?;
 				cr.restore()
 					.map_err(|e| anyhow!("failed to restore selection clipping state: {}", e))?;
 			}
 
+			let dim_layout = create_layout(&cr);
 			for (idx, region) in state
 				.regions
 				.iter()
@@ -271,11 +557,10 @@ impl AppState {
 					.map_err(|e| anyhow!("failed to stroke selection: {}", e))?;
 
 				let dim_text = format!("{}x{}", w as u32, h as u32);
-				let layout = create_layout(&cr);
-				layout.set_text(&dim_text);
+				dim_layout.set_text(&dim_text);
 				cr.set_source_rgb(1.0, 1.0, 1.0);
 				cr.move_to(x, y - 20.0);
-				show_layout(&cr, &layout);
+				show_layout(&cr, &dim_layout);
 
 				if state.config.multi_region_mode && Some(idx) == state.selected_region {
 					for (_, handle) in region.handle_positions() {
@@ -299,12 +584,27 @@ impl AppState {
 					state.current,
 					surface_data.output.logical_position,
 					&state.config,
+					&mut surface_data.cached_toolbar_icons,
 				);
 			}
 		}
 
 		scratch.flush();
 		drop(scratch);
+
+		surface_data.canvas_ready = true;
+		Ok(true)
+	}
+
+	pub fn commit_surface(&mut self, surface_index: usize, qh: &QueueHandle<Self>) -> bool {
+		let surface_data = &mut self.surfaces[surface_index];
+		if !surface_data.configured || !surface_data.canvas_ready {
+			return false;
+		}
+		let Some(buffer) = surface_data.slot.as_ref() else {
+			return false;
+		};
+		let (width, height) = surface_data.dimensions;
 
 		surface_data
 			.wl_surface
@@ -318,8 +618,27 @@ impl AppState {
 			.frame(qh, surface_data.wl_surface.clone());
 
 		surface_data.wl_surface.commit();
+		surface_data.waiting_for_frame = true;
+		surface_data.redraw_pending = false;
+		surface_data.canvas_ready = false;
+		true
+	}
 
-		Ok(true)
+	pub fn draw(
+		&mut self,
+		surface_index: usize,
+		state: &SelectionState,
+		qh: &QueueHandle<Self>,
+	) -> Result<bool> {
+		if !self.surfaces[surface_index].configured {
+			return Ok(false);
+		}
+		if !self.surfaces[surface_index].canvas_ready
+			&& !self.render_canvas(surface_index, state)?
+		{
+			return Ok(false);
+		}
+		Ok(self.commit_surface(surface_index, qh))
 	}
 
 	fn draw_toolbar(
@@ -329,6 +648,7 @@ impl AppState {
 		mouse_global: (f64, f64),
 		offset: Position,
 		config: &SelectionConfig,
+		cached_icons: &mut Option<ImageSurface>,
 	) {
 		let tools = Tool::all();
 
@@ -348,7 +668,6 @@ impl AppState {
 		let mut hovered_tooltip = None;
 
 		for (i, tool) in tools.iter().enumerate() {
-			let icon = tool.behavior().icon();
 			let tip = tool.behavior().tooltip();
 			let tx = x + i as f64 * item_w;
 
@@ -368,19 +687,39 @@ impl AppState {
 			if is_hovered {
 				hovered_tooltip = Some((tip, tx + (item_w / 2.0), y + h + 10.0));
 			}
+		}
 
-			cr.set_source_rgb(1.0, 1.0, 1.0);
-			let layout = create_layout(cr);
-			layout.set_text(icon);
+		let icons_w = (total_w.ceil() as i32).max(1);
+		let icons_h = (h.ceil() as i32).max(1);
+		if cached_icons
+			.as_ref()
+			.is_none_or(|s| s.width() != icons_w || s.height() != icons_h)
+			&& let Ok(surface) = ImageSurface::create(Format::ARgb32, icons_w, icons_h)
+			&& let Ok(icon_cr) = Context::new(&surface)
+		{
+			icon_cr.set_source_rgb(1.0, 1.0, 1.0);
+			let layout = create_layout(&icon_cr);
 			let font = pango::FontDescription::from_string("system-ui 18");
 			layout.set_font_description(Some(&font));
 
-			let (_, logical_rect) = layout.pixel_extents();
-			let icon_w = logical_rect.width() as f64;
-			let icon_h = logical_rect.height() as f64;
+			for (i, tool) in tools.iter().enumerate() {
+				let icon = tool.behavior().icon();
+				let tx = i as f64 * item_w;
+				layout.set_text(icon);
+				let (_, logical_rect) = layout.pixel_extents();
+				let icon_w = logical_rect.width() as f64;
+				let icon_h = logical_rect.height() as f64;
+				icon_cr.move_to(tx + (item_w - icon_w) / 2.0, (h - icon_h) / 2.0);
+				show_layout(&icon_cr, &layout);
+			}
+			surface.flush();
+			*cached_icons = Some(surface);
+		}
 
-			cr.move_to(tx + (item_w - icon_w) / 2.0, y + (h - icon_h) / 2.0);
-			show_layout(cr, &layout);
+		if let Some(icons_surface) = cached_icons.as_ref() {
+			if cr.set_source_surface(icons_surface, x, y).is_ok() {
+				cr.paint().ok();
+			}
 		}
 
 		if let Some((tip, t_x, t_y)) = hovered_tooltip {
@@ -456,10 +795,21 @@ impl LayerShellHandler for AppState {
         self.exit = true;
     }
     fn configure(
-        &mut self,_: &Connection,_: &QueueHandle<Self>,
-        _: &LayerSurface,
+        &mut self,_: &Connection,qh: &QueueHandle<Self>,
+        layer: &LayerSurface,
         _: smithay_client_toolkit::shell::wlr_layer::LayerSurfaceConfigure,_: u32,
-    ) {}
+    ) {
+        if let Some(i) = self
+            .surfaces
+            .iter()
+            .position(|s| &s.wl_surface == layer.wl_surface())
+        {
+            self.surfaces[i].configured = true;
+            if self.surfaces[i].canvas_ready && !self.surfaces[i].waiting_for_frame {
+                self.commit_surface(i, qh);
+            }
+        }
+    }
 }
 #[rustfmt::skip]
 impl SeatHandler for AppState {
@@ -543,6 +893,7 @@ impl PointerHandler for AppState {
 							surface.wl_surface == event.surface
 						}) {
 							surface.redraw_pending = true;
+							surface.canvas_ready = false;
 						}
 						state.dirty = false;
 					}

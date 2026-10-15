@@ -201,6 +201,27 @@ impl ToolBehavior for CircleTool {
 			return false;
 		};
 
+		let px = (point.0 - cx).abs();
+		let py = (point.1 - cy).abs();
+		if px > rx + threshold || py > ry + threshold {
+			return false;
+		}
+		let min_semi = rx.min(ry);
+		let delta = threshold / min_semi;
+		let nx = px / rx;
+		let ny = py / ry;
+		let norm_sq = nx * nx + ny * ny;
+		let outer = 1.0 + delta;
+		if norm_sq > outer * outer {
+			return false;
+		}
+		if delta < 1.0 {
+			let inner = 1.0 - delta;
+			if norm_sq < inner * inner {
+				return false;
+			}
+		}
+
 		Self::distance_to_ellipse(point, (cx, cy), rx, ry) <= threshold
 	}
 }
