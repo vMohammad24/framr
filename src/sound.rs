@@ -45,10 +45,6 @@ fn ensure_sound_file() -> Result<PathBuf> {
 	Ok(sound_path)
 }
 
-pub fn init_sound() {
-	let _ = ensure_sound_file();
-}
-
 fn append_decoded_frames(
 	decoder: &mut ffmpeg::codec::decoder::Audio,
 	resampler: &mut ffmpeg::software::resampling::Context,
@@ -158,7 +154,12 @@ pub fn play_sound(sound_path: &str) -> Result<()> {
 	let path = Path::new(sound_path);
 
 	if !path.exists() {
-		return Ok(());
+		if get_config_dir().is_ok_and(|dir| path == dir.join("sound.wav")) {
+			let _ = ensure_sound_file();
+		}
+		if !path.exists() {
+			return Ok(());
+		}
 	}
 
 	let sound = decode_sound(path)?;
