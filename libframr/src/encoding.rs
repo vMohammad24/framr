@@ -523,11 +523,17 @@ impl CompositeOutput {
 			.image
 			.get_or_insert_with(|| image::RgbaImage::new(self.width, self.height));
 		let row_size = self.width as usize * 4;
-		for row in 0..self.height as usize {
-			let source_start = row * video.stride(0);
-			let destination_start = row * row_size;
-			image.as_mut()[destination_start..destination_start + row_size]
-				.copy_from_slice(&video.data(0)[source_start..source_start + row_size]);
+		let stride = video.stride(0);
+		if stride == row_size {
+			let total = row_size * self.height as usize;
+			image.as_mut()[..total].copy_from_slice(&video.data(0)[..total]);
+		} else {
+			for row in 0..self.height as usize {
+				let source_start = row * stride;
+				let destination_start = row * row_size;
+				image.as_mut()[destination_start..destination_start + row_size]
+					.copy_from_slice(&video.data(0)[source_start..source_start + row_size]);
+			}
 		}
 		Ok(())
 	}
@@ -550,7 +556,7 @@ fn composite_frame(
 			.ok_or_else(|| anyhow!("missing composite frame"))?;
 		let x = (output.logical_position.x - region.position.x) as i64 * i64::from(max_scale);
 		let y = (output.logical_position.y - region.position.y) as i64 * i64::from(max_scale);
-		image::imageops::overlay(&mut composite, rgba, x, y);
+		image::imageops::replace(&mut composite, rgba, x, y);
 	}
 	Ok(Frame::from_owned(
 		composite.into_raw(),
