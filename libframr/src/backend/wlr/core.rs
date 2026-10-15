@@ -1,14 +1,14 @@
 use anyhow::Result;
 use wayland_client::Connection;
 use wayland_client::globals::{GlobalList, registry_queue_init};
-use wayland_client::protocol::wl_output::WlOutput;
+use wayland_client::protocol::wl_output::{Transform as WlTransform, WlOutput};
 use wayland_protocols::xdg::xdg_output::zv1::client::zxdg_output_manager_v1::ZxdgOutputManagerV1;
 
 use crate::backend::wlr::dispatch::{
 	OutputEnumState, PartialOutput, RegistryState, convert_transform,
 };
 use crate::error::FramrError;
-use crate::output::OutputInfo;
+use crate::output::{OutputInfo, Position, Size};
 
 pub struct WlrBackend {
 	pub(crate) conn: Connection,
@@ -64,20 +64,47 @@ impl WlrBackend {
 		let mut event_queue = self.conn.new_event_queue::<OutputEnumState>();
 		let qh = event_queue.handle();
 
-		let _ = self.conn.display().get_registry(&qh, ());
-		event_queue.roundtrip(&mut state)?;
+		let registry = self.globals.registry();
+		for g in self.globals.contents().clone_list() {
+			if g.interface == "wl_output" && g.version >= 2 {
+				let idx = state.outputs.len();
+				let output = registry.bind::<WlOutput, _, OutputEnumState>(
+					g.name,
+					g.version.min(4),
+					&qh,
+					idx,
+				);
+				state.outputs.push(PartialOutput {
+					wl_output: output,
+					name: String::new(),
+					description: String::new(),
+					physical_size: Size {
+						width: 0,
+						height: 0,
+					},
+					transform: WlTransform::Normal,
+					scale: 1,
+					logical_position: Position { x: 0, y: 0 },
+					logical_size: Size {
+						width: 0,
+						height: 0,
+					},
+				});
+			}
+		}
 
-		let Ok(xdg_mgr): Result<ZxdgOutputManagerV1, _> = self.globals.bind(&qh, 3..=3, ()) else {
-			self.update_outputs(state.outputs);
-			return Ok(());
+		let xdg_mgr: Option<ZxdgOutputManagerV1> = self.globals.bind(&qh, 3..=3, ()).ok();
+		let xdg_outputs: Vec<_> = if let Some(ref mgr) = xdg_mgr {
+			state
+				.outputs
+				.iter()
+				.enumerate()
+				.map(|(i, output)| mgr.get_xdg_output(&output.wl_output, &qh, i))
+				.collect()
+		} else {
+			Vec::new()
 		};
 
-		let xdg_outputs: Vec<_> = state
-			.outputs
-			.iter()
-			.enumerate()
-			.map(|(i, output)| xdg_mgr.get_xdg_output(&output.wl_output, &qh, i))
-			.collect();
 		event_queue.roundtrip(&mut state)?;
 
 		for xdg in &xdg_outputs {
