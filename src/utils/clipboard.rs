@@ -15,17 +15,17 @@ pub fn copy_file_uri(path: &Path) -> Result<()> {
 		}
 	}
 	uri.push_str("\r\n");
-	copy_to_clipboard(uri.into_bytes(), "text/uri-list")
+	copy_to_clipboard(uri.as_bytes(), "text/uri-list")
 }
 
-pub fn copy_to_clipboard(data: Vec<u8>, mime_type: &str) -> Result<()> {
+pub fn copy_to_clipboard(data: &[u8], mime_type: &str) -> Result<()> {
 	match unsafe { libc::fork() } {
 		-1 => anyhow::bail!("fork failed"),
 		0 => {
 			let mut clipboard_opts = ClipboardOptions::new();
 			clipboard_opts.foreground(true).seat(Seat::All);
 			let _ = clipboard_opts.copy(
-				Source::Bytes(data.into()),
+				Source::Bytes(data.to_vec().into()),
 				MimeType::Specific(mime_type.to_string()),
 			);
 			std::process::exit(0);

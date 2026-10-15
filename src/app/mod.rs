@@ -10,7 +10,7 @@ use crate::app::capture::resolve_output;
 use crate::cli::Cli;
 use crate::config::{AppConfig, DefaultAction, NotificationKind};
 use crate::utils::clipboard::copy_to_clipboard;
-use crate::utils::notify::send_notification;
+use crate::utils::notify::{NotificationImage, send_notification};
 use crate::{config, sound, upload};
 
 pub fn handle_upload(
@@ -78,6 +78,11 @@ pub fn handle_upload(
 
 	let url = upload::upload(payload, uploader, &filename)?;
 	println!("{}", url);
+
+	if cli.copy {
+		copy_to_clipboard(url.as_bytes(), "text/plain;charset=utf-8")?;
+	}
+
 	let cfg = config::load_config().ok();
 	let upload_silent = cli.silent
 		|| cfg
@@ -85,19 +90,23 @@ pub fn handle_upload(
 			.is_some_and(|cfg| cfg.notification_is_silent(NotificationKind::Upload));
 
 	if !upload_silent {
-		let image_data = is_image.then(|| match file {
-			Some(p) => std::fs::read(p).unwrap_or_default(),
-			None => stdin_bytes.clone(),
-		});
-		send_notification("Upload Successful", &url, image_data.as_deref(), false)?;
+		let file_bytes;
+		let image_data = if is_image {
+			match file {
+				Some(p) => {
+					file_bytes = std::fs::read(p).unwrap_or_default();
+					Some(NotificationImage::Encoded(file_bytes.as_slice()))
+				}
+				None => Some(NotificationImage::Encoded(stdin_bytes.as_slice())),
+			}
+		} else {
+			None
+		};
+		send_notification("Upload Successful", &url, image_data, false)?;
 	}
 
 	if let Some(cfg) = cfg {
 		let _ = sound::play_sound(&cfg.upload_sound);
-	}
-
-	if cli.copy {
-		copy_to_clipboard(url.as_bytes().to_vec(), "text/plain;charset=utf-8")?;
 	}
 	Ok(())
 }

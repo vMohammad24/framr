@@ -15,19 +15,19 @@ use crate::app::capture::{capture, get_capture_path};
 use crate::app::record::record;
 use crate::app::{handle_upload, resolve_action};
 use crate::cli::{Cli, Commands, ConfigAction};
-use crate::config::{DefaultAction, NotificationKind};
+use crate::config::{AppConfig, DefaultAction, NotificationKind};
 use crate::utils::clipboard::{copy_file_uri, copy_to_clipboard};
-use crate::utils::notify::send_notification;
+use crate::utils::notify::{NotificationImage, send_notification};
 
 fn main() -> std::process::ExitCode {
-	sound::init_sound();
 	let cli = Cli::parse();
+	let cfg = config::load_config().ok();
 	let silent = cli.silent
-		|| config::load_config()
-			.ok()
+		|| cfg
+			.as_ref()
 			.is_some_and(|cfg| cfg.notification_is_silent(NotificationKind::Error));
 
-	match run(cli) {
+	match run(cli, cfg) {
 		Ok(()) => std::process::ExitCode::SUCCESS,
 		Err(e) => {
 			eprintln!("Error: {e:#}");
@@ -39,8 +39,7 @@ fn main() -> std::process::ExitCode {
 	}
 }
 
-fn run(cli: Cli) -> Result<()> {
-	let cfg = config::load_config().ok();
+fn run(cli: Cli, cfg: Option<AppConfig>) -> Result<()> {
 	if let Some(ref uri) = cli.uri {
 		return config::import_uploader(uri, cli.silent);
 	}
@@ -112,22 +111,27 @@ fn run(cli: Cli) -> Result<()> {
 	let is_upload_action =
 		action == DefaultAction::Upload || action == DefaultAction::UploadAndCopy;
 
-	let (bytes_opt, path, filename, is_image, mime_type) = if cli.record {
+	let (bytes_opt, raw_image_opt, path, filename, is_image, mime_type) = if cli.record {
 		let Some((path, filename)) = record(&cli, cfg.as_ref(), is_upload_action)? else {
 			return Ok(());
 		};
-		(None, path, filename, false, "application/octet-stream")
+		(None, None, path, filename, false, "application/octet-stream")
 	} else {
-		let (img_bytes, region, img_format) = capture(&cli, cfg.as_ref())?;
-		let (path, filename) = get_capture_path(&cli, cfg.as_ref(), region, img_format)?;
+		let (img_bytes, raw_img, region, cached_windows, img_format) =
+			capture(&cli, cfg.as_ref())?;
+		let (path, filename) =
+			get_capture_path(&cli, cfg.as_ref(), region, cached_windows, img_format)?;
 		(
 			Some(img_bytes),
+			Some(raw_img),
 			path,
 			filename,
 			true,
 			img_format.mime_type(),
 		)
 	};
+
+	let notif_image = raw_image_opt.as_ref().map(NotificationImage::Rgba);
 
 	let payload = match &bytes_opt {
 		Some(b) => upload::UploadPayload::Bytes {
@@ -143,19 +147,19 @@ fn run(cli: Cli) -> Result<()> {
 			let url = upload::upload(payload, uploader_name, &filename)?;
 			println!("{}", url);
 
+			if action == DefaultAction::UploadAndCopy {
+				copy_to_clipboard(url.as_bytes(), "text/plain;charset=utf-8")?;
+			}
+
 			send_notification(
 				"Upload Successful",
 				&url,
-				bytes_opt.as_deref(),
+				notif_image,
 				cli.silent
 					|| cfg
 						.as_ref()
 						.is_some_and(|cfg| cfg.notification_is_silent(NotificationKind::Upload)),
 			)?;
-
-			if action == DefaultAction::UploadAndCopy {
-				copy_to_clipboard(url.as_bytes().to_vec(), "text/plain;charset=utf-8")?;
-			}
 
 			if let Some(cfg) = &cfg {
 				let _ = sound::play_sound(&cfg.upload_sound);
@@ -168,11 +172,11 @@ fn run(cli: Cli) -> Result<()> {
 		DefaultAction::Copy => {
 			if is_image {
 				if let Some(ref bytes) = bytes_opt {
-					copy_to_clipboard(bytes.clone(), mime_type)?;
+					copy_to_clipboard(bytes, mime_type)?;
 					send_notification(
 						"Copied to Clipboard",
 						"Screenshot copied to clipboard",
-						Some(bytes),
+						notif_image,
 						cli.silent
 							|| cfg.as_ref().is_some_and(|cfg| {
 								cfg.notification_is_silent(NotificationKind::Image)
@@ -199,7 +203,7 @@ fn run(cli: Cli) -> Result<()> {
 					.ok_or_else(|| anyhow::anyhow!("Only screenshots can be written to stdout"))?;
 				std::io::Write::write_all(&mut std::io::stdout(), bytes)?;
 				if action == DefaultAction::SaveAndCopy {
-					copy_to_clipboard(bytes.clone(), mime_type)?;
+					copy_to_clipboard(bytes, mime_type)?;
 				}
 				return Ok(());
 			}
@@ -215,7 +219,7 @@ fn run(cli: Cli) -> Result<()> {
 			let copied = action == DefaultAction::SaveAndCopy;
 			if copied {
 				match &bytes_opt {
-					Some(bytes) => copy_to_clipboard(bytes.clone(), mime_type)?,
+					Some(bytes) => copy_to_clipboard(bytes, mime_type)?,
 					None => copy_file_uri(&path)?,
 				}
 			}
@@ -229,7 +233,7 @@ fn run(cli: Cli) -> Result<()> {
 			send_notification(
 				title,
 				&path.to_string_lossy(),
-				bytes_opt.as_deref(),
+				notif_image,
 				cli.silent
 					|| cfg.as_ref().is_some_and(|cfg| {
 						cfg.notification_is_silent(if is_image {
