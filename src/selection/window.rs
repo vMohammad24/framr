@@ -57,6 +57,26 @@ pub fn get_window_at_pos(pos: (f64, f64), windows: &[Window]) -> Option<usize> {
 		.map(|(index, _)| index)
 }
 
+fn clip_to_output(
+	(x, y, w, h): (i32, i32, i32, i32),
+	(mx, my, mw, mh): (i32, i32, i32, i32),
+	transform: u8,
+	scale: f64,
+) -> (i32, i32, i32, i32) {
+	let (pw, ph) = if transform % 2 == 1 {
+		(mh, mw)
+	} else {
+		(mw, mh)
+	};
+	let mw = (pw as f64 / scale).round() as i32;
+	let mh = (ph as f64 / scale).round() as i32;
+	let x0 = x.max(mx);
+	let y0 = y.max(my);
+	let x1 = (x + w).min(mx + mw);
+	let y1 = (y + h).min(my + mh);
+	(x0, y0, (x1 - x0).max(0), (y1 - y0).max(0))
+}
+
 pub fn get_hypr_windows() -> Result<Vec<Window>> {
 	#[derive(Deserialize)]
 	#[serde(untagged)]
@@ -79,6 +99,7 @@ pub fn get_hypr_windows() -> Result<Vec<Window>> {
 		title: String,
 		at: (i32, i32),
 		size: (i32, i32),
+		monitor: Option<i64>,
 		workspace: HyprWorkspaceRef,
 		floating: bool,
 		fullscreen: u8,
@@ -92,8 +113,15 @@ pub fn get_hypr_windows() -> Result<Vec<Window>> {
 
 	#[derive(Deserialize)]
 	struct HyprMonitor {
+		id: i64,
 		#[serde(rename = "activeWorkspace")]
 		active_workspace: HyprWorkspaceRef,
+		x: i32,
+		y: i32,
+		width: i32,
+		height: i32,
+		transform: u8,
+		scale: f64,
 	}
 
 	fn hypr_query(command: &str) -> Result<String> {
@@ -139,12 +167,25 @@ pub fn get_hypr_windows() -> Result<Vec<Window>> {
 				1000
 			};
 
+			let (x, y, width, height) = match c
+				.monitor
+				.and_then(|id| monitors.iter().find(|m| m.id == id))
+			{
+				Some(m) if !c.floating => clip_to_output(
+					(c.at.0, c.at.1, c.size.0, c.size.1),
+					(m.x, m.y, m.width, m.height),
+					m.transform,
+					m.scale,
+				),
+				_ => (c.at.0, c.at.1, c.size.0, c.size.1),
+			};
+
 			Window {
 				title: c.title,
-				x: c.at.0,
-				y: c.at.1,
-				width: c.size.0,
-				height: c.size.1,
+				x,
+				y,
+				width,
+				height,
 				z_index: layer_base - c.focus_history_id,
 			}
 		})
