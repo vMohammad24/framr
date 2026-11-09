@@ -80,6 +80,8 @@
               $out/bin/framr man man-pages
               installManPage man-pages/*.1
             '';
+
+            meta.mainProgram = "framr";
           });
       in {
         packages.default = framr;
