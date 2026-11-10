@@ -319,7 +319,7 @@ impl SelectionState {
 		let x_start = (self.last_surface_width - total_w) / 2.0;
 		for i in 0..count {
 			let tx = x_start + i as f64 * item_w;
-			if local_x >= tx && local_x <= tx + item_w {
+			if local_x >= tx && local_x < tx + item_w {
 				return Some(i);
 			}
 		}
@@ -346,7 +346,7 @@ impl SelectionState {
 
 				for i in 0..Tool::all().len() {
 					let tx = x_start + i as f64 * item_w;
-					if local_pos.0 >= tx && local_pos.0 <= tx + item_w {
+					if local_pos.0 >= tx && local_pos.0 < tx + item_w {
 						self.active_tool = Tool::from_index(i);
 						self.selected_annotation = None;
 						self.selected_region = None;

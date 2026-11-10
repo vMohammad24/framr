@@ -672,7 +672,7 @@ impl AppState {
 			let tx = x + i as f64 * item_w;
 
 			let is_hovered =
-				mouse_x > tx && mouse_x <= tx + item_w && mouse_y >= y && mouse_y <= y + h;
+				mouse_x >= tx && mouse_x < tx + item_w && mouse_y >= y && mouse_y <= y + h;
 
 			if *tool == active {
 				graphics::set_source_color(cr, config.toolbar_active_color);
