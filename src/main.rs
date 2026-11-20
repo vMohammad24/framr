@@ -6,14 +6,19 @@ mod app;
 mod cli;
 mod config;
 mod pidfile;
+#[cfg(feature = "annotations")]
 mod selection;
+#[cfg(feature = "upload")]
 mod sound;
+#[cfg(feature = "upload")]
 mod upload;
 mod utils;
 
 use crate::app::capture::{capture, get_capture_path};
+#[cfg(feature = "upload")]
+use crate::app::handle_upload;
 use crate::app::record::record;
-use crate::app::{handle_upload, resolve_action};
+use crate::app::resolve_action;
 use crate::cli::{Cli, Commands, ConfigAction};
 use crate::config::{AppConfig, DefaultAction, NotificationKind};
 use crate::utils::clipboard::{copy_file_uri, copy_to_clipboard};
@@ -40,6 +45,7 @@ fn main() -> std::process::ExitCode {
 }
 
 fn run(cli: Cli, cfg: Option<AppConfig>) -> Result<()> {
+	#[cfg(feature = "upload")]
 	if let Some(ref uri) = cli.uri {
 		return config::import_uploader(uri, cli.silent);
 	}
@@ -47,23 +53,27 @@ fn run(cli: Cli, cfg: Option<AppConfig>) -> Result<()> {
 	match cli.command {
 		Some(Commands::Config { action }) => {
 			return match action {
+				#[cfg(feature = "upload")]
 				Some(ConfigAction::Import { source }) => config::import_uploader(&source, true),
+				#[cfg(feature = "upload")]
 				Some(ConfigAction::List) => config::list_uploaders(),
+				#[cfg(feature = "upload")]
 				Some(ConfigAction::Show { uploader }) => config::show_uploader(&uploader),
+				#[cfg(feature = "upload")]
 				Some(ConfigAction::Create) => config::create_uploader(),
+				#[cfg(feature = "upload")]
 				Some(ConfigAction::Edit { uploader }) => config::edit_uploader(uploader.as_deref()),
-				Some(ConfigAction::Delete { uploader }) => {
-					config::delete_uploader(uploader.as_deref())
-				}
-				Some(ConfigAction::Default { uploader }) => {
-					config::set_default_uploader(uploader.as_deref())
-				}
+				#[cfg(feature = "upload")]
+				Some(ConfigAction::Delete { uploader }) => config::delete_uploader(uploader.as_deref()),
+				#[cfg(feature = "upload")]
+				Some(ConfigAction::Default { uploader }) => config::set_default_uploader(uploader.as_deref()),
 				Some(ConfigAction::Action { action }) => {
 					config::set_default_action(action.as_deref())
 				}
 				Some(ConfigAction::Capture { method }) => {
 					config::set_default_capture(method.as_deref())
 				}
+				#[cfg(feature = "upload")]
 				Some(ConfigAction::Sound { path }) => config::set_default_sound(path.as_deref()),
 				Some(ConfigAction::Format { format }) => {
 					config::set_default_format(format.as_deref())
@@ -84,6 +94,7 @@ fn run(cli: Cli, cfg: Option<AppConfig>) -> Result<()> {
 			clap_mangen::generate_to(Cli::command(), dir)?;
 			return Ok(());
 		}
+		#[cfg(feature = "upload")]
 		Some(Commands::Upload {
 			ref file,
 			ref uploader,
@@ -108,17 +119,26 @@ fn run(cli: Cli, cfg: Option<AppConfig>) -> Result<()> {
 	}
 
 	let action = resolve_action(&cli, cfg.as_ref());
-	let is_upload_action =
-		action == DefaultAction::Upload || action == DefaultAction::UploadAndCopy;
+	#[cfg(feature = "upload")]
+	let is_upload_action = action == DefaultAction::Upload || action == DefaultAction::UploadAndCopy;
+
+	#[cfg(not(feature = "upload"))]
+	let is_upload_action = false;
 
 	let (bytes_opt, raw_image_opt, path, filename, is_image, mime_type) = if cli.record {
 		let Some((path, filename)) = record(&cli, cfg.as_ref(), is_upload_action)? else {
 			return Ok(());
 		};
-		(None, None, path, filename, false, "application/octet-stream")
+		(
+			None,
+			None,
+			path,
+			filename,
+			false,
+			"application/octet-stream",
+		)
 	} else {
-		let (img_bytes, raw_img, region, cached_windows, img_format) =
-			capture(&cli, cfg.as_ref())?;
+		let (img_bytes, raw_img, region, cached_windows, img_format) = capture(&cli, cfg.as_ref())?;
 		let (path, filename) =
 			get_capture_path(&cli, cfg.as_ref(), region, cached_windows, img_format)?;
 		(
@@ -133,6 +153,10 @@ fn run(cli: Cli, cfg: Option<AppConfig>) -> Result<()> {
 
 	let notif_image = raw_image_opt.as_ref().map(NotificationImage::Rgba);
 
+	#[cfg(not(feature = "upload"))]
+	let _ = filename;
+
+	#[cfg(feature = "upload")]
 	let payload = match &bytes_opt {
 		Some(b) => upload::UploadPayload::Bytes {
 			bytes: b,
@@ -142,6 +166,7 @@ fn run(cli: Cli, cfg: Option<AppConfig>) -> Result<()> {
 	};
 
 	match action {
+		#[cfg(feature = "upload")]
 		DefaultAction::Upload | DefaultAction::UploadAndCopy => {
 			let uploader_name = cli.upload.as_deref().filter(|s| !s.is_empty());
 			let url = upload::upload(payload, uploader_name, &filename)?;

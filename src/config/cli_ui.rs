@@ -1,14 +1,19 @@
+#[cfg(feature = "upload")]
 use crate::config::NotificationKind;
-use crate::config::core::{load_config, load_overrides, save_config};
-use crate::config::types::{
-	AppConfig, BodyType, ConfigEnum, DefaultAction, DefaultCaptureMethod, UploadConfig,
-};
+#[cfg(feature = "upload")]
+use crate::config::core::load_overrides;
+use crate::config::core::{load_config, save_config};
+use crate::config::types::{AppConfig, ConfigEnum, DefaultAction, DefaultCaptureMethod};
+#[cfg(feature = "upload")]
+use crate::config::types::{BodyType, UploadConfig};
+#[cfg(feature = "upload")]
 use crate::utils::notify::send_notification;
 use anyhow::{Result, bail};
 use console::{Term, style};
 use std::thread;
 use std::time::Duration;
 
+#[cfg(feature = "upload")]
 pub fn header(text: &str) -> String {
 	style(format!("\n=== {} ===", text))
 		.cyan()
@@ -24,6 +29,7 @@ pub fn print_error(text: &str) {
 	println!("{} {}", style("✖").red().bold(), style(text).red());
 }
 
+#[cfg(feature = "upload")]
 fn detail(label: &str, value: impl std::fmt::Display) {
 	println!("  {:<18} {}", style(label).bold(), value);
 }
@@ -32,6 +38,7 @@ fn print_setting(label: &str, value: impl std::fmt::Display) {
 	println!("  {} {}", style(label).bold(), style(value).yellow());
 }
 
+#[cfg(feature = "upload")]
 pub fn uploader_list_entry(index: usize, uploader: &UploadConfig, is_default: bool) -> String {
 	let default_marker = if is_default {
 		format!("{} ", style("*").yellow().bold())
@@ -48,6 +55,7 @@ pub fn uploader_list_entry(index: usize, uploader: &UploadConfig, is_default: bo
 	)
 }
 
+#[cfg(feature = "upload")]
 pub fn display_uploader_details(uploader: &UploadConfig) {
 	detail("Name:", style(&uploader.name).green().bold());
 	detail(
@@ -74,6 +82,7 @@ pub fn display_uploader_details(uploader: &UploadConfig) {
 	println!();
 }
 
+#[cfg(feature = "upload")]
 pub fn display_kv_pairs(label: &str, pairs: &[(String, String)]) {
 	println!("  {}:", style(label).bold());
 	if pairs.is_empty() {
@@ -85,6 +94,7 @@ pub fn display_kv_pairs(label: &str, pairs: &[(String, String)]) {
 	}
 }
 
+#[cfg(feature = "upload")]
 pub fn find_uploader_index(cfg: &AppConfig, name_or_index: &str) -> Option<usize> {
 	if let Ok(idx) = name_or_index.parse::<usize>()
 		&& idx > 0
@@ -97,6 +107,7 @@ pub fn find_uploader_index(cfg: &AppConfig, name_or_index: &str) -> Option<usize
 		.position(|u| u.name.eq_ignore_ascii_case(name_or_index))
 }
 
+#[cfg(feature = "upload")]
 pub fn ensure_unique_uploader_name(cfg: &AppConfig, name: String) -> String {
 	let mut counter = 1;
 	let mut new_name = name.clone();
@@ -113,6 +124,7 @@ pub fn ensure_unique_uploader_name(cfg: &AppConfig, name: String) -> String {
 	new_name
 }
 
+#[cfg(feature = "upload")]
 pub fn select_uploader_index(cfg: &AppConfig, prompt: &str) -> Result<usize> {
 	let items: Vec<String> = cfg
 		.uploaders
@@ -136,6 +148,7 @@ pub fn select_uploader_index(cfg: &AppConfig, prompt: &str) -> Result<usize> {
 	super::prompt_select(prompt, &items, 0)
 }
 
+#[cfg(feature = "upload")]
 pub fn resolve_uploader_index(
 	cfg: &AppConfig,
 	name_or_index: Option<&str>,
@@ -148,6 +161,7 @@ pub fn resolve_uploader_index(
 	}
 }
 
+#[cfg(feature = "upload")]
 pub fn manage_kv_pairs(label: &str, pairs: &mut Vec<(String, String)>) -> Result<()> {
 	loop {
 		println!("\n  {}", style(format!("Current {}:", label)).cyan().bold());
@@ -190,6 +204,7 @@ pub fn manage_kv_pairs(label: &str, pairs: &mut Vec<(String, String)>) -> Result
 	}
 	Ok(())
 }
+#[cfg(feature = "upload")]
 pub fn import_uploader(source: &str, silent: bool) -> Result<()> {
 	let mut cfg = load_config()?;
 	let silent = silent || cfg.notification_is_silent(NotificationKind::Upload);
@@ -227,6 +242,7 @@ pub fn import_uploader(source: &str, silent: bool) -> Result<()> {
 	Ok(())
 }
 
+#[cfg(feature = "upload")]
 pub fn list_uploaders() -> Result<()> {
 	let cfg = load_config()?;
 
@@ -295,6 +311,7 @@ pub fn list_uploaders() -> Result<()> {
 	Ok(())
 }
 
+#[cfg(feature = "upload")]
 pub fn show_uploader(name_or_index: &str) -> Result<()> {
 	let cfg = load_config()?;
 
@@ -309,6 +326,7 @@ pub fn show_uploader(name_or_index: &str) -> Result<()> {
 	Ok(())
 }
 
+#[cfg(feature = "upload")]
 pub fn create_uploader() -> Result<()> {
 	let mut cfg = load_config()?;
 	create_uploader_interactive(&mut cfg)?;
@@ -317,6 +335,7 @@ pub fn create_uploader() -> Result<()> {
 	Ok(())
 }
 
+#[cfg(feature = "upload")]
 pub fn edit_uploader(name_or_index: Option<&str>) -> Result<()> {
 	let mut cfg = load_config()?;
 
@@ -332,6 +351,7 @@ pub fn edit_uploader(name_or_index: Option<&str>) -> Result<()> {
 	Ok(())
 }
 
+#[cfg(feature = "upload")]
 pub fn delete_uploader(name_or_index: Option<&str>) -> Result<()> {
 	let mut cfg = load_config()?;
 
@@ -363,6 +383,7 @@ pub fn delete_uploader(name_or_index: Option<&str>) -> Result<()> {
 	Ok(())
 }
 
+#[cfg(feature = "upload")]
 pub fn set_default_uploader(name_or_index: Option<&str>) -> Result<()> {
 	let mut cfg = load_config()?;
 	if let Some(n) = name_or_index {
@@ -440,6 +461,7 @@ pub fn set_default_capture(name_or_index: Option<&str>) -> Result<()> {
 	Ok(())
 }
 
+#[cfg(feature = "upload")]
 pub fn set_default_sound(path: Option<&str>) -> Result<()> {
 	let mut cfg = load_config()?;
 	let path = match path {
@@ -491,6 +513,7 @@ pub fn set_image_quality(quality: Option<u8>) -> Result<()> {
 	Ok(())
 }
 
+#[cfg(feature = "upload")]
 pub fn create_uploader_interactive(cfg: &mut AppConfig) -> Result<()> {
 	print!("{}", header("Create new uploader"));
 
@@ -527,6 +550,7 @@ pub fn create_uploader_interactive(cfg: &mut AppConfig) -> Result<()> {
 	Ok(())
 }
 
+#[cfg(feature = "upload")]
 pub fn modify_uploader_at(cfg: &mut AppConfig, idx: usize) -> Result<()> {
 	let uploader = &mut cfg.uploaders[idx];
 
@@ -543,6 +567,7 @@ pub fn modify_uploader_at(cfg: &mut AppConfig, idx: usize) -> Result<()> {
 	modify_uploader_menu(uploader)
 }
 
+#[cfg(feature = "upload")]
 pub fn modify_uploader_menu(uploader: &mut UploadConfig) -> Result<()> {
 	crate::interactive_menu!(
 		&format!("Modifying {}", uploader.name),
@@ -612,10 +637,25 @@ pub fn register_protocol_handler() -> Result<()> {
 
 	let desktop_file_path = apps_dir.join("framr-handler.desktop");
 
+	#[cfg(feature = "upload")]
+	let (entry_label, target_warning, db_err_note, db_missing_note) = (
+		"Protocol handler",
+		"Registering a handler pointing to a build directory. Deep links will break if you move or delete this binary.",
+		"'update-desktop-database' returned an error. You may need to log out for links to work.",
+		"'update-desktop-database' not found. You may need to restart your session for the protocol handler to be recognized.",
+	);
+	#[cfg(not(feature = "upload"))]
+	let (entry_label, target_warning, db_err_note, db_missing_note) = (
+		"Desktop entry",
+		"Registering a desktop entry pointing to a build directory. KDE capture permissions will break if you move or delete this binary.",
+		"'update-desktop-database' returned an error. You may need to log out for KDE capture permissions to take effect.",
+		"'update-desktop-database' not found. You may need to restart your session for the desktop entry to be recognized.",
+	);
+
 	if desktop_file_path.exists() {
 		let proceed = super::prompt_confirm(
 			&format!(
-				"Protocol handler already exists at {}. Overwrite?",
+				"{entry_label} already exists at {}. Overwrite?",
 				style(desktop_file_path.display()).blue()
 			),
 			false,
@@ -636,29 +676,32 @@ pub fn register_protocol_handler() -> Result<()> {
 		println!(
 			"  {} {}",
 			style("Warning:").yellow().bold(),
-			style("Registering a handler pointing to a build directory. Deep links will break if you move or delete this binary.").yellow()
+			style(target_warning).yellow()
 		);
 	}
 
+	#[cfg(feature = "upload")]
+	let entry_details = format!(
+		"Name=Framr Deeplink Handler\nExec={exe_str} %u\nMimeType=x-scheme-handler/framr;\nComment=Handle framr:// deeplinks for importing uploaders"
+	);
+	#[cfg(not(feature = "upload"))]
+	let entry_details =
+		format!("Name=Framr\nExec={exe_str}\nComment=Wayland screenshots and screen recordings");
 	let content = format!(
 		r#"[Desktop Entry]
-Name=Framr Deeplink Handler
-Exec={} %u
+{entry_details}
 Type=Application
 Terminal=false
-MimeType=x-scheme-handler/framr;
 NoDisplay=true
 X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2
 X-KDE-Wayland-Interfaces=zkde_screencast_unstable_v1,org_kde_plasma_window_management
-Comment=Handle framr:// deeplinks for importing uploaders
-"#,
-		exe_str
+"#
 	);
 
 	std::fs::write(&desktop_file_path, content)?;
 
 	println!(
-		"  {} Protocol handler registered at {}",
+		"  {} {entry_label} registered at {}",
 		style("✔").green().bold(),
 		style(desktop_file_path.display()).blue()
 	);
@@ -671,17 +714,14 @@ Comment=Handle framr:// deeplinks for importing uploaders
 			println!(
 				"  {} {}",
 				style("Note:").yellow().bold(),
-				style(
-					"'update-desktop-database' returned an error. You may need to log out for links to work."
-				)
-				.dim()
+				style(db_err_note).dim()
 			);
 		}
 		Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
 			println!(
 				"  {} {}",
 				style("Note:").dim().bold(),
-				style("'update-desktop-database' not found. You may need to restart your session for the protocol handler to be recognized.").dim()
+				style(db_missing_note).dim()
 			);
 		}
 		_ => {}
@@ -700,6 +740,7 @@ pub fn run_config_wizard() -> Result<()> {
 		println!("\n{}", style("Configuration Menu").cyan().bold());
 		println!("{}", style("━━━━━━━━━━━━━━━━━━━━━━━━━━").dim());
 
+		#[cfg(feature = "upload")]
 		if cfg.uploaders.is_empty() {
 			println!("  {}\n", style("(No uploaders currently configured)").dim());
 		} else {
@@ -710,6 +751,7 @@ pub fn run_config_wizard() -> Result<()> {
 			println!();
 		}
 
+		#[cfg(feature = "upload")]
 		println!(
 			"  {} {}",
 			style("Default Uploader:").bold(),
@@ -744,6 +786,7 @@ pub fn run_config_wizard() -> Result<()> {
 				.yellow()
 				.bold()
 		);
+		#[cfg(feature = "upload")]
 		println!(
 			"  {} {}\n",
 			style("Default Sound:").bold(),
@@ -753,65 +796,79 @@ pub fn run_config_wizard() -> Result<()> {
 		display_recording_settings(&cfg);
 		println!();
 
-		let selection = super::prompt_select(
-			"Whatcha doin?",
-			&[
+		enum Action {
+			#[cfg(feature = "upload")]
+			Import,
+			#[cfg(feature = "upload")]
+			Create,
+			#[cfg(feature = "upload")]
+			Edit,
+			#[cfg(feature = "upload")]
+			Delete,
+			General,
+			#[cfg(feature = "annotations")]
+			Selection,
+			Recording,
+			Exit,
+		}
+		let actions = [
+			#[cfg(feature = "upload")]
+			(
 				"Import uploader (.sxcu / .iscu URL or File)",
-				"Create new uploader",
-				"Edit existing uploader",
-				"Delete uploader",
-				"General settings...",
-				"Selection UI settings...",
-				"Recording settings...",
-				"Save & Exit",
-			],
-			7,
-		)?;
+				Action::Import,
+			),
+			#[cfg(feature = "upload")]
+			("Create new uploader", Action::Create),
+			#[cfg(feature = "upload")]
+			("Edit existing uploader", Action::Edit),
+			#[cfg(feature = "upload")]
+			("Delete uploader", Action::Delete),
+			("General settings...", Action::General),
+			#[cfg(feature = "annotations")]
+			("Selection UI settings...", Action::Selection),
+			("Recording settings...", Action::Recording),
+			("Save & Exit", Action::Exit),
+		];
+		let labels: Vec<_> = actions.iter().map(|(label, _)| *label).collect();
+		let selection = super::prompt_select("Whatcha doin?", &labels, labels.len() - 1)?;
 
 		let _ = term.clear_screen();
 
-		match selection {
-			0 => {
+		match actions[selection].1 {
+			#[cfg(feature = "upload")]
+			Action::Import => {
 				let source: String = super::prompt_input("Path to file or URL", None)?;
 				import_uploader(&source, true)?;
-				thread::sleep(Duration::from_secs(1));
 			}
-			1 => {
-				create_uploader()?;
-				thread::sleep(Duration::from_secs(1));
-			}
-			2 => {
-				edit_uploader(None)?;
-				thread::sleep(Duration::from_secs(1));
-			}
-			3 => {
-				delete_uploader(None)?;
-				thread::sleep(Duration::from_secs(1));
-			}
-			4 => {
+			#[cfg(feature = "upload")]
+			Action::Create => create_uploader()?,
+			#[cfg(feature = "upload")]
+			Action::Edit => edit_uploader(None)?,
+			#[cfg(feature = "upload")]
+			Action::Delete => delete_uploader(None)?,
+			Action::General => {
 				modify_app_config(&mut cfg)?;
 				save_config(&cfg)?;
 				print_success("General settings updated.");
-				thread::sleep(Duration::from_secs(1));
 			}
-			5 => {
+			#[cfg(feature = "annotations")]
+			Action::Selection => {
 				modify_selection_config(&mut cfg)?;
 				save_config(&cfg)?;
 				print_success("Selection UI settings updated.");
-				thread::sleep(Duration::from_secs(1));
 			}
-			6 => {
+			Action::Recording => {
 				modify_recording_config(&mut cfg)?;
 				save_config(&cfg)?;
 				print_success("Recording settings updated.");
-				thread::sleep(Duration::from_secs(1));
 			}
-			_ => {
+			Action::Exit => {
 				save_config(&cfg)?;
 				print_success("Configuration saved. Exiting...");
 				return Ok(());
 			}
 		}
+		thread::sleep(Duration::from_secs(1));
 	}
 }
 
@@ -820,19 +877,21 @@ pub fn modify_app_config(cfg: &mut AppConfig) -> Result<()> {
 		"General Settings",
 		cfg,
 		[
+			#[cfg(feature = "upload")]
 			default_uploader: "Default Uploader" => uploader,
 			default_action: "Default Action" => opt_enum [DefaultAction],
 			default_capture: "Default Capture" => custom [edit_capture_method] display_as opt_enum,
 			image_format: "Image Format" => opt_enum [libframr::OutputImageFormat],
 			image_quality: "Image Quality" => opt_num,
 			silent: "Silent Notifications" => custom [edit_silent_notifications] display_as silent,
+			#[cfg(feature = "upload")]
 			upload_sound: "Upload Sound" => text,
 		]
 	)
 }
 
 pub(crate) fn format_silent_notifications(
-	silent: Option<crate::config::types::SilentConfig>,
+	silent: Option<&crate::config::types::SilentConfig>,
 ) -> String {
 	let Some(silent) = silent else {
 		return "None".to_string();
@@ -844,6 +903,7 @@ pub(crate) fn format_silent_notifications(
 	if silent.image.unwrap_or(false) {
 		categories.push("Image");
 	}
+	#[cfg(feature = "upload")]
 	if silent.upload.unwrap_or(false) {
 		categories.push("Uploads");
 	}
@@ -866,6 +926,7 @@ fn edit_silent_notifications(cfg: &mut AppConfig) -> Result<()> {
 		[
 			image: "Silence Images" => opt_bool,
 			video: "Silence Videos" => opt_bool,
+			#[cfg(feature = "upload")]
 			upload: "Silence Uploads" => opt_bool,
 			error: "Silence Errors" => opt_bool,
 		]
@@ -909,6 +970,7 @@ fn edit_capture_method(s: &mut AppConfig) -> Result<()> {
 	Ok(())
 }
 
+#[cfg(feature = "annotations")]
 pub fn modify_selection_config(cfg: &mut AppConfig) -> Result<()> {
 	crate::interactive_menu!(
 		"Selection UI Settings",

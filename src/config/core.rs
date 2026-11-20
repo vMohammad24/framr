@@ -1,7 +1,41 @@
-use crate::config::types::AppConfig;
-use anyhow::{Context, Result, bail};
+use crate::config::types::{AppConfig, ConfigOverrides};
+use anyhow::Result;
+#[cfg(feature = "upload")]
+use anyhow::{Context, bail};
 use std::fs;
-use std::path::{Path, PathBuf};
+#[cfg(feature = "upload")]
+use std::path::Path;
+use std::path::PathBuf;
+
+macro_rules! merge_fields {
+	($base:expr, $over:expr, [$($field:ident),* $(,)?], [$($opt_field:ident),* $(,)?]) => {
+		$(
+			if let Some(val) = $over.$field {
+				$base.$field = val;
+			}
+		)*
+		$(
+			if $over.$opt_field.is_some() {
+				$base.$opt_field = $over.$opt_field;
+			}
+		)*
+	};
+}
+
+macro_rules! restore_fields {
+	($to_save:expr, $over:expr, $stored:expr, [$($field:ident),* $(,)?], [$($opt_field:ident),* $(,)?]) => {
+		$(
+			if $over.$field.as_ref() == Some(&$to_save.$field) {
+				$to_save.$field = $stored.$field;
+			}
+		)*
+		$(
+			if $over.$opt_field.is_some() && $to_save.$opt_field == $over.$opt_field {
+				$to_save.$opt_field = $stored.$opt_field;
+			}
+		)*
+	};
+}
 
 pub fn load_config() -> Result<AppConfig> {
 	let app_name = env!("CARGO_PKG_NAME");
@@ -14,7 +48,7 @@ pub fn load_config() -> Result<AppConfig> {
 	Ok(cfg)
 }
 
-pub fn load_overrides() -> Option<AppConfig> {
+pub fn load_overrides() -> Option<ConfigOverrides> {
 	let override_path = std::env::var("FRAMR_OVERRIDES").ok()?;
 	let path = PathBuf::from(override_path);
 	if !path.exists() {
@@ -27,50 +61,80 @@ pub fn load_overrides() -> Option<AppConfig> {
 		.or_else(|| confy::load_path(&path).ok())
 }
 
-fn merge_configs(base: &mut AppConfig, over: AppConfig) {
-	if let Some(uploader) = over.default_uploader {
-		base.default_uploader = Some(uploader);
-	}
-	if let Some(action) = over.default_action {
-		base.default_action = Some(action);
-	}
-	if let Some(capture) = over.default_capture {
-		base.default_capture = Some(capture);
-	}
-	if let Some(screen) = over.default_screen {
-		base.default_screen = Some(screen);
-	}
-	if let Some(format) = over.image_format {
-		base.image_format = Some(format);
-	}
-	if let Some(quality) = over.image_quality {
-		base.image_quality = Some(quality);
-	}
+fn merge_configs(base: &mut AppConfig, over: ConfigOverrides) {
+	#[cfg(feature = "upload")]
+	merge_fields!(base, over, [upload_sound], [default_uploader]);
+	merge_fields!(
+		base,
+		over,
+		[],
+		[
+			default_action,
+			default_capture,
+			default_screen,
+			image_format,
+			image_quality,
+		]
+	);
 	if let Some(silent) = over.silent {
 		let base_silent = base.silent.get_or_insert_default();
-		if silent.image.is_some() {
-			base_silent.image = silent.image;
-		}
-		if silent.video.is_some() {
-			base_silent.video = silent.video;
-		}
-		if silent.upload.is_some() {
-			base_silent.upload = silent.upload;
-		}
-		if silent.error.is_some() {
-			base_silent.error = silent.error;
-		}
+		merge_fields!(base_silent, silent, [], [image, video, error]);
+		#[cfg(feature = "upload")]
+		merge_fields!(base_silent, silent, [], [upload]);
 	}
 
-	base.selection = over.selection;
-	base.recording = over.recording;
+	#[cfg(feature = "annotations")]
+	if let Some(selection) = over.selection {
+		merge_fields!(
+			base.selection,
+			selection,
+			[
+				background_color,
+				border_color,
+				border_width,
+				toolbar_background_color,
+				toolbar_active_color,
+				toolbar_hover_color,
+				annotation_color,
+				annotation_line_width,
+				blur_radius,
+				pixelate_block_size,
+				highlight_color,
+				toolbar_y,
+				toolbar_item_width,
+				toolbar_height,
+				show_toolbar,
+				multi_region_mode,
+			],
+			[]
+		);
+	}
+	if let Some(recording) = over.recording {
+		merge_fields!(
+			base.recording,
+			recording,
+			[
+				encoder,
+				container,
+				bitrate,
+				fps,
+				keyframe_interval,
+				tune,
+				speed,
+				backend,
+			],
+			[threads, vaapi_device]
+		);
+	}
 
+	#[cfg(feature = "upload")]
 	for dir in over.allowed_directories {
 		if !base.allowed_directories.contains(&dir) {
 			base.allowed_directories.push(dir);
 		}
 	}
 
+	#[cfg(feature = "upload")]
 	for over_u in over.uploaders {
 		if let Some(existing) = base.uploaders.iter_mut().find(|u| u.name == over_u.name) {
 			*existing = over_u;
@@ -80,6 +144,7 @@ fn merge_configs(base: &mut AppConfig, over: AppConfig) {
 	}
 }
 
+#[cfg(feature = "upload")]
 fn get_system_secret_dirs() -> Vec<PathBuf> {
 	let mut allowed = Vec::new();
 
@@ -100,6 +165,7 @@ fn get_system_secret_dirs() -> Vec<PathBuf> {
 		.collect()
 }
 
+#[cfg(feature = "upload")]
 fn resolve_string(s: &str, allowed_bases: &[PathBuf]) -> Result<String> {
 	let expanded = shellexpand::full(s)
 		.with_context(|| format!("Failed to expand shell variables in '{}'", s))?
@@ -131,6 +197,7 @@ fn resolve_string(s: &str, allowed_bases: &[PathBuf]) -> Result<String> {
 	Ok(expanded)
 }
 
+#[cfg(feature = "upload")]
 pub fn load_uploader_config() -> Result<AppConfig> {
 	let mut cfg = load_config()?;
 	let mut allowed_bases = get_system_secret_dirs();
@@ -174,51 +241,107 @@ pub fn save_config(cfg: &AppConfig) -> Result<()> {
 	let stored: AppConfig = confy::load(app_name, None)?;
 
 	if let Some(over) = load_overrides() {
-		if to_save.default_uploader == over.default_uploader {
-			to_save.default_uploader = None;
-		}
-		if to_save.default_action == over.default_action {
-			to_save.default_action = None;
-		}
-		if to_save.default_capture == over.default_capture {
-			to_save.default_capture = None;
-		}
-		if to_save.default_screen == over.default_screen {
-			to_save.default_screen = None;
-		}
-		if to_save.image_format == over.image_format {
-			to_save.image_format = None;
-		}
-		if to_save.image_quality == over.image_quality {
-			to_save.image_quality = None;
-		}
+		#[cfg(feature = "upload")]
+		restore_fields!(to_save, over, stored, [upload_sound], [default_uploader]);
+		restore_fields!(
+			to_save,
+			over,
+			stored,
+			[],
+			[
+				default_action,
+				default_capture,
+				default_screen,
+				image_format,
+				image_quality,
+			]
+		);
 		if let Some(over_silent) = over.silent {
 			let stored_silent = stored.silent.unwrap_or_default();
 			let to_save_silent = to_save.silent.get_or_insert_default();
-			if over_silent.image.is_some() {
-				to_save_silent.image = stored_silent.image;
-			}
-			if over_silent.video.is_some() {
-				to_save_silent.video = stored_silent.video;
-			}
-			if over_silent.upload.is_some() {
-				to_save_silent.upload = stored_silent.upload;
-			}
-			if over_silent.error.is_some() {
-				to_save_silent.error = stored_silent.error;
-			}
+			restore_fields!(
+				to_save_silent,
+				over_silent,
+				stored_silent,
+				[],
+				[image, video, error]
+			);
+			#[cfg(feature = "upload")]
+			restore_fields!(to_save_silent, over_silent, stored_silent, [], [upload]);
 			if to_save_silent.is_empty() {
 				to_save.silent = None;
 			}
 		}
 
-		to_save
-			.allowed_directories
-			.retain(|d| !over.allowed_directories.contains(d));
+		#[cfg(feature = "annotations")]
+		if let Some(over_sel) = over.selection {
+			restore_fields!(
+				to_save.selection,
+				over_sel,
+				stored.selection,
+				[
+					background_color,
+					border_color,
+					border_width,
+					toolbar_background_color,
+					toolbar_active_color,
+					toolbar_hover_color,
+					annotation_color,
+					annotation_line_width,
+					blur_radius,
+					pixelate_block_size,
+					highlight_color,
+					toolbar_y,
+					toolbar_item_width,
+					toolbar_height,
+					show_toolbar,
+					multi_region_mode,
+				],
+				[]
+			);
+		}
+		if let Some(over_rec) = over.recording {
+			restore_fields!(
+				to_save.recording,
+				over_rec,
+				stored.recording,
+				[
+					encoder,
+					container,
+					bitrate,
+					fps,
+					keyframe_interval,
+					tune,
+					speed,
+					backend,
+				],
+				[threads, vaapi_device]
+			);
+		}
 
-		to_save
-			.uploaders
-			.retain(|u| !over.uploaders.iter().any(|over_u| over_u.name == u.name));
+		#[cfg(feature = "upload")]
+		to_save.allowed_directories.retain(|d| {
+			!over.allowed_directories.contains(d) || stored.allowed_directories.contains(d)
+		});
+
+		#[cfg(feature = "upload")]
+		{
+			let mut stored_uploaders = stored.uploaders;
+			to_save.uploaders = to_save
+				.uploaders
+				.into_iter()
+				.filter_map(|u| {
+					if over.uploaders.iter().any(|over_u| over_u == &u) {
+						stored_uploaders
+							.iter()
+							.position(|s| s.name == u.name)
+							.map(|idx| stored_uploaders.remove(idx))
+					} else {
+						Some(u)
+					}
+				})
+				.collect();
+		}
 	}
 
 	confy::store(app_name, None, to_save)?;

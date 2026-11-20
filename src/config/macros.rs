@@ -4,7 +4,7 @@ macro_rules! interactive_menu {
         $menu_title:expr,
         $config_struct:expr,
         [
-            $($field:ident: $label:expr => $kind:tt $([ $ty:path ])? $(display_as $disp_kind:tt)? $(if $cond:expr)?),* $(,)?
+            $($(#[$attr:meta])* $field:ident: $label:expr => $kind:tt $([ $ty:path ])? $(display_as $disp_kind:tt)? $(if $cond:expr)?),* $(,)?
         ]
     ) => {{
         use console::style;
@@ -12,6 +12,7 @@ macro_rules! interactive_menu {
         loop {
             let mut items = Vec::new();
             $(
+                $(#[$attr])*
                 if true $(&& $cond)? {
                     let display_val = $crate::interactive_menu!( @pick_display $config_struct.$field, $kind $(, $disp_kind)? );
                     items.push(format!("{:<25} {}", $label, display_val));
@@ -34,6 +35,7 @@ macro_rules! interactive_menu {
 
             let mut idx = 0;
             $(
+                $(#[$attr])*
                 if true $(&& $cond)? {
                     if sel == idx {
                         $crate::interactive_menu!( @edit $config_struct, $field, $label, $kind $([ $ty ])? )?;
@@ -78,7 +80,7 @@ macro_rules! interactive_menu {
         console::style("(custom handler)".to_string()).yellow()
     };
     ( @display $val:expr, silent) => {
-        console::style($crate::config::cli_ui::format_silent_notifications($val)).yellow()
+        console::style($crate::config::cli_ui::format_silent_notifications($val.as_ref())).yellow()
     };
 
     ( @edit $s:expr, $field:ident, $label:expr, text) => {{

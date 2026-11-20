@@ -6,6 +6,7 @@ use crate::app::capture::resolve_output;
 use crate::cli::Cli;
 use crate::config::{AppConfig, NotificationKind};
 use crate::pidfile;
+#[cfg(feature = "annotations")]
 use crate::selection;
 
 pub fn get_recording_config(cli: &Cli, cfg: Option<&AppConfig>) -> RecordingConfig {
@@ -79,10 +80,12 @@ pub fn record(
 	let handle = if let Some(screen_num) = cli.screen {
 		let output = conn.get_output(screen_num)?;
 		conn.start_recording(&output, None, cli.cursor, path.clone(), recording_config)?
+	} else if cli.last {
+		let region = crate::app::load_last_region()?;
+		conn.start_recording_region(&region, cli.cursor, path.clone(), recording_config)?
 	} else {
-		let region = if cli.last {
-			crate::app::load_last_region()?
-		} else {
+		#[cfg(feature = "annotations")]
+		let handle = {
 			let mut selection_cfg = cfg.map(|c| c.selection).unwrap_or_default();
 			selection_cfg.show_toolbar = false;
 			let ui = selection::SelectionUI::new(selection_cfg)?;
@@ -90,10 +93,15 @@ pub fn record(
 				.run(false)?
 				.ok_or_else(|| anyhow::anyhow!("Selection cancelled"))?;
 			crate::app::save_last_region(&region);
-			region
+			conn.start_recording_region(&region, cli.cursor, path.clone(), recording_config)?
 		};
-
-		conn.start_recording_region(&region, cli.cursor, path.clone(), recording_config)?
+		#[cfg(not(feature = "annotations"))]
+		let handle = {
+			let screen_num = cfg.and_then(|c| c.default_screen).unwrap_or(0);
+			let output = conn.get_output(screen_num)?;
+			conn.start_recording(&output, None, cli.cursor, path.clone(), recording_config)?
+		};
+		handle
 	};
 
 	println!("Recording to {}... Press Ctrl+C to stop.", path.display());

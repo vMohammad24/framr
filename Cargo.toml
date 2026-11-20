@@ -7,13 +7,29 @@ license = "AGPL-3.0-only"
 repository = "https://github.com/vMohammad24/framr"
 authors = ["vMohammad <vmohammad@vmohammad.dev>"]
 
+[features]
+default = ["upload", "annotations"]
+upload = ["dep:ureq", "dep:infer", "dep:shellexpand", "dep:base64", "dep:ffmpeg-next", "dep:rodio"]
+annotations = [
+	"dep:pango",
+	"dep:pangocairo",
+	"dep:cairo-rs",
+	"dep:fastblur",
+	"dep:wayland-client",
+	"dep:wayland-protocols",
+	"dep:wayland-protocols-plasma",
+	"dep:smithay-client-toolkit",
+	"dep:csscolorparser",
+	"dep:swayipc",
+]
+
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 clap = { version = "4.6", features = ["derive"] }
 image = { version = "0.25", default-features = false, features = ["png", "webp", "jpeg"] }
 libframr = { path = "./libframr" }
 libc = "0.2"
-ureq = { version = "3", features = ["multipart"] }
+ureq = { version = "3", features = ["multipart"], optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 wl-clipboard-rs = "0.9"
@@ -21,26 +37,26 @@ confy = "2"
 anyhow = "1.0"
 console = "0.16"
 dialoguer = "0.12"
-infer = "0.22"
-shellexpand = "3"
+infer = { version = "0.22", optional = true }
+shellexpand = { version = "3", optional = true }
 dirs = "6"
-base64 = "0.23"
+base64 = { version = "0.23", optional = true }
 notify-rust = { version = "4", features = ["d", "images_no_default_features"], default-features = false }
 ctrlc = "3"
-pango = "0.22"
-pangocairo = "0.22"
-cairo-rs = { version = "0.22", default-features = false }
-fastblur = "0.1"
-wayland-client = "0.31"
-wayland-protocols = "0.32"
-wayland-protocols-plasma = { version = "0.3.12", features = ["client"] }
-smithay-client-toolkit = "0.20"
-dbus = "0.9"
+pango = { version = "0.22", optional = true }
+pangocairo = { version = "0.22", optional = true }
+cairo-rs = { version = "0.22", default-features = false, optional = true }
+fastblur = { version = "0.1", optional = true }
+wayland-client = { version = "0.31", optional = true }
+wayland-protocols = { version = "0.32", optional = true }
+wayland-protocols-plasma = { version = "0.3.12", features = ["client"], optional = true }
+smithay-client-toolkit = { version = "0.20", optional = true }
 strum = { version = "0.28", features = ["derive"] }
-csscolorparser = "0.8"
-ffmpeg-next = { version = "9", default-features = false, features = ["codec", "format", "software-resampling"] }
-rodio = { version = "0.22", default-features = false, features = ["playback"] }
-swayipc = "4"
+csscolorparser = { version = "0.8", optional = true }
+ffmpeg-next = { version = "9", default-features = false, features = ["codec", "format", "software-resampling"], optional = true }
+rodio = { version = "0.22", default-features = false, features = ["playback"], optional = true }
+swayipc = { version = "4", optional = true }
+
 clap_complete = "4"
 clap_mangen = "0.3"
 

@@ -6,8 +6,13 @@ use std::path::PathBuf;
 
 use crate::cli::Cli;
 use crate::config::{AppConfig, DefaultCaptureMethod};
+#[cfg(feature = "annotations")]
 use crate::selection;
+#[cfg(feature = "annotations")]
 use crate::selection::window::{Window, get_window_at_pos, get_windows};
+
+#[cfg(not(feature = "annotations"))]
+pub struct Window;
 
 pub fn resolve_output(cli: &Cli, default_pattern: &str, default_ext: &str) -> PathBuf {
 	let pattern = cli.filename.as_deref().unwrap_or(default_pattern);
@@ -36,8 +41,13 @@ pub fn capture(
 
 	let image_format = cfg.and_then(|c| c.image_format).unwrap_or_default();
 
-	let (method, screen) = if cli.area {
-		(Some(DefaultCaptureMethod::Area), None)
+	#[cfg(feature = "annotations")]
+	let (area, area_method) = (cli.area, Some(DefaultCaptureMethod::Area));
+	#[cfg(not(feature = "annotations"))]
+	let (area, area_method) = (false, Some(DefaultCaptureMethod::Full));
+
+	let (method, screen) = if area {
+		(area_method, None)
 	} else if let Some(s) = cli.screen {
 		(Some(DefaultCaptureMethod::Screen), Some(s))
 	} else if let Some(cfg) = cfg {
@@ -55,6 +65,7 @@ pub fn capture(
 		(conn.screenshot_region(&r, cli.cursor)?, Some(r), None)
 	} else {
 		match method {
+			#[cfg(feature = "annotations")]
 			Some(DefaultCaptureMethod::Area) => {
 				let selection_cfg = cfg.map(|c| c.selection).unwrap_or_default();
 				let ui = selection::SelectionUI::new(selection_cfg)?;
@@ -115,7 +126,13 @@ pub fn capture(
 			)?;
 		}
 	}
-	Ok((buf.into_inner(), image, region, cached_windows, image_format))
+	Ok((
+		buf.into_inner(),
+		image,
+		region,
+		cached_windows,
+		image_format,
+	))
 }
 
 pub fn get_capture_path(
@@ -126,12 +143,14 @@ pub fn get_capture_path(
 	image_format: OutputImageFormat,
 ) -> Result<(PathBuf, String)> {
 	let ext = image_format.extension();
+	#[cfg(feature = "annotations")]
 	let needs_windows = region.is_some()
 		&& cli.output.as_deref() != Some(std::path::Path::new("-"))
 		&& cli
 			.filename
 			.as_deref()
 			.is_none_or(|p| p.contains("{window}"));
+	#[cfg(feature = "annotations")]
 	let windows = if !needs_windows {
 		Vec::new()
 	} else if let Some(w) = cached_windows {
@@ -139,22 +158,27 @@ pub fn get_capture_path(
 	} else {
 		get_windows().unwrap_or_default()
 	};
+	#[cfg(feature = "annotations")]
 	let active_window = region
 		.and_then(|r| get_window_at_pos((r.position.x as f64, r.position.y as f64), &windows));
+	#[cfg(not(feature = "annotations"))]
+	let active_window: Option<usize> = {
+		let _ = (region, cached_windows);
+		None
+	};
 	let default = if active_window.is_some() {
 		format!("{{window}}_%Y-%m-%d_%H-%M-%S.{}", ext)
 	} else {
 		format!("screenshot_%Y-%m-%d_%H-%M-%S.{}", ext)
 	};
-	let mut filename = resolve_output(cli, &default, ext)
+	let filename = resolve_output(cli, &default, ext)
 		.to_string_lossy()
 		.to_string();
-
-	if let Some(i) = active_window {
-		let window = &windows[i];
-		let title = &window.title.replace("/", "_");
-		filename = filename.replace("{window}", title);
-	}
+	#[cfg(feature = "annotations")]
+	let filename = match active_window {
+		Some(i) => filename.replace("{window}", &windows[i].title.replace("/", "_")),
+		None => filename,
+	};
 	let path = match &cli.output {
 		Some(dir) if dir.as_os_str() == "-" => PathBuf::from("-"),
 		Some(dir) => dir.join(&filename),

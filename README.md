@@ -132,6 +132,20 @@ emerge media-gfx/framr
 cargo install --git https://github.com/vMohammad24/framr.git
 ```
 
+#### Cargo features
+
+| Feature | Default | Includes |
+| --- | --- | --- |
+| `upload` | Enabled | Uploads, uploader configuration/imports, `framr://` links, upload notifications and sounds |
+| `annotations` | Enabled | Interactive area selection, annotation tools, the selection toolbar and `{window}` filename detection |
+
+```bash
+cargo build --release                                      # default features
+cargo build --release --no-default-features                 # capture and recording only
+cargo build --release --no-default-features --features annotations
+```
+
+
 ### Pre-built binary
 
 Linux x86_64 binaries, `.deb` and `.rpm` packages on the [Releases](https://github.com/vMohammad24/framr/releases) page.

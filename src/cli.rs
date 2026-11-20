@@ -1,4 +1,3 @@
-use anyhow::Result;
 use clap::{Parser, Subcommand};
 use libframr::{EncoderSpeed, H264Tune, VideoEncoder};
 use std::path::PathBuf;
@@ -25,6 +24,7 @@ pub struct Cli {
 	#[arg(long)]
 	pub screens: bool,
 
+	#[cfg(feature = "annotations")]
 	/// Select an area to capture
 	#[arg(short, long)]
 	pub area: bool,
@@ -101,10 +101,12 @@ pub struct Cli {
 	#[arg(long)]
 	pub speed: Option<EncoderSpeed>,
 
+	#[cfg(feature = "upload")]
 	/// Upload screenshot (uses default uploader, or specify with -u <name>)
 	#[arg(short = 'u', long, num_args = 0..=1, default_missing_value = "")]
 	pub upload: Option<String>,
 
+	#[cfg(feature = "upload")]
 	/// Deeplink URI (framr://...)
 	#[arg(value_parser = parse_framr_uri)]
 	pub uri: Option<String>,
@@ -114,6 +116,7 @@ pub struct Cli {
 	pub silent: bool,
 }
 
+#[cfg(feature = "upload")]
 pub fn parse_framr_uri(arg: &str) -> Result<String, String> {
 	if arg.starts_with("framr://") {
 		Ok(arg.to_string())
@@ -124,7 +127,8 @@ pub fn parse_framr_uri(arg: &str) -> Result<String, String> {
 
 #[derive(Subcommand)]
 pub enum Commands {
-	/// Configure uploaders
+	#[cfg_attr(feature = "upload", doc = "Configure uploaders")]
+	#[cfg_attr(not(feature = "upload"), doc = "Configure settings")]
 	Config {
 		#[command(subcommand)]
 		action: Option<ConfigAction>,
@@ -142,6 +146,7 @@ pub enum Commands {
 		#[arg(default_value = ".")]
 		dir: PathBuf,
 	},
+	#[cfg(feature = "upload")]
 	/// Upload a file or byte data from stdin
 	Upload {
 		/// Path to the file to upload (omit to read from stdin)
@@ -159,30 +164,37 @@ pub enum Commands {
 
 #[derive(Subcommand)]
 pub enum ConfigAction {
+	#[cfg(feature = "upload")]
 	/// Import uploader from .sxcu/.iscu file or URL
 	Import {
 		/// Path to .sxcu/.iscu file or URL
 		source: String,
 	},
+	#[cfg(feature = "upload")]
 	/// List all configured uploaders
 	List,
+	#[cfg(feature = "upload")]
 	/// Show detailed info about an uploader
 	Show {
 		/// Name or number of the uploader
 		uploader: String,
 	},
+	#[cfg(feature = "upload")]
 	/// Create a new uploader interactively
 	Create,
+	#[cfg(feature = "upload")]
 	/// Edit an existing uploader interactively
 	Edit {
 		/// Name or number of the uploader (omitting prompts for selection)
 		uploader: Option<String>,
 	},
+	#[cfg(feature = "upload")]
 	/// Delete an uploader
 	Delete {
 		/// Name or number of the uploader (omitting prompts for selection)
 		uploader: Option<String>,
 	},
+	#[cfg(feature = "upload")]
 	/// Set the default uploader
 	Default {
 		/// Name or number of the uploader (omitting prompts for selection)
@@ -198,6 +210,7 @@ pub enum ConfigAction {
 		/// Name of the method (omitting prompts for selection)
 		method: Option<String>,
 	},
+	#[cfg(feature = "upload")]
 	/// Set the default upload sound path
 	Sound {
 		/// Path to the sound file (omitting prompts for selection)
@@ -213,6 +226,10 @@ pub enum ConfigAction {
 		/// Image quality (1-100)
 		quality: Option<u8>,
 	},
-	/// Register the framr:// protocol handler
+	#[cfg_attr(feature = "upload", doc = "Register the framr:// protocol handler")]
+	#[cfg_attr(
+		not(feature = "upload"),
+		doc = "Register the desktop entry used for KDE capture permissions"
+	)]
 	Protocol,
 }

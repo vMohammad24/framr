@@ -1,18 +1,26 @@
 use anyhow::Result;
 use libframr::LogicalRegion;
+#[cfg(feature = "upload")]
 use std::io::{self, IsTerminal, Read};
 use std::path::PathBuf;
 
 pub mod capture;
 pub mod record;
 
+#[cfg(feature = "upload")]
 use crate::app::capture::resolve_output;
 use crate::cli::Cli;
-use crate::config::{AppConfig, DefaultAction, NotificationKind};
+#[cfg(feature = "upload")]
+use crate::config::NotificationKind;
+use crate::config::{AppConfig, DefaultAction};
+#[cfg(feature = "upload")]
 use crate::utils::clipboard::copy_to_clipboard;
+#[cfg(feature = "upload")]
 use crate::utils::notify::{NotificationImage, send_notification};
+#[cfg(feature = "upload")]
 use crate::{config, sound, upload};
 
+#[cfg(feature = "upload")]
 pub fn handle_upload(
 	cli: &Cli,
 	file: Option<&PathBuf>,
@@ -117,6 +125,7 @@ fn last_region_path() -> PathBuf {
 		.join("framr-last-region")
 }
 
+#[cfg(feature = "annotations")]
 pub fn save_last_region(region: &LogicalRegion) {
 	let _ = std::fs::write(
 		last_region_path(),
@@ -127,12 +136,27 @@ pub fn save_last_region(region: &LogicalRegion) {
 	);
 }
 
+fn last_region_error() -> anyhow::Error {
+	#[cfg(feature = "annotations")]
+	let hint = "Select an area with -a first.";
+	#[cfg(not(feature = "annotations"))]
+	let hint = "Select an area with an annotations-enabled build first.";
+	anyhow::anyhow!("No previous region saved. {hint}")
+}
+
+fn last_region_corrupt() -> anyhow::Error {
+	#[cfg(feature = "annotations")]
+	let hint = "Select an area with -a to rewrite it.";
+	#[cfg(not(feature = "annotations"))]
+	let hint = "Select an area with an annotations-enabled build to rewrite it.";
+	anyhow::anyhow!("Invalid last-region file. {hint}")
+}
+
 pub fn load_last_region() -> Result<LogicalRegion> {
-	let content = std::fs::read_to_string(last_region_path())
-		.map_err(|_| anyhow::anyhow!("No previous region saved. Select an area with -a first."))?;
+	let content = std::fs::read_to_string(last_region_path()).map_err(|_| last_region_error())?;
 	let parts: Vec<&str> = content.split_whitespace().collect();
 	if parts.len() != 4 {
-		anyhow::bail!("Invalid last-region file. Select an area with -a to rewrite it.");
+		return Err(last_region_corrupt());
 	}
 	Ok(LogicalRegion::new(
 		parts[0].parse()?,
@@ -142,6 +166,7 @@ pub fn load_last_region() -> Result<LogicalRegion> {
 	))
 }
 
+#[cfg(feature = "upload")]
 fn is_image_data(bytes: &[u8]) -> bool {
 	infer::get(bytes)
 		.map(|m| m.matcher_type() == infer::MatcherType::Image)
@@ -149,6 +174,7 @@ fn is_image_data(bytes: &[u8]) -> bool {
 }
 
 pub fn resolve_action(cli: &Cli, cfg: Option<&AppConfig>) -> DefaultAction {
+	#[cfg(feature = "upload")]
 	if cli.upload.is_some() {
 		return if cli.copy {
 			DefaultAction::UploadAndCopy

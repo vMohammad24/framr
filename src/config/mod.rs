@@ -1,27 +1,36 @@
 pub mod cli_ui;
 pub mod core;
+#[cfg(feature = "upload")]
 pub mod import;
 pub mod macros;
 pub mod types;
 
 pub use cli_ui::*;
-pub use core::{load_config, load_uploader_config};
+pub use core::load_config;
+#[cfg(feature = "upload")]
+pub use core::load_uploader_config;
+#[cfg(feature = "upload")]
 pub use import::import_from_source;
-pub(crate) use types::{
-	AppConfig, BodyType, Color, NotificationKind, SelectionConfig, UploadConfig,
-};
+pub(crate) use types::{AppConfig, NotificationKind};
+#[cfg(feature = "upload")]
+pub(crate) use types::{BodyType, UploadConfig};
+#[cfg(feature = "annotations")]
+pub(crate) use types::{Color, SelectionConfig};
 pub use types::{DefaultAction, DefaultCaptureMethod};
 
 use anyhow::Result;
+#[cfg(any(feature = "upload", feature = "annotations"))]
 use console::style;
 use dialoguer::{Confirm, Input, Select, theme::ColorfulTheme};
 
+#[cfg(feature = "annotations")]
 pub fn style_color(c: Color) -> String {
 	style(c.to_string())
 		.color256(get_color256(c.r, c.g, c.b))
 		.to_string()
 }
 
+#[cfg(feature = "annotations")]
 pub fn get_color256(r: u8, g: u8, b: u8) -> u8 {
 	let r = (r as u32 * 5 / 255) as u8;
 	let g = (g as u32 * 5 / 255) as u8;
@@ -59,6 +68,7 @@ where
 	Ok(builder.interact_text()?)
 }
 
+#[cfg(feature = "upload")]
 pub fn prompt_optional_input(prompt: &str, current: Option<&str>) -> Result<Option<String>> {
 	let theme = ColorfulTheme::default();
 	let p = if let Some(c) = current {
@@ -100,6 +110,7 @@ pub fn prompt_confirm(prompt: &str, default: bool) -> Result<bool> {
 		.interact()?)
 }
 
+#[cfg(feature = "annotations")]
 pub fn prompt_color(prompt: &str, current: Color) -> Result<Color> {
 	Ok(Input::<Color>::new()
 		.with_prompt(prompt)

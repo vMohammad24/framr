@@ -1,10 +1,13 @@
 use anyhow::Result;
-use image::{GenericImageView, RgbaImage};
+#[cfg(feature = "upload")]
+use image::GenericImageView;
+use image::RgbaImage;
 use notify_rust::Notification;
 
 #[derive(Clone, Copy)]
 pub enum NotificationImage<'a> {
 	Rgba(&'a RgbaImage),
+	#[cfg(feature = "upload")]
 	Encoded(&'a [u8]),
 }
 
@@ -47,6 +50,7 @@ pub fn send_notification(
 				n.image_data(icon);
 			}
 		}
+		#[cfg(feature = "upload")]
 		Some(NotificationImage::Encoded(bytes)) => {
 			if let Ok(img) = image::load_from_memory(bytes) {
 				let img = img.thumbnail(256, 256);

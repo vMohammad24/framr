@@ -1,6 +1,14 @@
+#[cfg(any(feature = "upload", feature = "annotations"))]
+use serde::Deserializer;
+#[cfg(feature = "annotations")]
+use serde::Serializer;
+#[cfg(any(feature = "upload", feature = "annotations"))]
 use serde::de::Error as DeError;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+#[cfg(feature = "annotations")]
 use std::fmt;
+#[cfg(any(feature = "upload", feature = "annotations"))]
 use std::str::FromStr;
 use strum::{AsRefStr, Display, EnumIter, IntoEnumIterator, IntoStaticStr};
 
@@ -50,10 +58,14 @@ pub trait ConfigEnum:
 #[strum(serialize_all = "title_case")]
 pub enum DefaultAction {
 	#[default]
+	#[cfg_attr(not(feature = "upload"), serde(alias = "Upload"))]
 	Save,
 	Copy,
+	#[cfg(feature = "upload")]
 	Upload,
+	#[cfg(feature = "upload")]
 	UploadAndCopy,
+	#[cfg_attr(not(feature = "upload"), serde(alias = "UploadAndCopy"))]
 	SaveAndCopy,
 }
 
@@ -80,7 +92,9 @@ impl ConfigEnum for DefaultAction {
 #[strum(serialize_all = "title_case")]
 pub enum DefaultCaptureMethod {
 	#[default]
+	#[cfg_attr(not(feature = "annotations"), serde(alias = "Area"))]
 	Full,
+	#[cfg(feature = "annotations")]
 	Area,
 	Screen,
 }
@@ -89,12 +103,14 @@ impl ConfigEnum for DefaultCaptureMethod {
 	fn label(self) -> &'static str {
 		match self {
 			Self::Full => "Full (all screens)",
+			#[cfg(feature = "annotations")]
 			Self::Area => "Area (select region)",
 			Self::Screen => "Screen (specific screen)",
 		}
 	}
 }
 
+#[cfg(feature = "upload")]
 #[derive(
 	Debug,
 	Serialize,
@@ -118,6 +134,7 @@ pub enum BodyType {
 	Xml,
 }
 
+#[cfg(feature = "upload")]
 impl ConfigEnum for BodyType {
 	fn label(self) -> &'static str {
 		match self {
@@ -128,6 +145,7 @@ impl ConfigEnum for BodyType {
 	}
 }
 
+#[cfg(feature = "upload")]
 #[derive(
 	Debug,
 	Serialize,
@@ -153,6 +171,7 @@ pub enum RequestMethod {
 	Delete,
 }
 
+#[cfg(feature = "upload")]
 impl ConfigEnum for RequestMethod {
 	fn label(self) -> &'static str {
 		self.into()
@@ -199,6 +218,7 @@ impl ConfigEnum for libframr::OutputImageFormat {
 	}
 }
 
+#[cfg(feature = "upload")]
 #[derive(Debug, Serialize, Deserialize, Default, Clone, PartialEq, Eq)]
 pub struct UploadConfig {
 	#[serde(alias = "Name")]
@@ -252,6 +272,7 @@ pub struct UploadConfig {
 	pub deletion_request_type: RequestMethod,
 }
 
+#[cfg(feature = "upload")]
 fn deserialize_request_method<'de, D>(deserializer: D) -> Result<RequestMethod, D::Error>
 where
 	D: Deserializer<'de>,
@@ -269,10 +290,12 @@ where
 	}
 }
 
+#[cfg(feature = "upload")]
 fn default_deletion_method() -> RequestMethod {
 	RequestMethod::Delete
 }
 
+#[cfg(feature = "upload")]
 fn deserialize_kv<'de, D>(deserializer: D) -> Result<Vec<(String, String)>, D::Error>
 where
 	D: Deserializer<'de>,
@@ -299,6 +322,7 @@ where
 	}
 }
 
+#[cfg(feature = "upload")]
 fn deserialize_body_type<'de, D>(deserializer: D) -> Result<BodyType, D::Error>
 where
 	D: Deserializer<'de>,
@@ -325,8 +349,10 @@ where
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone, PartialEq)]
 pub struct AppConfig {
+	#[cfg(feature = "upload")]
 	#[serde(default)]
 	pub uploaders: Vec<UploadConfig>,
+	#[cfg(feature = "upload")]
 	#[serde(default)]
 	pub default_uploader: Option<String>,
 	#[serde(default)]
@@ -335,8 +361,10 @@ pub struct AppConfig {
 	pub default_capture: Option<DefaultCaptureMethod>,
 	#[serde(default)]
 	pub default_screen: Option<usize>,
+	#[cfg(feature = "upload")]
 	#[serde(default)]
 	pub allowed_directories: Vec<String>,
+	#[cfg(feature = "annotations")]
 	#[serde(default)]
 	pub selection: SelectionConfig,
 	#[serde(default)]
@@ -347,11 +375,73 @@ pub struct AppConfig {
 	pub image_quality: Option<u8>,
 	#[serde(default)]
 	pub silent: Option<SilentConfig>,
+	#[cfg(feature = "upload")]
 	#[serde(default = "default_upload_sound")]
 	pub upload_sound: String,
+	#[serde(flatten)]
+	pub extra: BTreeMap<String, serde_json::Value>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+#[serde(default)]
+pub struct ConfigOverrides {
+	#[cfg(feature = "upload")]
+	pub uploaders: Vec<UploadConfig>,
+	#[cfg(feature = "upload")]
+	pub default_uploader: Option<String>,
+	pub default_action: Option<DefaultAction>,
+	pub default_capture: Option<DefaultCaptureMethod>,
+	pub default_screen: Option<usize>,
+	#[cfg(feature = "upload")]
+	pub allowed_directories: Vec<String>,
+	#[cfg(feature = "annotations")]
+	pub selection: Option<SelectionOverrides>,
+	pub recording: Option<RecordingOverrides>,
+	pub image_format: Option<OutputImageFormat>,
+	pub image_quality: Option<u8>,
+	pub silent: Option<SilentConfig>,
+	#[cfg(feature = "upload")]
+	pub upload_sound: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+#[serde(default)]
+pub struct RecordingOverrides {
+	pub encoder: Option<libframr::VideoEncoder>,
+	pub container: Option<libframr::ContainerFormat>,
+	pub bitrate: Option<u32>,
+	pub fps: Option<u32>,
+	pub keyframe_interval: Option<u32>,
+	pub threads: Option<u32>,
+	pub tune: Option<libframr::H264Tune>,
+	pub speed: Option<libframr::EncoderSpeed>,
+	pub backend: Option<libframr::EncoderBackend>,
+	pub vaapi_device: Option<std::path::PathBuf>,
+}
+
+#[cfg(feature = "annotations")]
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+#[serde(default)]
+pub struct SelectionOverrides {
+	pub background_color: Option<Color>,
+	pub border_color: Option<Color>,
+	pub border_width: Option<f64>,
+	pub toolbar_background_color: Option<Color>,
+	pub toolbar_active_color: Option<Color>,
+	pub toolbar_hover_color: Option<Color>,
+	pub annotation_color: Option<Color>,
+	pub annotation_line_width: Option<f64>,
+	pub blur_radius: Option<f32>,
+	pub pixelate_block_size: Option<usize>,
+	pub highlight_color: Option<Color>,
+	pub toolbar_y: Option<f64>,
+	pub toolbar_item_width: Option<f64>,
+	pub toolbar_height: Option<f64>,
+	pub show_toolbar: Option<bool>,
+	pub multi_region_mode: Option<bool>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default, Clone, PartialEq)]
 #[serde(default)]
 pub struct SilentConfig {
 	/// Silence notifications for screenshot save and copy actions.
@@ -359,17 +449,24 @@ pub struct SilentConfig {
 	/// Silence notifications for recording start, save, and copy actions.
 	pub video: Option<bool>,
 	/// Silence successful upload and uploader import notifications.
+	#[cfg(feature = "upload")]
 	pub upload: Option<bool>,
 	/// Silence error notifications.
 	pub error: Option<bool>,
+	#[serde(flatten)]
+	pub extra: BTreeMap<String, serde_json::Value>,
 }
 
 impl SilentConfig {
-	pub fn is_empty(self) -> bool {
+	pub fn is_empty(&self) -> bool {
+		#[cfg(feature = "upload")]
+		if self.upload.is_some() {
+			return false;
+		}
 		self.image.is_none()
 			&& self.video.is_none()
-			&& self.upload.is_none()
 			&& self.error.is_none()
+			&& self.extra.is_empty()
 	}
 }
 
@@ -377,25 +474,28 @@ impl SilentConfig {
 pub enum NotificationKind {
 	Image,
 	Video,
+	#[cfg(feature = "upload")]
 	Upload,
 	Error,
 }
 
 impl AppConfig {
 	pub fn notification_is_silent(&self, kind: NotificationKind) -> bool {
-		let Some(silent) = self.silent else {
+		let Some(silent) = self.silent.as_ref() else {
 			return false;
 		};
 
 		match kind {
 			NotificationKind::Image => silent.image.unwrap_or(false),
 			NotificationKind::Video => silent.video.unwrap_or(false),
+			#[cfg(feature = "upload")]
 			NotificationKind::Upload => silent.upload.unwrap_or(false),
 			NotificationKind::Error => silent.error.unwrap_or(false),
 		}
 	}
 }
 
+#[cfg(feature = "upload")]
 fn default_upload_sound() -> String {
 	dirs::config_local_dir()
 		.unwrap_or_else(|| std::path::PathBuf::from("."))
@@ -405,6 +505,7 @@ fn default_upload_sound() -> String {
 		.to_string()
 }
 
+#[cfg(feature = "annotations")]
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]
 #[serde(default)]
 pub struct SelectionConfig {
@@ -426,6 +527,7 @@ pub struct SelectionConfig {
 	pub multi_region_mode: bool,
 }
 
+#[cfg(feature = "annotations")]
 impl Default for SelectionConfig {
 	fn default() -> Self {
 		Self {
@@ -449,6 +551,7 @@ impl Default for SelectionConfig {
 	}
 }
 
+#[cfg(feature = "annotations")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Color {
 	pub r: u8,
@@ -457,6 +560,7 @@ pub struct Color {
 	pub a: u8,
 }
 
+#[cfg(feature = "annotations")]
 impl Color {
 	pub fn rgb(r: f64, g: f64, b: f64) -> Self {
 		Self::rgba(r, g, b, 1.0)
@@ -482,6 +586,7 @@ impl Color {
 	}
 }
 
+#[cfg(feature = "annotations")]
 impl fmt::Display for Color {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		if self.a == u8::MAX {
@@ -496,6 +601,7 @@ impl fmt::Display for Color {
 	}
 }
 
+#[cfg(feature = "annotations")]
 impl Serialize for Color {
 	fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
 	where
@@ -505,6 +611,7 @@ impl Serialize for Color {
 	}
 }
 
+#[cfg(feature = "annotations")]
 impl<'de> Deserialize<'de> for Color {
 	fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
 	where
@@ -517,6 +624,7 @@ impl<'de> Deserialize<'de> for Color {
 	}
 }
 
+#[cfg(feature = "annotations")]
 impl FromStr for Color {
 	type Err = String;
 
