@@ -39,7 +39,7 @@ console = "0.16"
 dialoguer = "0.12"
 infer = { version = "0.22", optional = true }
 shellexpand = { version = "3", optional = true }
-dirs = "6"
+dirs = "7"
 base64 = { version = "0.23", optional = true }
 notify-rust = { version = "4", features = ["d", "images_no_default_features"], default-features = false }
 ctrlc = "3"
@@ -52,9 +52,9 @@ wayland-protocols = { version = "0.32", optional = true }
 wayland-protocols-plasma = { version = "0.3.12", features = ["client"], optional = true }
 smithay-client-toolkit = { version = "0.20", optional = true }
 strum = { version = "0.28", features = ["derive"] }
-csscolorparser = { version = "0.8", optional = true }
-ffmpeg-next = { version = "9", default-features = false, features = ["codec", "format", "software-resampling"], optional = true }
-rodio = { version = "0.22", default-features = false, features = ["playback"], optional = true }
+csscolorparser = { version = "0.9", optional = true }
+ffmpeg-next = { version = "9.1", default-features = false, features = ["codec", "format", "software-resampling"], optional = true }
+rodio = { version = "0.23", default-features = false, features = ["playback"], optional = true }
 swayipc = { version = "4", optional = true }
 
 clap_complete = "4"
