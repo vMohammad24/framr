@@ -91,32 +91,43 @@ pub trait CaptureBackend: Send + Sync {
 
 		let composite = self.capture_all_outputs(include_cursor)?;
 
-		let min_x = outputs
-			.iter()
-			.map(|o| o.logical_position.x)
-			.min()
-			.unwrap_or(0);
-		let min_y = outputs
-			.iter()
-			.map(|o| o.logical_position.y)
-			.min()
-			.unwrap_or(0);
+		let bounds = crate::output::bounding_region(&outputs)
+			.ok_or::<anyhow::Error>(crate::error::FramrError::NoOutputs.into())?;
+		let min_x = bounds.position.x;
+		let min_y = bounds.position.y;
 
 		let composite_w = composite.width();
 		let composite_h = composite.height();
 
-		let crop_x = (region.position.x - min_x).max(0) as u32;
-		let crop_y = (region.position.y - min_y).max(0) as u32;
+		let scale_x = composite_w as f64 / bounds.size.width.max(1) as f64;
+		let scale_y = composite_h as f64 / bounds.size.height.max(1) as f64;
 
-		if crop_x >= composite_w || crop_y >= composite_h {
+		let to_px = |v: i64, origin: i32, scale: f64, limit: u32| {
+			((v - origin as i64) as f64 * scale)
+				.round()
+				.clamp(0.0, limit as f64) as u32
+		};
+		let x0 = to_px(region.position.x as i64, min_x, scale_x, composite_w);
+		let y0 = to_px(region.position.y as i64, min_y, scale_y, composite_h);
+		let x1 = to_px(
+			region.position.x as i64 + region.size.width as i64,
+			min_x,
+			scale_x,
+			composite_w,
+		);
+		let y1 = to_px(
+			region.position.y as i64 + region.size.height as i64,
+			min_y,
+			scale_y,
+			composite_h,
+		);
+
+		if x0 >= x1 || y0 >= y1 {
 			return Err(anyhow::anyhow!("selected region is outside all outputs"));
 		}
 
-		let crop_w = region.size.width.min(composite_w.saturating_sub(crop_x));
-		let crop_h = region.size.height.min(composite_h.saturating_sub(crop_y));
-
 		let mut composite = composite;
-		Ok(image::imageops::crop(&mut composite, crop_x, crop_y, crop_w, crop_h).to_image())
+		Ok(image::imageops::crop(&mut composite, x0, y0, x1 - x0, y1 - y0).to_image())
 	}
 }
 

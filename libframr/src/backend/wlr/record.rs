@@ -119,19 +119,42 @@ impl CaptureBackend for WlrBackend {
 		let outputs = &self.outputs;
 		let bounds = crate::output::bounding_region(outputs)
 			.ok_or::<anyhow::Error>(FramrError::NoOutputs.into())?;
-		let min_x = bounds.position.x;
-		let min_y = bounds.position.y;
-		let total_width = bounds.size.width;
-		let total_height = bounds.size.height;
 
 		let captured = self.capture_all_outputs_raw(include_cursor, CapturePixelOrder::Rgba)?;
-		let mut composite = RgbaImage::new(total_width, total_height);
+
+		let mut scale_x = 1.0_f64;
+		let mut scale_y = 1.0_f64;
+		for (output, image) in &captured {
+			scale_x = scale_x.max(image.width() as f64 / output.logical_size.width.max(1) as f64);
+			scale_y = scale_y.max(image.height() as f64 / output.logical_size.height.max(1) as f64);
+		}
+
+		let total_width = (bounds.size.width as f64 * scale_x).round() as u32;
+		let total_height = (bounds.size.height as f64 * scale_y).round() as u32;
+		let mut composite = RgbaImage::new(total_width.max(1), total_height.max(1));
 
 		for (output, image) in captured {
-			let x = (output.logical_position.x - min_x) as i64;
-			let y = (output.logical_position.y - min_y) as i64;
+			let x0 =
+				((output.logical_position.x - bounds.position.x) as f64 * scale_x).round() as i64;
+			let y0 =
+				((output.logical_position.y - bounds.position.y) as f64 * scale_y).round() as i64;
+			let x1 = ((output.logical_position.x as i64 + output.logical_size.width as i64
+				- bounds.position.x as i64) as f64
+				* scale_x)
+				.round() as i64;
+			let y1 = ((output.logical_position.y as i64 + output.logical_size.height as i64
+				- bounds.position.y as i64) as f64
+				* scale_y)
+				.round() as i64;
+			let w = (x1 - x0).max(1) as u32;
+			let h = (y1 - y0).max(1) as u32;
 
-			image::imageops::replace(&mut composite, &image, x, y);
+			let image = if image.width() != w || image.height() != h {
+				image::imageops::resize(&image, w, h, image::imageops::FilterType::Triangle)
+			} else {
+				image
+			};
+			image::imageops::replace(&mut composite, &image, x0, y0);
 		}
 
 		Ok(composite)
