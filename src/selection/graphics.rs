@@ -216,6 +216,30 @@ pub fn set_source_color(cr: &Context, color: crate::config::Color) {
 	cr.set_source_rgba(r, g, b, a);
 }
 
+pub fn paint_cached(
+	cr: &Context,
+	surface: &ImageSurface,
+	rect: (f64, f64, f64, f64),
+	scale: (f64, f64),
+) {
+	if cr.save().is_err() {
+		return;
+	}
+	cr.identity_matrix();
+	if cr.set_source_surface(surface, 0.0, 0.0).is_ok() {
+		cr.rectangle(
+			rect.0 * scale.0,
+			rect.1 * scale.1,
+			rect.2 * scale.0,
+			rect.3 * scale.1,
+		);
+		if let Err(e) = cr.fill() {
+			eprintln!("failed to fill cached surface: {e}");
+		}
+	}
+	let _ = cr.restore();
+}
+
 pub fn draw_annotation(
 	cr: &Context,
 	ann: &Annotation,

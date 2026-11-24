@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow};
 use cairo::{Context, FillRule, Format, ImageSurface};
-use libframr::{OutputInfo, Position};
+use libframr::OutputInfo;
 use pangocairo::functions::{create_layout, show_layout};
 use smithay_client_toolkit::{
 	delegate_compositor, delegate_keyboard, delegate_layer, delegate_output, delegate_pointer,
@@ -32,6 +32,8 @@ use wayland_client::{Connection, QueueHandle};
 use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::{
 	Shape, WpCursorShapeDeviceV1,
 };
+use wayland_protocols::wp::viewporter::client::wp_viewport::WpViewport;
+use wayland_protocols::wp::viewporter::client::wp_viewporter::WpViewporter;
 
 use crate::config::{Color, SelectionConfig};
 use crate::selection::{
@@ -201,7 +203,10 @@ pub struct SurfaceData {
 	pub cached_pixelated_bg: Option<ImageSurface>,
 	pub _layer: LayerSurface,
 	pub wl_surface: WlSurface,
+	pub _viewport: Option<WpViewport>,
 	pub dimensions: (u32, u32),
+	pub buffer_dimensions: (u32, u32),
+	pub scale: (f64, f64),
 	pub slot: Option<Buffer>,
 	pub configured: bool,
 	pub canvas_ready: bool,
@@ -233,17 +238,14 @@ impl AppState {
 	pub fn render_canvas(&mut self, surface_index: usize, state: &SelectionState) -> Result<bool> {
 		let surface_data = &mut self.surfaces[surface_index];
 		let (width, height) = surface_data.dimensions;
-		let stride = width as i32 * 4;
+		let (buf_w, buf_h) = surface_data.buffer_dimensions;
+		let (scale_x, scale_y) = surface_data.scale;
+		let stride = buf_w as i32 * 4;
 
 		if surface_data.slot.is_none() {
 			let (buffer, _) = self
 				.pool
-				.create_buffer(
-					width as i32,
-					height as i32,
-					stride,
-					wl_shm::Format::Xrgb8888,
-				)
+				.create_buffer(buf_w as i32, buf_h as i32, stride, wl_shm::Format::Xrgb8888)
 				.map_err(|e| anyhow!("failed to create buffer: {}", e))?;
 			surface_data.slot = Some(buffer);
 		}
@@ -257,8 +259,8 @@ impl AppState {
 		let src_w = source.width() as usize;
 		let src_h = source.height() as usize;
 		let src_stride = src_w * 4;
-		let dst_w = width as usize;
-		let dst_h = height as usize;
+		let dst_w = buf_w as usize;
+		let dst_h = buf_h as usize;
 		let stride_usize = stride as usize;
 
 		let draft_region = state
@@ -308,14 +310,14 @@ impl AppState {
 			let bg = state.config.background_color;
 			let mut clamped_regions = Vec::new();
 			for region in state.regions.iter().copied().chain(extra_region) {
-				let rx0 =
-					((region.start.0 - offset_x).round() as i64).clamp(0, width as i64) as usize;
-				let ry0 =
-					((region.start.1 - offset_y).round() as i64).clamp(0, height as i64) as usize;
-				let rx1 =
-					((region.end.0 - offset_x).round() as i64).clamp(0, width as i64) as usize;
-				let ry1 =
-					((region.end.1 - offset_y).round() as i64).clamp(0, height as i64) as usize;
+				let rx0 = (((region.start.0 - offset_x) * scale_x).round() as i64)
+					.clamp(0, buf_w as i64) as usize;
+				let ry0 = (((region.start.1 - offset_y) * scale_y).round() as i64)
+					.clamp(0, buf_h as i64) as usize;
+				let rx1 = (((region.end.0 - offset_x) * scale_x).round() as i64)
+					.clamp(0, buf_w as i64) as usize;
+				let ry1 = (((region.end.1 - offset_y) * scale_y).round() as i64)
+					.clamp(0, buf_h as i64) as usize;
 				if rx0 < rx1 && ry0 < ry1 {
 					clamped_regions.push((rx0, ry0, rx1, ry1));
 				}
@@ -429,8 +431,8 @@ impl AppState {
 			ImageSurface::create_for_data_unsafe(
 				canvas.as_mut_ptr(),
 				Format::ARgb32,
-				width as i32,
-				height as i32,
+				buf_w as i32,
+				buf_h as i32,
 				stride,
 			)
 		}
@@ -440,6 +442,9 @@ impl AppState {
 		{
 			let cr =
 				Context::new(&scratch).map_err(|e| anyhow!("failed to create context: {}", e))?;
+			if (scale_x - 1.0).abs() > 1e-4 || (scale_y - 1.0).abs() > 1e-4 {
+				cr.scale(scale_x, scale_y);
+			}
 
 			if !can_use_fast_dimmed {
 				for (idx, ann) in state.annotations.iter().enumerate() {
@@ -581,10 +586,13 @@ impl AppState {
 					&cr,
 					width as f64,
 					state.active_tool,
-					state.current,
-					surface_data.output.logical_position,
+					(
+						state.current.0 - surface_data.output.logical_position.x as f64,
+						state.current.1 - surface_data.output.logical_position.y as f64,
+					),
 					&state.config,
 					&mut surface_data.cached_toolbar_icons,
+					surface_data.scale,
 				);
 			}
 		}
@@ -645,10 +653,10 @@ impl AppState {
 		cr: &Context,
 		width: f64,
 		active: Tool,
-		mouse_global: (f64, f64),
-		offset: Position,
+		mouse: (f64, f64),
 		config: &SelectionConfig,
 		cached_icons: &mut Option<ImageSurface>,
+		scale: (f64, f64),
 	) {
 		let tools = Tool::all();
 
@@ -658,8 +666,7 @@ impl AppState {
 		let x = (width - total_w) / 2.0;
 		let y = config.toolbar_y;
 
-		let mouse_x = mouse_global.0 - offset.x as f64;
-		let mouse_y = mouse_global.1 - offset.y as f64;
+		let (mouse_x, mouse_y) = mouse;
 
 		graphics::set_source_color(cr, config.toolbar_background_color);
 		cr.rectangle(x, y, total_w, h);
@@ -689,14 +696,15 @@ impl AppState {
 			}
 		}
 
-		let icons_w = (total_w.ceil() as i32).max(1);
-		let icons_h = (h.ceil() as i32).max(1);
+		let icons_w = ((total_w * scale.0).ceil() as i32).max(1);
+		let icons_h = ((h * scale.1).ceil() as i32).max(1);
 		if cached_icons
 			.as_ref()
 			.is_none_or(|s| s.width() != icons_w || s.height() != icons_h)
 			&& let Ok(surface) = ImageSurface::create(Format::ARgb32, icons_w, icons_h)
 			&& let Ok(icon_cr) = Context::new(&surface)
 		{
+			icon_cr.scale(scale.0, scale.1);
 			icon_cr.set_source_rgb(1.0, 1.0, 1.0);
 			let layout = create_layout(&icon_cr);
 			let font = pango::FontDescription::from_string("system-ui 18");
@@ -716,10 +724,17 @@ impl AppState {
 			*cached_icons = Some(surface);
 		}
 
-		if let Some(icons_surface) = cached_icons.as_ref() {
-			if cr.set_source_surface(icons_surface, x, y).is_ok() {
+		if let Some(icons_surface) = cached_icons.as_ref()
+			&& cr.save().is_ok()
+		{
+			cr.identity_matrix();
+			if cr
+				.set_source_surface(icons_surface, (x * scale.0).round(), (y * scale.1).round())
+				.is_ok()
+			{
 				cr.paint().ok();
 			}
+			let _ = cr.restore();
 		}
 
 		if let Some((tip, t_x, t_y)) = hovered_tooltip {
@@ -768,6 +783,8 @@ delegate_layer!(AppState);
 delegate_seat!(AppState);
 delegate_pointer!(AppState);
 delegate_keyboard!(AppState);
+wayland_client::delegate_noop!(AppState: ignore WpViewporter);
+wayland_client::delegate_noop!(AppState: ignore WpViewport);
 
 #[rustfmt::skip]
 impl RegistryHandler<AppState> for AppState {

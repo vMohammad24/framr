@@ -106,13 +106,7 @@ impl ToolBehavior for PixelateTool {
 		if let Some((x, y, w, h)) = region_rect(ann, offset_x, offset_y)
 			&& let Some(surface) = &surface_data.cached_pixelated_bg
 		{
-			if let Err(e) = cr.set_source_surface(surface, 0.0, 0.0) {
-				eprintln!("failed to set pixelated source surface: {}", e);
-			}
-			cr.rectangle(x, y, w, h);
-			if let Err(e) = cr.fill() {
-				eprintln!("failed to fill: {}", e);
-			}
+			graphics::paint_cached(cr, surface, (x, y, w, h), surface_data.scale);
 		}
 	}
 }

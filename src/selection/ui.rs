@@ -13,6 +13,7 @@ use smithay_client_toolkit::{
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use wayland_client::{Connection, globals::registry_queue_init};
+use wayland_protocols::wp::viewporter::client::wp_viewporter::WpViewporter;
 
 use crate::config::SelectionConfig;
 use crate::selection::backend::wayland::{AppState, SurfaceData, prerender_toolbar_icons};
@@ -137,11 +138,12 @@ impl SelectionUI {
 		let shm_state = Shm::bind(&globals, &qh)?;
 		let layer_shell = LayerShell::bind(&globals, &qh)?;
 		let seat_state = SeatState::new(&globals, &qh);
-		let mut total_buffer_size = 0;
-		for (info, _) in self.outputs.iter() {
-			total_buffer_size += info.logical_size.width * info.logical_size.height * 4;
+		let viewporter: Option<WpViewporter> = globals.bind(&qh, 1..=1, ()).ok();
+		let mut total_buffer_size = 0usize;
+		for (_, img) in self.outputs.iter() {
+			total_buffer_size += img.0.width() as usize * img.0.height() as usize * 4;
 		}
-		let pool_size = std::cmp::max(1024 * 1024, total_buffer_size as usize);
+		let pool_size = std::cmp::max(1024 * 1024, total_buffer_size);
 		let pool = SlotPool::new(pool_size, &shm_state)?;
 
 		let (tx, rx) = std::sync::mpsc::channel();
@@ -170,8 +172,13 @@ impl SelectionUI {
 		let num_outputs = self.outputs.len();
 		let mut toolbar_template = self.prerendered_toolbar.take();
 
-		for (idx, (info, _)) in self.outputs.iter().enumerate() {
+		for (idx, (info, img)) in self.outputs.iter().enumerate() {
 			let (w, h) = (info.logical_size.width, info.logical_size.height);
+			let (buf_w, buf_h) = (img.0.width(), img.0.height());
+			let scale = (
+				buf_w as f64 / w.max(1) as f64,
+				buf_h as f64 / h.max(1) as f64,
+			);
 			let wl_output = app
 				.output_state
 				.outputs()
@@ -195,6 +202,18 @@ impl SelectionUI {
 			layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
 			layer.set_exclusive_zone(-1);
 			layer.set_size(w, h);
+
+			let viewport = viewporter.as_ref().map(|v| {
+				let viewport = v.get_viewport(&wl_surface, &qh, ());
+				viewport.set_destination(w.max(1) as i32, h.max(1) as i32);
+				viewport
+			});
+			let (buffer_dimensions, scale) = if viewport.is_some() {
+				((buf_w, buf_h), scale)
+			} else {
+				((w, h), (1.0, 1.0))
+			};
+
 			wl_surface.commit();
 
 			let cached_toolbar_icons = match toolbar_template {
@@ -223,7 +242,10 @@ impl SelectionUI {
 				cached_pixelated_bg: None,
 				_layer: layer,
 				wl_surface,
+				_viewport: viewport,
 				dimensions: (w, h),
+				buffer_dimensions,
+				scale,
 				slot: None,
 				configured: false,
 				canvas_ready: false,
@@ -260,27 +282,24 @@ impl SelectionUI {
 				};
 				if !pixelate_spawned && active_tool == Tool::Pixelate {
 					pixelate_spawned = true;
-					for (i, (info, img)) in self.outputs.iter().enumerate() {
-						let (w, h) = (info.logical_size.width, info.logical_size.height);
+					for (i, _) in self.outputs.iter().enumerate() {
+						let Some(surface) = app.surfaces.get(i) else {
+							continue;
+						};
+						let (bw, bh) = surface.buffer_dimensions;
+						let scale = ((surface.scale.0 + surface.scale.1) * 0.5) as f32;
+						let block = ((pixelate_block_size as f32 * scale).round() as usize).max(1);
 						let outputs = self.outputs.clone();
 						let tx = tx.clone();
 						let conn_handle = conn.clone();
-						let _ = img;
 						std::thread::spawn(move || {
 							let src = &outputs[i].1.0;
-							let mut pixelated_img = if src.width() != w || src.height() != h {
-								image::imageops::resize(src, w, h, FilterType::Nearest)
+							let mut pixelated_img = if src.width() != bw || src.height() != bh {
+								image::imageops::resize(src, bw, bh, FilterType::Nearest)
 							} else {
 								src.clone()
 							};
-							graphics::apply_pixelate(
-								&mut pixelated_img,
-								0,
-								0,
-								w,
-								h,
-								pixelate_block_size,
-							);
+							graphics::apply_pixelate(&mut pixelated_img, 0, 0, bw, bh, block);
 							let _ = tx.send(UserEvent::PixelateFinished {
 								surface_idx: i,
 								pixelated_img: BgraImage(pixelated_img),
@@ -291,20 +310,30 @@ impl SelectionUI {
 				}
 				if !blur_spawned && active_tool == Tool::Blur {
 					blur_spawned = true;
-					for (i, (info, img)) in self.outputs.iter().enumerate() {
-						let (w, h) = (info.logical_size.width, info.logical_size.height);
+					for (i, _) in self.outputs.iter().enumerate() {
+						let Some(surface) = app.surfaces.get(i) else {
+							continue;
+						};
+						let (bw, bh) = surface.buffer_dimensions;
+						let scale = ((surface.scale.0 + surface.scale.1) * 0.5) as f32;
 						let outputs = self.outputs.clone();
 						let tx = tx.clone();
 						let conn_handle = conn.clone();
-						let _ = img;
 						std::thread::spawn(move || {
 							let src = &outputs[i].1.0;
-							let mut blurred_img = if src.width() != w || src.height() != h {
-								image::imageops::resize(src, w, h, FilterType::Nearest)
+							let mut blurred_img = if src.width() != bw || src.height() != bh {
+								image::imageops::resize(src, bw, bh, FilterType::Nearest)
 							} else {
 								src.clone()
 							};
-							graphics::apply_blur(&mut blurred_img, 0, 0, w, h, blur_radius);
+							graphics::apply_blur(
+								&mut blurred_img,
+								0,
+								0,
+								bw,
+								bh,
+								blur_radius * scale,
+							);
 							let _ = tx.send(UserEvent::BlurFinished {
 								surface_idx: i,
 								blurred_img: BgraImage(blurred_img),
